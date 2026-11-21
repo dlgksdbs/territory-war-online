@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#070b12" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="description" content="한 손으로 즐기는 실시간 영토 확장 전략 게임 · 친구와 2~4인 웹소켓 멀티플레이" />
+<title>영토 전쟁 ONLINE · 실시간 멀티플레이</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<!-- ============================ 게임 화면 ============================ -->
+<div id="app" class="hidden">
+  <header id="hud">
+    <div class="hud-row">
+      <div class="stat"><span class="k">턴</span><b id="statTurn">1</b></div>
+      <div class="stat"><span class="k">차례</span><b id="statWho">—</b></div>
+      <div class="stat"><span class="k">영토</span><b id="statLand">0/28</b></div>
+      <div class="stat"><span class="k">배치</span><b id="statReinf">0</b></div>
+      <button id="btnMenu" class="icon-btn" type="button" aria-label="메뉴">⋯</button>
+    </div>
+    <div id="legend"></div>
+  </header>
+
+  <main id="mapWrap">
+    <canvas id="map"></canvas>
+    <div id="turnBanner" role="status" aria-live="polite"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <div id="specChip" class="spec-chip hidden">탈락 · 관전 중</div>
+  </main>
+
+  <footer id="bar">
+    <div id="modeRow">
+      <button id="modeDeploy" class="mode-btn on" type="button">병력 배치</button>
+      <button id="modeAttack" class="mode-btn" type="button">공격 · 이동</button>
+      <button id="btnAll" class="chip-btn" type="button">+1</button>
+    </div>
+    <div id="hint">내 영토를 탭해 병력을 배치하세요</div>
+    <div id="actionRow">
+      <button id="btnDiplo" type="button">외교</button>
+      <button id="btnLog" type="button">전황</button>
+      <button id="btnEnd" type="button">턴 종료</button>
+    </div>
+  </footer>
+</div>
+
+<!-- ============================ 로비 ============================ -->
+<div id="lobby">
+  <div class="lobby-inner">
+    <div class="brand">
+      <div class="kicker">TERRITORY WAR · ONLINE</div>
+      <h1>영토 전쟁</h1>
+      <p>한 손으로, 친구와 실시간</p>
+    </div>
+
+    <section id="homePanel" class="lobby-card">
+      <div class="pick-label" for="nameInput">내 이름</div>
+      <input id="nameInput" class="text-input" type="text" maxlength="12" placeholder="닉네임 (최대 12자)" autocomplete="nickname" autofocus />
+      <button id="btnCreate" class="primary" type="button">방 만들기</button>
+      <div class="or"><span>또는</span></div>
+      <div class="join-row">
+        <input id="joinCode" class="text-input code-input" type="text" maxlength="6" inputmode="text" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="방 코드" aria-label="방 코드" />
+        <button id="btnJoin" class="sbtn join-btn" type="button">참가</button>
+      </div>
+      <p id="homeNote" class="pick-note">친구가 만든 방의 코드를 입력하면 바로 참가할 수 있어요.</p>
+      <div class="lobby-feats">
+        <span>⚔ 실시간 2~4인</span><span>🤝 외교 · 동맹</span><span>📱 한 손 조작</span>
+      </div>
+    </section>
+
+    <section id="roomPanel" class="lobby-card" hidden>
+      <div class="pick-label">방 코드</div>
+      <div class="room-code-row">
+        <div class="room-code" id="roomCode" role="button" tabindex="0" aria-label="방 코드 복사">----</div>
+        <button id="btnCopyCode" class="sbtn copy-btn" type="button">복사</button>
+        <button id="btnShare" class="sbtn copy-btn" type="button">공유</button>
+      </div>
+      <div id="roomPlayers" class="room-players"></div>
+      <label class="switch-row" id="aiRow" for="aiToggle">
+        <span><b>빈 자리 AI로 채우기</b><small>4개국 중 남는 나라는 AI가 맡아요</small></span>
+        <input type="checkbox" id="aiToggle" checked />
+        <i class="switch" aria-hidden="true"></i>
+      </label>
+      <p id="roomNote" class="pick-note"></p>
+      <button id="btnStart" class="primary" type="button">게임 시작</button>
+      <p id="waitHost" class="wait-note" hidden>방장이 시작하기를 기다리는 중</p>
+      <button id="btnLeaveLobby" class="ghost" type="button">방 나가기</button>
+    </section>
+
+    <p class="lobby-foot">친구에게 방 코드를 보내면 같은 판에서 실시간으로 겨룰 수 있어요 · 최대 4명</p>
+  </div>
+</div>
+
+<div id="netBar" role="status" aria-live="assertive">
+  <i class="spin" aria-hidden="true"></i><span id="netText">연결이 끊겼어요 · 다시 연결 중</span>
+</div>
+
+<div id="boot" role="status" aria-live="polite">
+  <div class="boot-card">
+    <div class="boot-spin" aria-hidden="true"></div>
+    <p id="bootText">연결 중…</p>
+  </div>
+</div>
+
+<!-- ============================ 규칙 ============================ -->
+<div id="rulesModal" class="modal" aria-hidden="true">
+  <div class="card">
+    <h2>영토 전쟁 ONLINE · 규칙</h2>
+    <ul class="rules">
+      <li><b>목표</b> — 지도 위 모든 영토를 차지하거나, 마지막까지 살아남으면 승리합니다. 내 영토를 모두 잃으면 탈락(관전)합니다.</li>
+      <li><b>보충</b> — 내 차례가 시작되면 보유 영토 2개당 병력 1개(최소 3개)를 받습니다.</li>
+      <li><b>배치</b> — ‘병력 배치’ 상태에서 내 영토를 탭하면 +1. 오른쪽 <b>+1 / 전부</b> 버튼으로 한 번에 넣을 수 있습니다.</li>
+      <li><b>공격</b> — ‘공격 · 이동’ 상태에서 병력 2 이상인 내 영토를 탭해 선택합니다. 이웃한 적·중립 영토는 빨간 테두리, 내 영토는 초록 테두리로 표시됩니다.</li>
+      <li><b>전투</b> — 빨간 대상을 탭할 때마다 주사위 한 판. 공격은 최대 3개, 수비는 최대 2개를 굴려 높은 눈이 이깁니다(동점은 수비 승). 방어 병력이 0이 되면 영토를 차지하고 병력이 이동합니다.</li>
+      <li><b>이동</b> — 초록 대상을 탭하면 1개를 남기고 병력이 모두 옮겨집니다.</li>
+      <li class="diplo"><b>관계 · 신뢰도</b> — 나라마다 쌍방 <b>관계(-100~+100)</b>와 <b>신뢰도(0~100)</b>가 있습니다. 지원·조공·할양은 관계를 올리고, 공격과 조약 파기는 관계를 떨어뜨립니다. 조약을 배신하면 신뢰도가 크게 떨어져 앞으로 누구도 쉽게 조약을 받아 주지 않습니다.</li>
+      <li class="diplo"><b>불가침 → 동맹</b> — 불가침(4턴)을 맺은 뒤 <b>동맹(5턴)</b>으로 격상할 수 있습니다. 동맹은 같은 적과 싸울 때 공격 주사위 <b>+1</b>을 주고, <b>공동 참전 요청</b>으로 특정 적을 함께 공격하게 할 수 있습니다. AI 동맹은 관계가 높으면 다음 턴부터 그 적을 우선 공격합니다.</li>
+      <li class="diplo"><b>병력 지원</b> — 내 배치 3개 또는 병력 5 이상인 내 영토에서 3개를 보내 상대와의 관계를 크게 올리고 <b>동맹(5턴)</b>을 맺습니다. <b>조약 파기</b>는 즉시 공격 가능해지지만 신뢰도를 크게 잃습니다.</li>
+      <li class="diplo"><b>조공</b> — <b>조공 요구/제안</b>으로 매 라운드 1~2개 병력을 4턴간 주고받으며 휴전할 수 있습니다. 조공을 약속하고 이행하지 못하면 조약이 깨지고 신뢰도를 잃습니다.</li>
+      <li class="diplo"><b>영토 할양</b> — 내 영토 하나를 넘겨 관계를 크게 올리고(+25) 원하면 불가침까지 확보할 수 있습니다. 상대 국경과 맞닿은 영토일수록 AI가 받아들일 확률이 높습니다.</li>
+      <li class="net"><b>AI 대응</b> — AI는 병력을 안전한 내부가 아닌 <b>전선</b>에만 배치하고, 후방 병력을 전선으로 끌어옵니다. 유리할 때만 공격하며, 35% 이상을 차지한 1위 국가가 나타나면 다른 나라들과 연합해 견제합니다.</li>
+      <li class="net"><b>실시간 방</b> — <b>방 만들기</b>로 4자리 코드를 만들고, 친구는 <b>방 참가</b>에 코드를 입력합니다. 2~4명이 함께하며 남는 나라는 방장이 AI로 채울 수 있습니다.</li>
+      <li class="net"><b>자리 유지</b> — 휴대폰이 앱을 전환해 연결이 끊겨도 같은 기기에서 페이지를 다시 열면 원래 자리로 돌아옵니다. 끊긴 채 75초가 지나면 그 턴은 자동으로 넘어갑니다.</li>
+    </ul>
+    <button id="btnCloseRules" class="primary" type="button">알겠어요</button>
+  </div>
+</div>
+
+<!-- ============================ 외교 ============================ -->
+<div id="diploModal" class="modal" aria-hidden="true">
+  <div class="card wide">
+    <div class="sub-head">
+      <h2>외교</h2>
+      <span id="diploSub"></span>
+    </div>
+    <div id="diploList"></div>
+    <div class="diplo-feed-head">최근 외교 소식</div>
+    <div id="diploFeed" class="diplo-feed"></div>
+    <button id="btnCloseDiplo" class="primary" type="button">닫기</button>
+  </div>
+</div>
+
+<!-- ============================ 조공 ============================ -->
+<div id="tributeModal" class="modal" aria-hidden="true">
+  <div class="card">
+    <div class="prop-head" id="tributeTo">상대</div>
+    <div class="prop-title">조공 협정</div>
+    <div class="seg-row" id="tributeModeRow">
+      <button class="seg-btn on" type="button" data-mode="demand">조공 요구</button>
+      <button class="seg-btn" type="button" data-mode="offer">조공 제안</button>
+    </div>
+    <p class="pick-note" id="tributeNote">상대가 매 라운드 1개를 나에게 바칩니다. 수락하면 4턴간 서로 공격할 수 없습니다.</p>
+    <div class="pick-label">매 라운드</div>
+    <div class="pick-row" id="tributeAmountRow">
+      <button class="count-btn on" type="button" data-amount="1">1개<small>가볍게</small></button>
+      <button class="count-btn" type="button" data-amount="2">2개<small>강하게</small></button>
+    </div>
+    <div class="prop-row">
+      <button id="tributeSend" class="primary" type="button">보내기</button>
+      <button id="tributeClose" class="ghost" type="button">취소</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 영토 할양 ============================ -->
+<div id="cedeModal" class="modal" aria-hidden="true">
+  <div class="card">
+    <div class="prop-head" id="cedeTo">상대</div>
+    <div class="prop-title">영토 할양</div>
+    <p class="pick-note">내 영토 하나를 넘기면 관계가 크게 좋아지고(+25), 원하면 불가침까지 얻습니다.</p>
+    <div class="pick-label">넘길 영토</div>
+    <div id="cedeList" class="cede-list"></div>
+    <label class="switch-row compact" for="cedeTruce">
+      <span><b>불가침 4턴 포함</b><small>할양과 함께 휴전을 맺습니다</small></span>
+      <input type="checkbox" id="cedeTruce" checked />
+      <i class="switch" aria-hidden="true"></i>
+    </label>
+    <div class="prop-row">
+      <button id="cedeSend" class="primary" type="button">할양 제안</button>
+      <button id="cedeClose" class="ghost" type="button">취소</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 공동 참전 ============================ -->
+<div id="callModal" class="modal" aria-hidden="true">
+  <div class="card">
+    <div class="prop-head" id="callTo">동맹</div>
+    <div class="prop-title">공동 참전 요청</div>
+    <p class="pick-note">동맹이 함께 공격할 적을 고르세요. 동맹은 다음 턴부터 그 나라를 우선 공격합니다.</p>
+    <div id="callList" class="cede-list"></div>
+    <div class="prop-row">
+      <button id="callSend" class="primary" type="button">요청 보내기</button>
+      <button id="callClose" class="ghost" type="button">취소</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 조약 제안 ============================ -->
+<div id="propModal" class="modal" aria-hidden="true">
+  <div class="card">
+    <div class="prop-head" id="propFrom">제안</div>
+    <div class="prop-title">불가침 조약 제안</div>
+    <p class="prop-body" id="propBody"></p>
+    <div class="prop-row">
+      <button id="propAccept" class="primary" type="button">수락</button>
+      <button id="propDecline" class="ghost" type="button">거절</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 메뉴 ============================ -->
+<div id="menuModal" class="modal" aria-hidden="true">
+  <div class="card">
+    <h2>메뉴</h2>
+    <div class="menu-room">
+      <span>방 코드</span>
+      <b id="menuCode">----</b>
+      <button id="btnMenuCopy" class="sbtn" type="button">복사</button>
+    </div>
+    <div id="menuPlayers" class="room-players"></div>
+    <button id="btnRules" class="ghost" type="button">게임 규칙</button>
+    <button id="btnLeaveGame" class="ghost danger" type="button">방 나가기</button>
+    <button id="btnCloseMenu" class="primary" type="button">닫기</button>
+  </div>
+</div>
+
+<!-- ============================ 전황 ============================ -->
+<div id="logModal" class="modal" aria-hidden="true">
+  <div class="card">
+    <div class="sub-head">
+      <h2>전황</h2>
+      <span id="logSub"></span>
+    </div>
+    <div id="logList"></div>
+    <button id="btnCloseLog" class="primary" type="button">닫기</button>
+  </div>
+</div>
+
+<!-- ============================ 탈락 ============================ -->
+<div id="elimModal" class="modal" aria-hidden="true">
+  <div class="card result">
+    <div class="result-title lose">탈락…</div>
+    <p class="result-sub" id="elimSub">모든 영토를 잃었습니다.</p>
+    <p class="spec-note">관전 모드로 남아 게임이 끝나는 모습을 볼 수 있어요.</p>
+    <button id="btnSpectate" class="primary" type="button">관전하기</button>
+    <button id="btnElimLeave" class="ghost danger" type="button">방 나가기</button>
+  </div>
+</div>
+
+<!-- ============================ 결과 ============================ -->
+<div id="resultOverlay" class="modal" aria-hidden="true">
+  <div class="card result">
+    <div id="resultTitle" class="result-title win">승리!</div>
+    <p id="resultSub" class="result-sub"></p>
+    <p id="resultLine" class="result-line"></p>
+    <div class="result-stats" id="resultStats">
+      <div><b id="rLand">0</b><span>영토</span></div>
+      <div><b id="rTroops">0</b><span>병력</span></div>
+      <div><b id="rTurns">0</b><span>턴</span></div>
+    </div>
+    <button id="btnRematch" class="primary" type="button">같은 멤버로 다시</button>
+    <p id="rematchNote" class="spec-note" hidden>방장이 같은 멤버로 다시 시작할 수 있어요.</p>
+    <button id="btnResultLeave" class="ghost danger" type="button">방 나가기</button>
+  </div>
+</div>
+
+<noscript>
+  <p style="padding:24px;color:#e8eefc">이 게임은 자바스크립트가 필요합니다.</p>
+</noscript>
+
+<script src="/app.js"></script>
+</body>
+</html>

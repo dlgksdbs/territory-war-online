@@ -2,6 +2,8 @@
 
 한 손으로 즐기는 **실시간 영토 확장 전략 게임**입니다. 친구와 방 코드 하나로 만나 2~4인이 겨루고, 남는 자리는 AI가 맡습니다. 서버가 모든 판정을 담당하는 **Node.js + WebSocket** 멀티플레이 버전입니다.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/dlgksdbs/territory-war-online)
+
 ---
 
 ## ✨ 이런 게임이에요
@@ -42,6 +44,10 @@ hostname -I
 ## ☁️ 무료 배포 (1분)
 
 ### Render — 가장 쉬움 (권장)
+
+가장 빠른 길은 위의 **Deploy to Render** 버튼입니다. 누르면 Render가 이 저장소를 읽어 `render.yaml` 그대로 서비스를 만듭니다(무료 플랜, `/healthz` 헬스체크, 자동 배포). Render 계정이 없으면 GitHub로 로그인하면 되고, 카드는 필요 없습니다.
+
+직접 설정하려면:
 
 1. 이 폴더를 GitHub 저장소에 올립니다.
 2. [render.com](https://render.com) → **New → Web Service** → 저장소 선택.

@@ -42,9 +42,6 @@
   }
 
   var S = null;             // 현재 세션
-  var icon = {
-    slash: function (c, x, y, r) { c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); }
-  };
 
   /* ---------------------------------------------------------------------------
      사운드 (WebAudio 합성 · 외부 파일 없음)
@@ -685,7 +682,6 @@
     pl.atkAnim = 0;
     resetDashHits();
     S.trails.push({ x: pl.x, y: pl.y, t: 0, dur: 240, face: pl.dashDir });
-    S.kills = S.kills;
     sfx('dash');
   }
 

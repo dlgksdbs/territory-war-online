@@ -1860,6 +1860,55 @@ body.arena-on { overflow: hidden; }
   50% { box-shadow: 0 20px 38px -14px rgba(245, 158, 11, 0.7), inset 0 0 0 1px rgba(255, 226, 175, 0.55); }
 }
 
+/* 홈 화면 — 적군/아군 병사 수 조절 (각 최대 1000) */
+.bb-set { display: flex; gap: 8px; margin: 0 0 10px; }
+.bb-team {
+  flex: 1; min-width: 0; padding: 8px 9px 9px;
+  border-radius: 12px;
+  background: rgba(10, 16, 26, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+}
+.bb-team.enemy { border-color: rgba(239, 68, 68, 0.4); box-shadow: inset 0 0 22px -14px rgba(239, 68, 68, 0.9); }
+.bb-team.ally { border-color: rgba(59, 130, 246, 0.45); box-shadow: inset 0 0 22px -14px rgba(59, 130, 246, 0.95); }
+.bb-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px; font-weight: 800; color: #cbd5e1; letter-spacing: -0.01em;
+}
+.bb-head b { font-size: 15px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.bb-team.enemy .bb-head b { color: #fca5a5; }
+.bb-team.ally .bb-head b { color: #93c5fd; }
+.bb-range {
+  width: 100%; height: 22px; margin: 2px 0 4px;
+  -webkit-appearance: none; appearance: none; background: transparent;
+}
+.bb-range::-webkit-slider-runnable-track {
+  height: 5px; border-radius: 3px;
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.28), rgba(148, 163, 184, 0.5));
+}
+.bb-team.enemy .bb-range::-webkit-slider-runnable-track { background: linear-gradient(90deg, #7f1d1d, #ef4444); }
+.bb-team.ally .bb-range::-webkit-slider-runnable-track { background: linear-gradient(90deg, #1e3a8a, #3b82f6); }
+.bb-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px; margin-top: -5.5px; border-radius: 50%;
+  background: #f8fafc; border: 2px solid #0b1220;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+.bb-range::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%; background: #f8fafc; border: 2px solid #0b1220;
+}
+.bb-chips { display: flex; gap: 4px; }
+.bb-chips button {
+  flex: 1; padding: 4px 0; border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(15, 23, 42, 0.75);
+  color: #94a3b8; font-family: inherit; font-size: 10px; font-weight: 800;
+  cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.bb-chips button.on { color: #fff; border-color: rgba(248, 250, 252, 0.55); background: rgba(51, 65, 85, 0.9); }
+.bb-team.enemy .bb-chips button.on { background: rgba(127, 29, 29, 0.9); border-color: rgba(252, 165, 165, 0.7); }
+.bb-team.ally .bb-chips button.on { background: rgba(30, 64, 175, 0.9); border-color: rgba(147, 197, 253, 0.75); }
+@media (max-width: 350px) { .bb-set { flex-direction: column; } }
+
 .ar-restart {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 46px);

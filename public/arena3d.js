@@ -1,9 +1,12 @@
 /* =============================================================================
    직접 참전 · 3D 칼싸움 전장 (Three.js WebGL 렌더러)
-   - 1인칭(FPS) 시점: 카메라는 병사 눈높이(≈20)에 있고, 오른손 검 · 왼손 방패를
-     화면 앞에 그린다(별도 뷰모델 패스). 내 3인칭 몸은 그리지 않는다.
-   - 시점 회전은 오직 사용자가 오른쪽 화면을 드래그할 때만 (pl.face / pl.pitch).
-     조이스틱 이동은 카메라를 돌리지 않고 시점 기준으로만 움직인다.
+   - 1인칭(FPS) 시점: 카메라는 병사 눈높이(≈20)에 있고, 오른손 검 하나만
+     화면 앞에 그린다(별도 뷰모델 패스). 방패는 없다 — 막기는 검을 옆으로
+     가로질러 세우는 자세로 한다. 내 3인칭 몸은 그리지 않는다.
+   - 베기는 대각선으로 내려쳤다가 아래에서 다시 위로 매끄럽게 올라온다.
+     스와이프 베기면 그 스와이프 방향(각도)을 그대로 따라간다.
+   - 시점 회전은 오른쪽 화면을 천천히 드래그할 때 (pl.face / pl.pitch).
+     오른쪽 빠른 스와이프 = 그 방향으로 베기. 조이스틱 이동은 카메라를 돌리지 않는다.
    - 시뮬레이션은 arena.js 가 그대로 담당하고, 이 모듈은 그 상태(S)를 3D로 그린다.
    - 병사는 InstancedMesh 로 그린다 (지오메트리·재질 공유 → 드로우콜 수십 개로
      수십~수백 명을 그린다).
@@ -37,6 +40,10 @@ function angDiff(a, b) {
   if (d < -Math.PI) d += Math.PI * 2;
   return d;
 }
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeInQuad = (t) => t * t;
+const smoothstep = (t) => t * t * (3 - 2 * t);
+const easeInOutSine = (t) => -(Math.cos(Math.PI * t) - 1) / 2;
 function mulberry32(a) {
   return function () {
     a |= 0; a = (a + 0x6d2b79f5) | 0;
@@ -50,7 +57,8 @@ function colorOf(hex, fallback) {
 }
 
 const EYE = 20.5;               // 병사 눈높이 (월드 단위)
-const MAX_SOLDIERS = 110;       // 동시에 그리는 병사 상한 (인스턴스 버퍼 크기)
+const MAX_SOLDIERS = 260;       // 동시에 그리는 병사 상한 (인스턴스 버퍼 크기 · 최대 1000명 난전용)
+const ATK_DUR = 420;            // 1인칭 검 궤적 길이(ms) — 내려치기 + 위로 복귀
 const MAX_ARCS = 72;            // 적·아군 검기/예고 인스턴스 상한
 const MAX_PIECES = 26;          // 동시에 굴리는 3D 두 동강 조각 상한
 
@@ -60,21 +68,19 @@ const MAX_PIECES = 26;          // 동시에 굴리는 3D 두 동강 조각 상�
 const GEO = {
   leg: new THREE.BoxGeometry(2.0, 8.6, 2.3),
   boot: new THREE.BoxGeometry(2.3, 1.7, 3.4),
-  torso: new THREE.CylinderGeometry(4.35, 3.5, 10, 12, 1),
-  shoulder: new THREE.SphereGeometry(2.55, 10, 8),
+  torso: new THREE.CylinderGeometry(4.1, 3.15, 10.5, 12, 1),
+  shoulder: new THREE.SphereGeometry(1.85, 10, 8),
   neck: new THREE.CylinderGeometry(1.25, 1.25, 2.2, 8),
   head: new THREE.SphereGeometry(2.45, 12, 10),
   helmet: new THREE.SphereGeometry(2.95, 14, 9, 0, Math.PI * 2, 0, Math.PI * 0.56),
   visor: new THREE.BoxGeometry(4.7, 0.7, 0.9),
-  sash: new THREE.BoxGeometry(7.4, 1.5, 0.9),
-  crest: new THREE.BoxGeometry(0.7, 1.5, 3.0),
+  sash: new THREE.BoxGeometry(6.2, 5.0, 0.9),
+  crest: new THREE.BoxGeometry(0.7, 3.4, 1.1),
   upperArm: new THREE.BoxGeometry(1.95, 6.4, 1.95),
   foreArm: new THREE.BoxGeometry(1.7, 5.4, 1.7),
   blade: new THREE.BoxGeometry(0.62, 0.46, 10.5),
   guard: new THREE.BoxGeometry(3.2, 0.65, 0.85),
   grip: new THREE.BoxGeometry(0.95, 0.95, 2.4),
-  shield: new THREE.CylinderGeometry(4.4, 4.4, 0.85, 16),
-  boss: new THREE.SphereGeometry(1.5, 10, 8),
   ring: new THREE.RingGeometry(13, 15.4, 28),
   shadow: new THREE.PlaneGeometry(19, 19)
 };
@@ -119,28 +125,29 @@ const TEX = {
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   })(),
-  flesh: (function () {
+  core: (function () {
+    /* 잘린 단면 — 피 대신 깨끗한 검은 심 + 푸른 빛 절단면 */
     const c = document.createElement('canvas');
     c.width = 128; c.height = 256;
     const x = c.getContext('2d');
     x.clearRect(0, 0, 128, 256);
-    const g = x.createRadialGradient(64, 128, 6, 64, 128, 118);
-    g.addColorStop(0, '#8e2626');
-    g.addColorStop(0.55, '#6d1a1a');
-    g.addColorStop(0.86, '#3d0d0d');
-    g.addColorStop(1, 'rgba(61,13,13,0)');
     x.save();
     x.translate(64, 128);
     x.scale(0.42, 0.46);
     x.translate(-64, -128);
+    const g = x.createRadialGradient(64, 128, 6, 64, 128, 118);
+    g.addColorStop(0, '#0a1522');
+    g.addColorStop(0.55, '#0d2030');
+    g.addColorStop(0.9, '#173a52');
+    g.addColorStop(1, 'rgba(23,58,82,0)');
     x.fillStyle = g;
     x.beginPath();
     x.arc(64, 128, 118, 0, Math.PI * 2);
     x.fill();
     x.restore();
     x.globalCompositeOperation = 'source-atop';
-    for (let i = 0; i < 26; i++) {
-      x.strokeStyle = 'rgba(200,70,70,' + (0.05 + Math.random() * 0.12).toFixed(3) + ')';
+    for (let i = 0; i < 22; i++) {
+      x.strokeStyle = 'rgba(150,225,255,' + (0.03 + Math.random() * 0.09).toFixed(3) + ')';
       x.lineWidth = 1 + Math.random() * 2;
       x.beginPath();
       const yy = 30 + Math.random() * 200;
@@ -165,11 +172,18 @@ function terrainTexture(w, h, seed, meColor, enemyColor) {
   const r = mulberry32(seed >>> 0);
 
   const g = b.createLinearGradient(0, 0, 0, ch);
-  g.addColorStop(0, '#3b4e42');
-  g.addColorStop(0.34, '#35463a');
-  g.addColorStop(0.7, '#393f36');
-  g.addColorStop(1, '#4a3a2c');
+  g.addColorStop(0, '#2f4438');
+  g.addColorStop(0.3, '#293930');
+  g.addColorStop(0.68, '#313a31');
+  g.addColorStop(1, '#443224');
   b.fillStyle = g;
+  b.fillRect(0, 0, cw, ch);
+
+  // 가운데 흙바닥은 살짝 밝게 — 시선이 전장 안쪽으로 들어가며 깊어진다
+  const cg = b.createRadialGradient(cw * 0.5, ch * 0.52, 20, cw * 0.5, ch * 0.52, cw * 0.78);
+  cg.addColorStop(0, 'rgba(150,136,104,0.1)');
+  cg.addColorStop(1, 'rgba(150,136,104,0)');
+  b.fillStyle = cg;
   b.fillRect(0, 0, cw, ch);
 
   // 흙길 (중앙 세로 · 부드러운 한 줄기)
@@ -233,16 +247,16 @@ function terrainTexture(w, h, seed, meColor, enemyColor) {
   b.beginPath(); b.ellipse(cw * 0.8, ch * 0.93, cw * 0.2, ch * 0.04, 0, 0, Math.PI * 2); b.fill();
   // 가장자리 어둡게
   const vg = b.createLinearGradient(0, 0, cw, 0);
-  vg.addColorStop(0, 'rgba(0,0,0,0.55)');
-  vg.addColorStop(0.12, 'rgba(0,0,0,0)');
-  vg.addColorStop(0.88, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.55)');
+  vg.addColorStop(0, 'rgba(0,0,0,0.66)');
+  vg.addColorStop(0.14, 'rgba(0,0,0,0)');
+  vg.addColorStop(0.86, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.66)');
   b.fillStyle = vg;
   b.fillRect(0, 0, cw, ch);
 
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = 8;
   return t;
 }
 
@@ -261,13 +275,12 @@ function buildSoldier(color, opts) {
   const col = colorOf(color, '#3b82f6');
   const g = new THREE.Group();
   const mats = {
-    armor: new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.6), roughness: 0.52, metalness: 0.32 }),
-    cloth: new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.92), roughness: 0.88 }),
-    steel: new THREE.MeshStandardMaterial({ color: 0xe2ecf8, roughness: 0.28, metalness: 0.95, emissive: col.clone().multiplyScalar(0.18), emissiveIntensity: o.player ? 0.8 : 0.15 }),
+    armor: new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.58), roughness: 0.4, metalness: 0.42, envMapIntensity: 1.05 }),
+    cloth: new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.95), roughness: 0.85, envMapIntensity: 0.7 }),
+    steel: new THREE.MeshStandardMaterial({ color: 0xe6f0fd, roughness: 0.18, metalness: 0.98, emissive: col.clone().multiplyScalar(0.16), emissiveIntensity: o.player ? 0.9 : 0.2, envMapIntensity: 1.55 }),
     skin: new THREE.MeshStandardMaterial({ color: 0xc59066, roughness: 0.82 }),
-    dark: new THREE.MeshStandardMaterial({ color: 0x1d2530, roughness: 0.9 }),
-    shield: new THREE.MeshStandardMaterial({ color: col.clone().multiplyScalar(0.78), roughness: 0.55, metalness: 0.42 }),
-    crest: new THREE.MeshStandardMaterial({ color: col.clone().lerp(new THREE.Color(0xffffff), 0.4), roughness: 0.6, emissive: col.clone(), emissiveIntensity: 0.5 })
+    dark: new THREE.MeshStandardMaterial({ color: 0x1a222c, roughness: 0.9 }),
+    crest: new THREE.MeshStandardMaterial({ color: col.clone().lerp(new THREE.Color(0xffffff), 0.55), roughness: 0.45, emissive: col.clone(), emissiveIntensity: 0.55, envMapIntensity: 0.8 })
   };
 
   const legs = [];
@@ -288,11 +301,11 @@ function buildSoldier(color, opts) {
   torso.position.y = 15.2;
   g.add(torso);
   const sash = new THREE.Mesh(GEO.sash, mats.cloth);
-  sash.position.set(0, 16.4, 3.15);
+  sash.position.set(0, 15.0, 3.05);
   g.add(sash);
   for (const sx of [-1, 1]) {
     const sh = new THREE.Mesh(GEO.shoulder, mats.armor);
-    sh.position.set(sx * 4.35, 19.2, 0);
+    sh.position.set(sx * 4.3, 19.1, 0);
     g.add(sh);
   }
   const neck = new THREE.Mesh(GEO.neck, mats.skin);
@@ -309,7 +322,8 @@ function buildSoldier(color, opts) {
   visor.position.set(0, 22.7, 2.35);
   g.add(visor);
   const crest = new THREE.Mesh(GEO.crest, mats.crest);
-  crest.position.set(0, 25.3, -0.4);
+  crest.position.set(0, 26.1, -1.5);
+  crest.rotation.x = -0.16;
   g.add(crest);
 
   const armR = new THREE.Group();
@@ -342,15 +356,6 @@ function buildSoldier(color, opts) {
   const foreL = new THREE.Mesh(GEO.foreArm, mats.skin);
   foreL.position.y = -8.1;
   armL.add(foreL);
-  const shield = new THREE.Group();
-  shield.position.set(-1.2, -9.4, 2.6);
-  const shieldBody = new THREE.Mesh(GEO.shield, mats.shield);
-  shieldBody.rotation.x = Math.PI / 2;
-  shield.add(shieldBody);
-  const boss = new THREE.Mesh(GEO.boss, mats.steel);
-  boss.position.z = 0.5;
-  shield.add(boss);
-  armL.add(shield);
   g.add(armL);
 
   const shadow = new THREE.Mesh(GEO.shadow, new THREE.MeshBasicMaterial({
@@ -361,7 +366,7 @@ function buildSoldier(color, opts) {
   shadow.userData.shadow = true;
   g.add(shadow);
 
-  return { group: g, mats: mats, parts: { legs: legs, torso: torso, head: head, armR: armR, armL: armL, sword: sword, shield: shield, crest: crest } };
+  return { group: g, mats: mats, parts: { legs: legs, torso: torso, head: head, armR: armR, armL: armL, sword: sword, crest: crest } };
 }
 
 /* ---------------------------------------------------------------------------
@@ -387,7 +392,7 @@ function create(opts) {
   renderer.setClearColor(0x0a1117, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.18;
+  renderer.toneMappingExposure = 1.08;
   renderer.localClippingEnabled = true;
   renderer.shadowMap.enabled = false;
   renderer.autoClear = true;
@@ -400,6 +405,40 @@ function create(opts) {
   const camera = new THREE.PerspectiveCamera(68, 0.46, 0.6, maxD * 3.4);
   scene.add(camera);                      // 뷰모델·검기 자식 메시를 위해
 
+  /* --- 환경 반사 (금속 검날의 광택) — 한 번만 만들어 모든 재질이 공유 --- */
+  let envTexture = null;
+  try {
+    const ec = document.createElement('canvas');
+    ec.width = 128; ec.height = 64;
+    const ex = ec.getContext('2d');
+    const eg = ex.createLinearGradient(0, 0, 0, 64);
+    eg.addColorStop(0, '#0b1a2c');
+    eg.addColorStop(0.42, '#2b567a');
+    eg.addColorStop(0.56, '#5f7f92');
+    eg.addColorStop(0.64, '#2a2a26');
+    eg.addColorStop(1, '#0d0f10');
+    ex.fillStyle = eg;
+    ex.fillRect(0, 0, 128, 64);
+    const moonGlow = ex.createRadialGradient(96, 12, 0, 96, 12, 22);
+    moonGlow.addColorStop(0, 'rgba(255,247,230,1)');
+    moonGlow.addColorStop(0.25, 'rgba(226,238,255,0.75)');
+    moonGlow.addColorStop(1, 'rgba(180,210,255,0)');
+    ex.fillStyle = moonGlow;
+    ex.fillRect(0, 0, 128, 64);
+    const envSrc = new THREE.CanvasTexture(ec);
+    envSrc.mapping = THREE.EquirectangularReflectionMapping;
+    envSrc.colorSpace = THREE.SRGBColorSpace;
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envRT = pmrem.fromEquirectangular(envSrc);
+    envTexture = envRT.texture;
+    scene.environment = envTexture;
+    scene.environmentIntensity = 0.6;
+    envSrc.dispose();
+    pmrem.dispose();
+  } catch (e) {
+    envTexture = null;      // 환경 반사 없이도 그대로 돈다
+  }
+
   const size = { w: 390, h: 844 };
   const colors = {
     me: colorOf(cfg.me && cfg.me.color, '#3b82f6'),
@@ -410,44 +449,80 @@ function create(opts) {
 
   const rand = mulberry32(((cfg.seed || 1) ^ 0x3d7a1f) >>> 0);
 
-  /* --- 조명 --- */
-  scene.add(new THREE.HemisphereLight(0xb6d4ff, 0x3a3020, 1.75));
-  scene.add(new THREE.AmbientLight(0x8fa6c8, 0.5));
-  const sun = new THREE.DirectionalLight(0xffe3b8, 2.15);
+  /* --- 조명 (대비를 살린 3점 조명 + 달빛 채움광) --- */
+  scene.add(new THREE.HemisphereLight(0xbfd8ff, 0x1d1c14, 0.82));
+  scene.add(new THREE.AmbientLight(0x7f97b8, 0.16));
+  const sun = new THREE.DirectionalLight(0xffe6c2, 1.55);
   sun.position.set(80, 165, -60);
   scene.add(sun);
-  const rim = new THREE.DirectionalLight(0x4b7fd8, 0.7);
+  const rim = new THREE.DirectionalLight(0x5b8fe0, 0.72);
   rim.position.set(-90, 90, 130);
   scene.add(rim);
+  const moonFill = new THREE.DirectionalLight(0xa8c8ff, 0.32);
+  moonFill.position.set(40, 110, 170);
+  scene.add(moonFill);
 
-  /* --- 하늘 · 먼 언덕 --- */
+  /* --- 하늘 · 먼 언덕 · 달 --- */
   (function addSky() {
     const c = document.createElement('canvas');
-    c.width = 8; c.height = 128;
+    c.width = 8; c.height = 256;
     const x = c.getContext('2d');
-    const g = x.createLinearGradient(0, 0, 0, 128);
-    g.addColorStop(0, '#060a12');
-    g.addColorStop(0.55, '#0b1622');
-    g.addColorStop(0.82, '#152a3c');
-    g.addColorStop(1, '#22384a');
+    const g = x.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, '#04070f');
+    g.addColorStop(0.42, '#0a1626');
+    g.addColorStop(0.72, '#16304a');
+    g.addColorStop(0.9, '#2b4c66');
+    g.addColorStop(1, '#3b5c72');
     x.fillStyle = g;
-    x.fillRect(0, 0, 8, 128);
+    x.fillRect(0, 0, 8, 256);
     const tex = new THREE.CanvasTexture(c);
     tex.colorSpace = THREE.SRGBColorSpace;
     const dome = new THREE.Mesh(
-      new THREE.SphereGeometry(maxD * 2.35, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.6),
+      new THREE.SphereGeometry(maxD * 2.35, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.6),
       new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, depthWrite: false, fog: false })
     );
     dome.position.y = -maxD * 0.06;
     scene.add(dome);
-    const hillMat = new THREE.MeshStandardMaterial({ color: 0x2a3f4d, roughness: 1, flatShading: true });
+
+    // 달 + 빛무리 (깊이감)
+    const moon = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: TEX.glow, color: 0xe8f2ff, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false
+    }));
+    moon.scale.set(maxD * 0.5, maxD * 0.5, 1);
+    moon.position.set(-maxD * 0.55, maxD * 0.72, -maxD * 1.35);
+    scene.add(moon);
+
+    // 별 (아주 옅게)
+    const starGeo = new THREE.BufferGeometry();
+    const starN = 90;
+    const sp = new Float32Array(starN * 3);
+    for (let i = 0; i < starN; i++) {
+      const a = rand() * Math.PI * 2;
+      const el2 = 0.18 + rand() * 0.62;
+      const r2 = maxD * 1.7;
+      sp[i * 3] = Math.cos(a) * Math.cos(el2) * r2;
+      sp[i * 3 + 1] = Math.sin(el2) * r2 * 0.9;
+      sp[i * 3 + 2] = Math.sin(a) * Math.cos(el2) * r2;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({
+      color: 0xdce9ff, size: 2.4, sizeAttenuation: false, transparent: true,
+      opacity: 0.55, depthWrite: false, fog: false, blending: THREE.AdditiveBlending
+    }));
+    stars.frustumCulled = false;
+    scene.add(stars);
+
+    const hillMat = new THREE.MeshStandardMaterial({ color: 0x24384a, roughness: 1, flatShading: true });
+    const hillFarMat = new THREE.MeshStandardMaterial({ color: 0x2c4256, roughness: 1, flatShading: true });
     const hk = clamp(maxD / 310, 1, 3.2);
-    const n = Math.round(18 + areaK * 4);
+    const n = Math.round(20 + areaK * 4);
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + rand() * 0.18;
-      const rad = maxD * (1.02 + rand() * 0.24);
-      const hgt = (40 + rand() * 55) * hk;
-      const hill = new THREE.Mesh(new THREE.ConeGeometry((130 + rand() * 90) * hk, hgt, 7), hillMat);
+      const far = i % 3 === 0;
+      const rad = maxD * (far ? 1.28 + rand() * 0.18 : 1.02 + rand() * 0.16);
+      const hgt = (40 + rand() * 55) * hk * (far ? 1.35 : 1);
+      const hill = new THREE.Mesh(new THREE.ConeGeometry((130 + rand() * 90) * hk, hgt, 7), far ? hillFarMat : hillMat);
       hill.position.set(Math.cos(a) * rad, hgt * 0.4 - 22 * hk, Math.sin(a) * rad);
       hill.rotation.y = rand() * 3;
       scene.add(hill);
@@ -679,34 +754,31 @@ function create(opts) {
   const darkColor = new THREE.Color(0x1d2530);
   const whiteColor = new THREE.Color(0xffffff);
   const crowdMat = {
-    armor: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.52, metalness: 0.2 }),
-    cloth: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.88 }),
-    steel: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.45, emissive: 0x16233a }),
-    skin: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82 }),
-    dark: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 }),
-    shield: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.42 }),
-    crest: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, emissive: 0x16233a })
+    armor: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.42, envMapIntensity: 1.05 }),
+    cloth: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, envMapIntensity: 0.7 }),
+    steel: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.2, metalness: 0.95, emissive: 0x1b2c44, emissiveIntensity: 0.5, envMapIntensity: 1.5 }),
+    skin: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.82, envMapIntensity: 0.5 }),
+    dark: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, envMapIntensity: 0.4 }),
+    crest: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45, metalness: 0.1, emissive: 0x223040, emissiveIntensity: 0.4, envMapIntensity: 0.8 })
   };
 
   // 파트 정의 — rig: 어느 관절을 따라가는지, pos: 관절 기준 로컬 위치
   const PARTS = [
     { key: 'torso', geo: GEO.torso, mat: 'armor', rig: 'body', pos: [0, 15.2, 0] },
-    { key: 'sash', geo: GEO.sash, mat: 'cloth', rig: 'body', pos: [0, 16.4, 3.15] },
-    { key: 'shoulderL', geo: GEO.shoulder, mat: 'armor', rig: 'body', pos: [-4.35, 19.2, 0] },
-    { key: 'shoulderR', geo: GEO.shoulder, mat: 'armor', rig: 'body', pos: [4.35, 19.2, 0] },
+    { key: 'sash', geo: GEO.sash, mat: 'cloth', rig: 'body', pos: [0, 15.0, 3.05] },
+    { key: 'shoulderL', geo: GEO.shoulder, mat: 'armor', rig: 'body', pos: [-4.3, 19.1, 0] },
+    { key: 'shoulderR', geo: GEO.shoulder, mat: 'armor', rig: 'body', pos: [4.3, 19.1, 0] },
     { key: 'neck', geo: GEO.neck, mat: 'skin', rig: 'body', pos: [0, 20.5, 0] },
     { key: 'head', geo: GEO.head, mat: 'skin', rig: 'body', pos: [0, 23.2, 0] },
     { key: 'helmet', geo: GEO.helmet, mat: 'steel', rig: 'body', pos: [0, 23.55, 0] },
     { key: 'visor', geo: GEO.visor, mat: 'dark', rig: 'body', pos: [0, 22.7, 2.35] },
-    { key: 'crest', geo: GEO.crest, mat: 'crest', rig: 'body', pos: [0, 25.3, -0.4] },
+    { key: 'crest', geo: GEO.crest, mat: 'crest', rig: 'body', pos: [0, 26.1, -1.5], rot: [-0.16, 0, 0] },
     { key: 'legL', geo: GEO.leg, mat: 'dark', rig: 'legL', pos: [0, -4.5, 0] },
     { key: 'bootL', geo: GEO.boot, mat: 'dark', rig: 'legL', pos: [0, -8.9, 0.55] },
     { key: 'legR', geo: GEO.leg, mat: 'dark', rig: 'legR', pos: [0, -4.5, 0] },
     { key: 'bootR', geo: GEO.boot, mat: 'dark', rig: 'legR', pos: [0, -8.9, 0.55] },
     { key: 'upArmL', geo: GEO.upperArm, mat: 'armor', rig: 'armL', pos: [0, -3.3, 0] },
     { key: 'foreArmL', geo: GEO.foreArm, mat: 'skin', rig: 'armL', pos: [0, -8.1, 0] },
-    { key: 'shieldBody', geo: GEO.shield, mat: 'shield', rig: 'armL', pos: [-1.2, -9.4, 2.6], rot: [Math.PI / 2, 0, 0] },
-    { key: 'shieldBoss', geo: GEO.boss, mat: 'steel', rig: 'armL', pos: [-1.2, -9.4, 3.1] },
     { key: 'upArmR', geo: GEO.upperArm, mat: 'armor', rig: 'armR', pos: [0, -3.3, 0] },
     { key: 'foreArmR', geo: GEO.foreArm, mat: 'skin', rig: 'armR', pos: [0, -8.1, 0] },
     { key: 'grip', geo: GEO.grip, mat: 'dark', rig: 'armR', pos: [0, -10.6, -1.1] },
@@ -733,11 +805,10 @@ function create(opts) {
   function partColor(def, team, out) {
     if (def.mat === 'skin') return out.copy(skinColor);
     if (def.mat === 'dark') return out.copy(darkColor);
-    if (def.mat === 'steel') return out.copy(team).lerp(whiteColor, 0.84);
-    if (def.mat === 'armor') return out.copy(team).multiplyScalar(0.62);
-    if (def.mat === 'cloth') return out.copy(team).multiplyScalar(0.94);
-    if (def.mat === 'shield') return out.copy(team).multiplyScalar(0.8);
-    if (def.mat === 'crest') return out.copy(team).lerp(whiteColor, 0.42);
+    if (def.mat === 'steel') return out.copy(team).lerp(whiteColor, 0.9);
+    if (def.mat === 'armor') return out.copy(team).multiplyScalar(0.52).lerp(whiteColor, 0.05);
+    if (def.mat === 'cloth') return out.copy(team).lerp(whiteColor, 0.12);
+    if (def.mat === 'crest') return out.copy(team).lerp(whiteColor, 0.58);
     if (def.mat === 'shadow') return out.setRGB(1, 1, 1);
     return out.setRGB(1, 1, 1);
   }
@@ -841,30 +912,44 @@ function create(opts) {
       _scl.set(1, 1, 1);
       _m.compose(_pos, _quat, _scl);
 
-      // 관절
-      rigT(_rigBody, 0, 0, 0, 0, 0, 0);
+      // 관절 — 걷기·달리기·공격이 이어지는 부드러운 모션
       rigT(_rigLegL, -2.05, 9.4, 0, v.swing, 0, 0);
       rigT(_rigLegR, 2.05, 9.4, 0, -v.swing, 0, 0);
 
-      let armX = -0.8, armY = 0.24, armLx = -0.12, armLy = -0.2;
+      const step = Math.sin(v.phase);
+      const runr = v.run || 0;
+      const swingAmp = 0.14 + runr * 0.95;
+      let armX = -0.72 + step * swingAmp;
+      let armY = 0.24 + runr * 0.12;
+      let armLx = -0.2 - step * swingAmp;
+      let armLy = -0.22 - runr * 0.1;
+      let torsoYaw = 0;
+      let torsoPitch = Math.sin(v.phase * 2) * (0.02 + runr * 0.05);
       if (u.wind > 0) {
-        const w = 1 - clamp(u.wind / 320, 0, 1);
-        armX = -0.55 - 1.35 * w;
-        armY = 0.85 - 0.45 * w;
+        // 예고 — 검을 위로 천천히 치켜들며 상체를 튼다 (ease-out)
+        const w = easeOutCubic(clamp(1 - u.wind / 320, 0, 1));
+        armX = -0.55 - 1.3 * w;
+        armY = 0.85 - 0.42 * w;
+        torsoYaw = -0.14 * w;
+        torsoPitch = -0.06 * w;
         windCount++;
       } else if (u.swing > 0) {
+        // 내려치기(빠르게) → 다시 위로 복귀(부드럽게)
         const s = 1 - clamp(u.swing / 180, 0, 1);
-        armY = 1.35 - 2.7 * s;
-        armX = -0.5;
+        const strike = s < 0.62 ? smoothstep(s / 0.62) : 1 - smoothstep((s - 0.62) / 0.38);
+        armY = 1.35 - 2.7 * strike;
+        armX = -0.5 - 0.16 * strike;
+        torsoYaw = 0.22 * strike - 0.05;
+        torsoPitch = 0.09 * strike;
         swingCount++;
       }
+      rigT(_rigBody, 0, 0, 0, torsoPitch, torsoYaw, 0);
       rigT(_rigArmR, 4.75, 19.1, 0, armX, armY, 0);
       rigT(_rigArmL, -4.75, 19.1, 0, armLx, armLy, 0);
 
       // 피격 섬광 (색을 흰색 쪽으로)
       const hurt = u.hit > 0 ? clamp(u.hit / 140, 0, 1) * 0.85 : 0;
-      const needColor = Math.abs(hurt - v.hurtPrev) > 0.02;
-      if (needColor) v.hurtPrev = hurt;
+      v.hurtPrev = hurt;
 
       for (let p = 0; p < parts.length; p++) {
         const P = parts[p];
@@ -873,7 +958,7 @@ function create(opts) {
           rig === 'armL' ? _rigArmL : rig === 'armR' ? _rigArmR : _rigBody;
         _m2.copy(_m).multiply(base).multiply(P.local);
         P.mesh.setMatrixAt(i, _m2);
-        if (needColor && P.def.mat !== 'shadow') {
+        if (P.def.mat !== 'shadow') {
           partColor(P.def, v.color, tmpColor2);
           if (hurt > 0) tmpColor2.lerp(whiteColor, hurt);
           P.mesh.setColorAt(i, tmpColor2);
@@ -886,18 +971,18 @@ function create(opts) {
         let mx = 0, vis = 0, w = 54, h = 32, bright = 1;
         if (u.wind > 0) {
           const k = 1 - clamp(u.wind / 320, 0, 1);
-          mx = 26;
+          mx = 24;
           vis = 1;
-          w = 46 + k * 12;
-          h = 26 + k * 8;
-          bright = 0.28 + k * 0.42 + Math.sin(S.time / 28) * 0.1;
+          w = 28 + k * 8;
+          h = 17 + k * 6;
+          bright = 0.34 + k * 0.5 + Math.sin(S.time / 28) * 0.1;
         } else if (u.swing > 0) {
           const k = 1 - clamp(u.swing / 180, 0, 1);
-          mx = 30;
+          mx = 26;
           vis = 1;
-          w = 62 + k * 22;
-          h = 34 + k * 12;
-          bright = (1 - k) * 1.05;
+          w = 36 + k * 14;
+          h = 21 + k * 8;
+          bright = (1 - k) * 1.15;
         }
         if (vis > 0) {
           // 1인칭에서는 수평으로 누운 검기는 거의 보이지 않는다 → 세로로 세워 적을 향해
@@ -1037,7 +1122,8 @@ function create(opts) {
   const pieces = new Map();
 
   function buildPiece(c) {
-    const cut = Number.isFinite(c.cut) ? c.cut : -Math.PI / 2;
+    const cut = Number.isFinite(c.cut) ? c.cut : 0;
+    const tilt = Number.isFinite(c.tilt) ? clamp(c.tilt, -1.5, 1.5) : 0;
     const side = c.side < 0 ? -1 : 1;
     const built = buildSoldier(enemyHex, { player: false });
     const group = built.group;
@@ -1049,7 +1135,9 @@ function create(opts) {
         ch.material.dispose();
       }
     }
-    const localPlane = new THREE.Plane(new THREE.Vector3(0, 0, side), 0);
+    // 절단면: 시선 방향으로 기울어진 면 — tilt 가 0이면 수직, ±90°면 수평으로 잘린다
+    const nLocal = new THREE.Vector3(0, side * Math.sin(tilt), side * Math.cos(tilt));
+    const localPlane = new THREE.Plane(nLocal.clone(), -14 * nLocal.y);
     const worldPlane = new THREE.Plane();
     const mats = [];
     group.traverse((o) => {
@@ -1068,37 +1156,40 @@ function create(opts) {
     group.position.set(c.x - W / 2, 12, c.y - H / 2);
     group.scale.setScalar(1.0);
 
-    const flesh = new THREE.Mesh(
+    // 잘린 단면 — 피가 아니라 검은 심 + 푸른 빛 절단면
+    const core = new THREE.Mesh(
       new THREE.PlaneGeometry(11, 25),
       new THREE.MeshBasicMaterial({
-        map: TEX.flesh, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false
+        color: 0x9fd8ff, map: TEX.core, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false
       })
     );
-    flesh.position.set(0, 12.5, -side * 0.1);
-    group.add(flesh);
+    core.position.set(0, 14, 0).addScaledVector(nLocal, -side * 0.08);
+    core.rotation.x = -tilt;
+    group.add(core);
 
     const flashMat = new THREE.MeshBasicMaterial({
-      color: 0xffe9e6, transparent: true, opacity: 0.95, side: THREE.DoubleSide,
+      color: 0xdff3ff, transparent: true, opacity: 0.75, side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending, depthWrite: false
     });
     const flash = new THREE.Mesh(new THREE.PlaneGeometry(26, 1.4), flashMat);
-    flash.position.set(0, 14, 0);
+    flash.position.set(0, 16.2, 0);
+    flash.rotation.x = -tilt;
     group.add(flash);
 
     scene.add(group);
     return {
-      obj: group, cut: cut, side: side, localPlane: localPlane, plane: worldPlane,
-      mats: mats, flesh: flesh, flash: flash, flashMat: flashMat,
+      obj: group, cut: cut, tilt: tilt, side: side, localPlane: localPlane, plane: worldPlane,
+      mats: mats, core: core, coreColor: '#9fd8ff', flash: flash, flashMat: flashMat,
       ox: c.x, oy: c.y, k: 0.5,
-      y: 12, vy: 62 + Math.random() * 46, parts: mats.length, opacity: 1
+      y: 12, vy: 62 + Math.random() * 46 + side * Math.sin(tilt) * 96, parts: mats.length, opacity: 1
     };
   }
 
   function disposePiece(p) {
     scene.remove(p.obj);
     for (const m of p.mats) m.dispose();
-    p.flesh.geometry.dispose();
-    p.flesh.material.dispose();
+    p.core.geometry.dispose();
+    p.core.material.dispose();
     p.flash.geometry.dispose();
     p.flash.material.dispose();
   }
@@ -1130,7 +1221,7 @@ function create(opts) {
       const fade = left > 0.72 ? 1 : left / 0.72;
       p.opacity = fade;
       for (const m of p.mats) m.opacity = fade;
-      p.flesh.material.opacity = fade * 0.95;
+      p.core.material.opacity = fade * 0.95;
       const flashP = clamp(1 - (950 - c.life) / 170, 0, 1);
       p.flashMat.opacity = flashP * 0.95;
       p.flash.visible = flashP > 0.01;
@@ -1145,13 +1236,43 @@ function create(opts) {
   pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
   pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
   const pMat = new THREE.PointsMaterial({
-    size: 6, map: TEX.glow, transparent: true, vertexColors: true,
-    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0.95
+    size: 2.8, map: TEX.glow, transparent: true, vertexColors: true,
+    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true, opacity: 0.85
   });
   const pPoints = new THREE.Points(pGeo, pMat);
   pPoints.frustumCulled = false;
   scene.add(pPoints);
   const pState = new WeakMap();
+
+  /* --- 공중 먼지 · 불티 (분위기 · 카메라를 따라다닌다) --- */
+  const DUST_N = 150;
+  const dustGeo = new THREE.BufferGeometry();
+  const dustPos = new Float32Array(DUST_N * 3);
+  const dustSeed = [];
+  for (let i = 0; i < DUST_N; i++) {
+    dustSeed.push({
+      x: (rand() - 0.5) * 540, y: 3 + rand() * 86, z: (rand() - 0.5) * 540,
+      ph: rand() * 6.28, sp: 0.25 + rand() * 0.5
+    });
+  }
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+  const dustMat = new THREE.PointsMaterial({
+    color: 0xd6e6ff, size: 2.4, map: TEX.glow, transparent: true, opacity: 0.3,
+    depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true
+  });
+  const dustPoints = new THREE.Points(dustGeo, dustMat);
+  dustPoints.frustumCulled = false;
+  scene.add(dustPoints);
+
+  function updateDust(t, cx, cz) {
+    for (let i = 0; i < DUST_N; i++) {
+      const d = dustSeed[i];
+      dustPos[i * 3] = cx + d.x + Math.sin(t * d.sp + d.ph) * 16;
+      dustPos[i * 3 + 1] = d.y + Math.sin(t * 0.85 + d.ph) * 5;
+      dustPos[i * 3 + 2] = cz + d.z + Math.cos(t * d.sp * 0.9 + d.ph) * 16;
+    }
+    dustGeo.attributes.position.needsUpdate = true;
+  }
 
   function syncParticles(S, dt) {
     let n = 0;
@@ -1169,9 +1290,9 @@ function create(opts) {
       const a = clamp(p.life / (p.max || 400), 0, 1);
       try {
         if (String(p.color).charAt(0) === '#') tmpColor.set(p.color);
-        else tmpColor.setRGB(1, 0.45, 0.35);
-      } catch (e) { tmpColor.setRGB(1, 0.6, 0.4); }
-      const k = a * (p.color && String(p.color).indexOf('120,26,26') >= 0 ? 0.45 : 1.15);
+        else tmpColor.setRGB(0.55, 0.85, 1.0);
+      } catch (e) { tmpColor.setRGB(0.55, 0.85, 1.0); }
+      const k = a * 1.15;
       pCol[n * 3] = tmpColor.r * k;
       pCol[n * 3 + 1] = tmpColor.g * k;
       pCol[n * 3 + 2] = tmpColor.b * k;
@@ -1215,10 +1336,22 @@ function create(opts) {
     const bob = Math.sin(bobT) * (0.12 + run * 0.55);
 
     const px = pl.x - W / 2, pz = pl.y - H / 2;
-    camera.position.set(px, EYE + bob, pz);
+
+    // 베기 반동 · 막기 브레이스 · 숨쉬기 (카메라가 살짝 따라 움직인다)
+    const ap = pl.atkAnim > 0 ? 1 - clamp(pl.atkAnim / ATK_DUR, 0, 1) : 0;
+    const kick = ap > 0 && ap < 0.62 ? Math.sin((ap / 0.62) * Math.PI) : 0;
+    const brace = vmGuard * 0.55;
+    const breath = Math.sin(timeSec * 1.35) * 0.035;
+
+    camera.position.set(px, EYE + bob - kick * 0.22 - brace * 0.1 + breath, pz + kick * 0.4);
     const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
     const fx = Math.cos(camYaw), fz = Math.sin(camYaw);
-    lookNow.set(px + fx * cp * 120, EYE + bob + sp * 120, pz + fz * cp * 120);
+    const side = Math.sin(Math.PI * clamp(ap, 0, 1)) * 0.9;
+    lookNow.set(
+      px + fx * cp * 120 - fz * side,
+      EYE + bob + sp * 120 - kick * 1.5 + breath,
+      pz + fz * cp * 120 + fx * side
+    );
     camera.up.set(0, 1, 0);
     camera.lookAt(lookNow);
 
@@ -1234,6 +1367,10 @@ function create(opts) {
      1인칭 뷰모델 (오른손 검 · 왼손 방패) — 별도 씬/카메라로 깊이 클리어 후 렌더
      =========================================================================== */
   const vmScene = new THREE.Scene();
+  if (envTexture) {
+    vmScene.environment = envTexture;
+    vmScene.environmentIntensity = 0.75;
+  }
   const vmCam = new THREE.PerspectiveCamera(58, 0.46, 0.05, 40);
   if (typeof window !== 'undefined') window.__vmCam = vmCam;
   vmScene.add(new THREE.HemisphereLight(0xbcd6ff, 0x2a2218, 2.0));
@@ -1247,13 +1384,12 @@ function create(opts) {
   const vm = new THREE.Group();
   vmScene.add(vm);
   const vmMats = {
-    steel: new THREE.MeshStandardMaterial({ color: 0xe8f1fb, roughness: 0.34, metalness: 0.5, emissive: 0x16202c, emissiveIntensity: 0.9 }),
-    steelDark: new THREE.MeshStandardMaterial({ color: 0xb9c7d8, roughness: 0.42, metalness: 0.45, emissive: 0x0d141c }),
-    skin: new THREE.MeshStandardMaterial({ color: 0xc08a5e, roughness: 0.82 }),
-    cloth: new THREE.MeshStandardMaterial({ color: colors.me.clone().multiplyScalar(0.88), roughness: 0.86 }),
-    clothDark: new THREE.MeshStandardMaterial({ color: colors.me.clone().multiplyScalar(0.5), roughness: 0.9 }),
-    shield: new THREE.MeshStandardMaterial({ color: colors.me.clone().multiplyScalar(0.95), roughness: 0.52, metalness: 0.25, emissive: colors.me.clone().multiplyScalar(0.12) }),
-    gold: new THREE.MeshStandardMaterial({ color: 0xd9c48a, roughness: 0.42, metalness: 0.65 })
+    steel: new THREE.MeshStandardMaterial({ color: 0xeef5ff, roughness: 0.16, metalness: 0.96, emissive: 0x1a2a3e, emissiveIntensity: 1.1, envMapIntensity: 1.8 }),
+    steelDark: new THREE.MeshStandardMaterial({ color: 0xaebdd0, roughness: 0.3, metalness: 0.6, emissive: 0x0d141c, envMapIntensity: 1.2 }),
+    skin: new THREE.MeshStandardMaterial({ color: 0xc08a5e, roughness: 0.8 }),
+    cloth: new THREE.MeshStandardMaterial({ color: colors.me.clone().multiplyScalar(0.9), roughness: 0.82 }),
+    clothDark: new THREE.MeshStandardMaterial({ color: colors.me.clone().multiplyScalar(0.5), roughness: 0.88 }),
+    gold: new THREE.MeshStandardMaterial({ color: 0xe3cd92, roughness: 0.3, metalness: 0.9, envMapIntensity: 1.4 })
   };
 
   const swordArm = new THREE.Group();
@@ -1294,42 +1430,51 @@ function create(opts) {
   sword.position.set(0, 0.02, 0);
   sword.rotation.set(-0.5, 0.1, -0.14);
 
-  const shieldArm = new THREE.Group();
-  vm.add(shieldArm);
-  shieldArm.position.set(-1.02, -1.78, -4.45);
-  shieldArm.rotation.set(0.05, 0.4, -0.06);
-  const foreL = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.8, 0.28), vmMats.cloth);
-  foreL.position.set(0.02, -0.26, -0.22);
-  foreL.rotation.x = 0.3;
-  shieldArm.add(foreL);
-  const handL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.24, 0.26), vmMats.skin);
-  handL.position.set(0, 0, -0.12);
-  shieldArm.add(handL);
+  /* --- 자세 키프레임 (방패 없음 · 검 하나) ----------------------------------
+     READY  = 오른손 검을 살짝 든 기본 자세
+     GUARD  = 검을 화면 가운데로 옆으로 가로질러 세운 막기 자세
+     WIND   = 내려치기 전에 검을 반대편 위로 치켜든 자세
+     END    = 대각선 아래까지 내려간 자세 (여기서 위로 매끄럽게 복귀)
+     ------------------------------------------------------------------------ */
+  const POSE_READY = { px: 1.04, py: -1.42, pz: -4.95, rx: -0.05, ry: 0.1, rz: -0.12, sx: -0.5, sy: 0.1, sz: -0.14 };
+  const POSE_GUARD = { px: 0.1, py: -0.62, pz: -3.3, rx: -0.16, ry: 0.02, rz: -1.36, sx: -0.12, sy: 0.02, sz: 0.02 };
+  const _windPose = { px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, sx: 0, sy: 0, sz: 0 };
+  const _endPose = { px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, sx: 0, sy: 0, sz: 0 };
+  const _pose = { px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, sx: 0, sy: 0, sz: 0 };
 
-  const shield = new THREE.Group();
-  shieldArm.add(shield);
-  const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.66, 0.1, 22), vmMats.shield);
-  disc.rotation.x = Math.PI / 2;
-  shield.add(disc);
-  const shieldRim = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.048, 6, 26), vmMats.steelDark);
-  shieldRim.position.z = 0.045;
-  shield.add(shieldRim);
-  const shieldBoss = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 8), vmMats.gold);
-  shieldBoss.scale.z = 0.7;
-  shieldBoss.position.z = 0.09;
-  shield.add(shieldBoss);
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.95, 0.03), vmMats.gold);
-  stripe.position.z = 0.056;
-  shield.add(stripe);
-  shield.position.set(0, 0.06, 0.02);
+  function poseLerp(a, b, t) {
+    _pose.px = a.px + (b.px - a.px) * t;
+    _pose.py = a.py + (b.py - a.py) * t;
+    _pose.pz = a.pz + (b.pz - a.pz) * t;
+    _pose.rx = a.rx + (b.rx - a.rx) * t;
+    _pose.ry = a.ry + (b.ry - a.ry) * t;
+    _pose.rz = a.rz + (b.rz - a.rz) * t;
+    _pose.sx = a.sx + (b.sx - a.sx) * t;
+    _pose.sy = a.sy + (b.sy - a.sy) * t;
+    _pose.sz = a.sz + (b.sz - a.sz) * t;
+    return _pose;
+  }
+
+  /* 스와이프 방향(dx 오른쪽+, dy 아래+)에 맞춘 검 궤적 */
+  function slashPoses(dx, dy) {
+    const R = POSE_READY;
+    _windPose.px = R.px + 0.32 * dx; _windPose.py = R.py + 0.52; _windPose.pz = R.pz + 0.2;
+    _windPose.rx = R.rx - 0.55 * dy; _windPose.ry = R.ry; _windPose.rz = R.rz + 0.95 * dx;
+    _windPose.sx = -0.72; _windPose.sy = 0.1; _windPose.sz = R.sz + 0.5 * dx;
+    _endPose.px = R.px - 0.58 * dx; _endPose.py = R.py - 0.52 * dy; _endPose.pz = R.pz + 0.5;
+    _endPose.rx = R.rx + 0.72 * dy; _endPose.ry = R.ry - 0.3 * dx; _endPose.rz = R.rz - 2.15 * dx;
+    _endPose.sx = R.sx + 0.3 * dy; _endPose.sy = 0.1; _endPose.sz = R.sz - 0.35 * dx;
+  }
+
 
   // 뷰모델 메시 수 (테스트용)
   let vmMeshes = 0;
-  vmScene.traverse((o) => { if (o.isMesh) vmMeshes++; });
+  vm.traverse((o) => { if (o.isMesh) { vmMeshes++; o.name = 'vm-' + (o.geometry ? o.geometry.type : 'mesh'); } });
 
   let vmGuard = 0;
   let vmBob = 0;
   let vmHit = 0;
+  const vmState = { phase: 0, dx: 0, dy: 0, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, sx: 0, sy: 0, sz: 0 };
 
   function updateViewModel(S, dt) {
     const pl = S.player;
@@ -1339,39 +1484,45 @@ function create(opts) {
     const bob = Math.sin(vmBob) * (0.02 + run * 0.055);
     const sway = Math.sin(vmBob * 0.5) * (0.02 + run * 0.05);
 
-    const p = pl.atkAnim > 0 ? 1 - clamp(pl.atkAnim / 260, 0, 1) : 0;
-    const e = p > 0 ? 1 - Math.pow(1 - p, 3) : 0;
-
     const dashK = pl.dash > 0 ? clamp(pl.dash / 190, 0, 1) : 0;
     vmHit = pl.hit > 0 ? clamp(pl.hit / 180, 0, 1) : 0;
 
     vm.position.set(sway, bob - 0.01, dashK * 0.62);
     vm.rotation.set(-run * 0.02 - dashK * 0.11 + vmHit * 0.02, 0, Math.sin(vmBob * 0.5) * 0.02 * run);
 
-    // 오른팔 + 검 — 대각선으로 크게 베는 궤적
-    swordArm.position.set(
-      1.04 - e * 0.45,
-      -1.42 + e * 0.5 + bob * 0.5,
-      -4.95 + e * 0.4
-    );
-    swordArm.rotation.set(-0.05 + e * 0.7, 0.1 - e * 0.3, -0.12 - e * 1.9);
-    sword.rotation.z = -0.14 - e * 0.35;
-    sword.rotation.x = -0.5 + e * 0.2;
+    /* --- 대각선 내려치기 → 위로 매끄러운 복귀 --- */
+    const sw = pl.swipe || { sx: 0.7, sy: 0.72 };
+    const dx = clamp(sw.sx, -1, 1), dy = clamp(sw.sy, -1, 1);
+    const p = pl.atkAnim > 0 ? 1 - clamp(pl.atkAnim / ATK_DUR, 0, 1) : 0;
+    let pose = POSE_READY;
+    if (p > 0.0001) {
+      slashPoses(dx, dy);
+      if (p < 0.16) pose = poseLerp(POSE_READY, _windPose, easeOutCubic(p / 0.16));
+      else if (p < 0.44) pose = poseLerp(_windPose, _endPose, easeInQuad((p - 0.16) / 0.28));
+      else pose = poseLerp(_endPose, POSE_READY, smoothstep(clamp((p - 0.44) / 0.56, 0, 1)));
+    }
 
-    // 왼팔 + 방패 — 막으면 정면으로 올린다
+    /* --- 막기: 검을 옆으로 가로질러 화면 가운데를 가로막는다 --- */
     const gTarget = pl.guard ? 1 : 0;
     vmGuard += (gTarget - vmGuard) * Math.min(1, dt / 70);
-    shieldArm.position.set(
-      -1.02 + vmGuard * 0.72,
-      -1.78 + vmGuard * 0.85 + bob * 0.5,
-      -4.45 + vmGuard * 0.45
-    );
-    shieldArm.rotation.set(0.05 - vmGuard * 0.12, 0.44 - vmGuard * 0.36, -0.06 + vmGuard * 0.05);
-    shield.rotation.z = vmGuard * 0.12;
+    let px = pose.px, py = pose.py, pz = pose.pz;
+    let rx = pose.rx, ry = pose.ry, rz = pose.rz;
+    let sx = pose.sx, sy = pose.sy, sz = pose.sz;
+    if (vmGuard > 0.001) {
+      const G = POSE_GUARD, g = vmGuard;
+      px += (G.px - px) * g; py += (G.py - py) * g; pz += (G.pz - pz) * g;
+      rx += (G.rx - rx) * g; ry += (G.ry - ry) * g; rz += (G.rz - rz) * g;
+      sx += (G.sx - sx) * g; sy += (G.sy - sy) * g; sz += (G.sz - sz) * g;
+    }
 
-    // 막는 동안 검은 뒤로
-    swordArm.position.x -= vmGuard * 0.22;
-    swordArm.rotation.z -= vmGuard * 0.3;
+    swordArm.position.set(px, py + bob * 0.5, pz + dashK * 0.3);
+    swordArm.rotation.set(rx, ry, rz);
+    sword.rotation.set(sx, sy, sz);
+
+    vmState.phase = p; vmState.dx = dx; vmState.dy = dy;
+    vmState.px = swordArm.position.x; vmState.py = swordArm.position.y; vmState.pz = swordArm.position.z;
+    vmState.rx = swordArm.rotation.x; vmState.ry = swordArm.rotation.y; vmState.rz = swordArm.rotation.z;
+    vmState.sx = sword.rotation.x; vmState.sy = sword.rotation.y; vmState.sz = sword.rotation.z;
   }
 
   /* --- 깃발 · 불 애니메이션 --- */
@@ -1434,6 +1585,7 @@ function create(opts) {
     updateBanners(timeSec);
     updateCamera(S, dt);
     updateViewModel(S, dt);
+    updateDust(timeSec, camera.position.x, camera.position.z);
 
     renderer.autoClear = true;
     renderer.info.reset();
@@ -1521,7 +1673,7 @@ function create(opts) {
     camera: camera,
     viewpoint: 'first-person',
     eye: EYE,
-    viewmodel: { group: vm, swordArm: swordArm, shieldArm: shieldArm, meshes: vmMeshes, scene: vmScene },
+    viewmodel: { group: vm, swordArm: swordArm, shieldArm: null, sword: sword, meshes: vmMeshes, scene: vmScene },
     debugCamera: null,
     render: render,
     resize: resize,
@@ -1555,10 +1707,30 @@ function create(opts) {
           yaw: camYaw,
           pitch: camPitch,
           viewmodelMeshes: vmMeshes,
-          viewmodelVisible: !!(vm.visible && swordArm.visible && shieldArm.visible),
-          viewmodelGuard: vmGuard
+          viewmodelVisible: !!(vm.visible && swordArm.visible),
+          viewmodelGuard: vmGuard,
+          shield: false,
+          swordPhase: vmState.phase,
+          slashDir: { x: vmState.dx, y: vmState.dy },
+          atkDur: ATK_DUR,
+          sword: {
+            x: vmState.px, y: vmState.py, z: vmState.pz,
+            rx: vmState.rx, ry: vmState.ry, rz: vmState.rz,
+            sx: vmState.sx, sy: vmState.sy, sz: vmState.sz
+          }
         },
         crowd: { parts: parts.length, max: MAX_SOLDIERS },
+        graphics: {
+          env: !!scene.environment,
+          lights: scene.children.filter((o) => !!o.isLight).length,
+          dust: DUST_N,
+          steelMetal: crowdMat.steel.metalness,
+          steelRough: crowdMat.steel.roughness,
+          vmSteelMetal: vmMats.steel.metalness,
+          vmEnv: !!vmScene.environment,
+          rim: rim.intensity,
+          sun: sun.intensity
+        },
         perspective: camera.isPerspectiveCamera
       };
     },
@@ -1567,13 +1739,16 @@ function create(opts) {
       for (const [c, p] of pieces) {
         out.push({
           cut: p.cut,
+          tilt: p.tilt,
           side: p.side,
           x: p.obj.position.x + W / 2,
           y: p.obj.position.z + H / 2,
           height: p.obj.position.y,
           opacity: p.opacity,
           parts: p.parts,
+          core: p.coreColor,
           rot: c.rot,
+          localN: { nx: p.localPlane.normal.x, ny: p.localPlane.normal.y, nz: p.localPlane.normal.z },
           plane: { nx: p.plane.normal.x, ny: p.plane.normal.y, nz: p.plane.normal.z, c: p.plane.constant }
         });
       }

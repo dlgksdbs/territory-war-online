@@ -3,9 +3,10 @@
 /* 영토 전쟁 ONLINE · 3D 칼싸움 전장(Three.js) 모바일 검증 — 1인칭 개조판
    - 390×844 세로(portrait) 터치 뷰포트 + SwiftShader WebGL
    - 1부: 서버 참전 흐름 — 3D 아레나 진입 / 1인칭 눈높이 / 조이스틱은 시점을 돌리지 않음
-   - 2부: 결정적 1인칭 검증 — 왼손 방패·오른손 검 뷰모델, 오른쪽 드래그로만 시점 회전,
-           적 칼 휘두름 + 붉은 검기, 3D 두 동강, 대각선/돌진 절단, 막기 자세
-   - 3부: 홈 화면 [대규모 3D 전장] 버튼 → 700×1500 대형 전장 · 다수 병사 · 다시 싸우기
+   - 2부: 결정적 1인칭 검증 — 방패 없는 오른손 검 뷰모델, 검을 옆으로 가로지른 막기,
+           대각선 내려치기 → 위로 복귀 모션, 한 방에 죽고 체력바·피 없음,
+           대각선 3D 두 동강(절단면 기울기), 오른쪽 빠른 스와이프 베기
+   - 3부: 홈 화면 적군/아군 병사 수(각 최대 1000) → 그 수 그대로 대형 전장 시작
    - 4부: Three.js/WebGL 이 없을 때 2D 자동 폴백
    - 콘솔/페이지 오류 0, 스크린샷 -> screenshots/
 */
@@ -39,7 +40,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   const errors = [];
   const page = await browser.newPage();
-  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
   page.on('requestfailed', (r) => errors.push('requestfailed: ' + r.url()));
@@ -130,7 +131,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         cam: r.camera.position.toArray(),
         camAtPlayer: Math.hypot(r.camera.position.x - (st.player.x - st.cfg.w / 2),
           r.camera.position.z - (st.player.y - st.cfg.h / 2)),
-        vm: { meshes: r.viewmodel.meshes, visible: r.info().fp.viewmodelVisible }
+        vm: { meshes: r.viewmodel.meshes, visible: r.info().fp.viewmodelVisible, shield: r.viewmodel.shieldArm }
       };
     });
     if (!snap) { await sleep(800); continue; }
@@ -158,8 +159,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('1인칭 카메라가 병사 눈높이(≈20) · 플레이어 위치에 있다',
     !!live && Math.abs(live.cam[1] - 20.5) < 3.5 && live.camAtPlayer < 3,
     live && { cam: live.cam.map((v) => +v.toFixed(1)), dist: +(live.camAtPlayer || 0).toFixed(2) });
-  ok('내 3인칭 몸 대신 손에 든 검·방패 뷰모델이 보인다 (1인칭)',
-    !!live && live.vm.meshes >= 10 && live.vm.visible, live && live.vm);
+  ok('내 3인칭 몸 대신 손에 든 검 뷰모델이 보인다 (1인칭 · 방패 없음)',
+    !!live && live.vm.meshes >= 8 && live.vm.visible && live.vm.shield === null, live && live.vm);
   ok('병사를 인스턴싱으로 그린다 (드로우콜 260 이하로 다수 병사)',
     !!live && live.info.calls > 30 && live.info.calls < 260 && live.info.triangles > 3000,
     live && { calls: live.info.calls, tri: live.info.triangles });
@@ -188,14 +189,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const r = st.r3d;
     const i = r.info();
     const v = r.viewmodel;
+    let shieldMeshes = 0;
+    v.scene.traverse((o) => { if (o.isMesh && /shield/.test(o.name || '')) shieldMeshes++; });
     return {
       mode: window.TWArena.mode(),
       eye: i.fp.eye, camY: i.camera.y, camX: i.camera.x, camZ: i.camera.z,
       px: st.player.x, py: st.player.y, yaw: i.fp.yaw, face: st.player.face, pitch: i.fp.pitch,
       fov: i.camera.fov, aspect: i.canvas.cw / i.canvas.ch,
       vmMeshes: v.meshes, vmVisible: !!v.group.visible,
-      swordZ: v.swordArm.position.z, shieldZ: v.shieldArm.position.z,
-      shieldX: v.shieldArm.position.x, swordX: v.swordArm.position.x,
+      swordZ: v.swordArm.position.z, swordX: v.swordArm.position.x,
+      shieldArm: v.shieldArm, shieldMeshes: shieldMeshes,
+      graphics: i.graphics,
       playerGroupRendered: !!document.querySelector('#arenaCanvas3d')
     };
   });
@@ -205,10 +209,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('카메라가 플레이어 머리 위치에 있다 (x·z 일치 · 세로 화면 fov 72~92)',
     Math.hypot(fp.camX - (fp.px - 140), fp.camZ - (fp.py - 300)) < 2.5,
     { cam: [+fp.camX.toFixed(1), +fp.camZ.toFixed(1)], player: [fp.px - 140, fp.py - 300] });
-  ok('오른손 검 · 왼손 방패 뷰모델이 카메라 앞 화면 안에 배치된다',
-    fp.vmVisible && fp.vmMeshes >= 10 && fp.swordZ < -3 && fp.shieldZ < -3 &&
-    fp.swordX > 0.4 && fp.shieldX < -0.4,
-    { meshes: fp.vmMeshes, sword: [fp.swordX, fp.swordZ], shield: [fp.shieldX, fp.shieldZ] });
+  ok('오른손 검 뷰모델이 카메라 앞 화면 안에 배치된다 (왼손 방패 완전 제거)',
+    fp.vmVisible && fp.vmMeshes >= 8 && fp.swordZ < -3 && fp.swordX > 0.4 &&
+    fp.shieldArm === null && fp.shieldMeshes === 0,
+    { meshes: fp.vmMeshes, sword: [fp.swordX, fp.swordZ], shieldArm: fp.shieldArm, shieldMeshes: fp.shieldMeshes });
+  ok('그래픽 개선 — 환경 반사(금속 광택) · 조명 4개+ · 공중 먼지',
+    fp.graphics.env === true && fp.graphics.lights >= 4 && fp.graphics.dust >= 100 &&
+    fp.graphics.steelMetal >= 0.9 && fp.graphics.vmSteelMetal >= 0.9 && fp.graphics.rim > 0.5,
+    fp.graphics);
   ok('세로 화면(390×844) 시야각이 확보된다 (수직 72~92° · 수평 45°+)',
     fp.fov >= 72 && fp.fov <= 92 &&
     (2 * Math.atan(Math.tan((fp.fov * Math.PI) / 360) * fp.aspect) * 180 / Math.PI) >= 45,
@@ -286,7 +294,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('오른쪽 위아래 드래그로 고개를 숙이고 든다 (제한 -1.05~0.9rad)',
     pitchDown < -0.2 && pitchDown >= -1.06, +pitchDown.toFixed(2));
 
-  // 정면에 적 3명 → ⚔️ 베기
+  // 정면에 적 3명 → ⚔️ 베기 (한 방에 죽는다 · 체력 가득이어도)
   const setup = await page.evaluate(() => {
     const st = window.TWArena.state();
     st.enemies.forEach((e) => { e.dead = true; });
@@ -299,32 +307,54 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     for (let i = 0; i < 3; i++) {
       st.enemies.push({
         team: 'enemy', x: 180 + 34 + i * 6, y: 380 + (i - 1) * 9,
-        r: 8.4, hp: 12, maxHp: 76, speed: 0.0001, face: Math.PI, cd: 99999, wind: 0,
+        r: 8.4, hp: 76, maxHp: 76, speed: 0.0001, face: Math.PI, cd: 99999, wind: 0,
         swing: 0, hit: 0, stun: 0, dead: false, lastHitBy: null, dashHit: false, wob: 0
       });
     }
-    return { kills: st.kills };
+    return { kills: st.kills, hpBars: st.hud.hpBars };
   });
   await page.click('#arSlash');
   await waitPieces(2);
   await more(1);
   const slash = await page.evaluate(() => {
     const st = window.TWArena.state();
+    const pcs = st.r3d.piecesInfo();
     return {
       kills: st.kills, slashes: st.slashes.length, slashViews: st.r3d.info().slashes,
-      cuts: st.r3d.info().cuts, pieces: st.r3d.piecesInfo()
+      cuts: st.r3d.info().cuts, pieces: pcs, hpBars: st.hud.hpBars,
+      lastSlice: st.lastSlice, lastSwipe: st.lastSwipe,
+      particles: st.particles.slice(0, 40).map((p) => p.color),
+      playerDmgFloat: st.floats.filter((f) => /^-\d/.test(f.text)).length
     };
   });
   ok('⚔️ 베기 → 1인칭 화면에 3D 검기 메시가 그려진다', slash.slashes > 0 && slash.slashViews > 0,
     { sim: slash.slashes, mesh: slash.slashViews });
+  ok('한 방에 적 3명이 모두 쓰러진다 (체력 가득이어도 1격)',
+    slash.kills - setup.kills === 3, { kills: slash.kills - setup.kills });
   ok('베어낸 적이 3D 조각 2개로 갈라진다 (1명당 정확히 2조각)',
     slash.pieces.length === (slash.kills - setup.kills) * 2 && slash.pieces.length >= 2,
     { pieces: slash.pieces.length, kills: slash.kills - setup.kills });
+  ok('적 체력바 없음 · 피(붉은 파티클) 없음 · 숫자 데미지 없음',
+    slash.hpBars === 0 && slash.playerDmgFloat === 0 &&
+    slash.particles.every((c) => {
+      const m = /rgba?\((\d+),(\d+),(\d+)/.exec(String(c));
+      if (!m) return true;
+      const r = +m[1], g = +m[2], b = +m[3];
+      return !(r > 140 && g < 90 && b < 90);
+    }),
+    { hpBars: slash.hpBars, dmgNums: slash.playerDmgFloat, colors: slash.particles.slice(0, 6) });
   ok('조각의 절단각이 플레이어 시점(0rad)과 같다',
     slash.pieces.every((p) => Math.abs(p.cut) < 0.001), slash.pieces.map((p) => p.cut));
-  ok('3D 절단면 법선이 칼날에 수직이다',
-    slash.pieces.every((p) => Math.abs(p.plane.nx * Math.cos(p.cut) + p.plane.nz * Math.sin(p.cut)) < 0.01),
-    slash.pieces.map((p) => ({ nx: +p.plane.nx.toFixed(2), nz: +p.plane.nz.toFixed(2) })));
+  ok('기본 베기는 대각선(≈0.77rad)으로 잘린다 (수직一刀가 아님)',
+    slash.pieces.every((p) => Math.abs(p.tilt - 0.77) < 0.06),
+    { tilt: slash.pieces.map((p) => +p.tilt.toFixed(3)), slice: slash.lastSlice && +slash.lastSlice.tilt.toFixed(3) });
+  ok('3D 절단면이 칼날을 포함하고 · 법선이 위아래로 기운다 (대각선 절단면)',
+    slash.pieces.every((p) => Math.abs(p.localN.nx) < 0.001) &&
+    slash.pieces.every((p) => Math.abs(p.localN.ny - p.side * Math.sin(p.tilt)) < 0.02) &&
+    slash.pieces.every((p) => Math.abs(p.localN.nz - p.side * Math.cos(p.tilt)) < 0.02),
+    slash.pieces.map((p) => ({ n: [+p.localN.nx.toFixed(2), +p.localN.ny.toFixed(2), +p.localN.nz.toFixed(2)], side: p.side })));
+  ok('절단면 심은 붉은 살점이 아니라 검은 심 + 푸른 빛',
+    slash.pieces.every((p) => p.core === '#9fd8ff'), slash.pieces.map((p) => p.core));
   ok('조각은 실제 잘린 병사 메시다 (조각당 파트 5개+)',
     slash.pieces.every((p) => p.parts >= 5), slash.pieces.map((p) => p.parts));
   ok('절단 섬광 판이 함께 그려진다', slash.cuts > 0, slash.cuts);
@@ -387,6 +417,121 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   ok('오른쪽 화면 짧은 탭 → 베기 (시점은 그대로)',
     tapped.kills > tapSetup.kills && Math.abs(tapped.face - tapSetup.face) < 0.02, tapped);
+
+  /* --- 1인칭 검 궤적: 위로 치켜들기 → 대각선 내려치기 → 위로 매끄러운 복귀 --- */
+  await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
+    st.player.atkAnim = 0; st.player.atkCd = 0; st.player.dash = 0;
+    st.player.swipe = { sx: 0.7, sy: 0.72 };
+    document.getElementById('arDown').classList.add('hidden');
+  });
+  await more(2);
+  const poseReady = await page.evaluate(() => window.TWArena.state().r3d.info().fp.sword);
+  const poseAt = async (anim) => {
+    await page.evaluate((a) => {
+      const st = window.TWArena.state();
+      st.player.atkAnim = a; st.player.swipe = { sx: 0.7, sy: 0.72 };
+    }, anim);
+    await more(1);
+    return page.evaluate(() => window.TWArena.state().r3d.info().fp.sword);
+  };
+  const poseWind = await poseAt(420 * 0.9);    // 예비동작 (위로 치켜들기)
+  const poseLow = await poseAt(420 * 0.58);    // 대각선 내려치기 끝 (가장 아래)
+  const poseBack = await poseAt(420 * 0.02);   // 위로 복귀 직전
+  ok('검 모션 1 — 먼저 위로 치켜드는 예비동작 (검손이 올라가고 손목이 돈다)',
+    poseWind.y > poseReady.y + 0.3 && poseWind.rz > poseReady.rz + 0.3,
+    { ready: [poseReady.y, poseReady.rz], wind: [poseWind.y, poseWind.rz] });
+  ok('검 모션 2 — 대각선 아래로 빠르게 내려치는 동작',
+    poseLow.y < poseReady.y - 0.2 && poseLow.rz < poseReady.rz - 1.0,
+    { ready: [poseReady.y, poseReady.rz], low: [poseLow.y, poseLow.rz] });
+  ok('검 모션 3 — 아래에서 다시 위로 매끄럽게 복귀해 기본 자세로 돌아온다',
+    Math.abs(poseBack.y - poseReady.y) < 0.12 && Math.abs(poseBack.rz - poseReady.rz) < 0.15,
+    { ready: [poseReady.y, poseReady.rz], back: [poseBack.y, poseBack.rz] });
+
+  /* --- 오른쪽 화면 빠른 스와이프(↘) = 그 방향으로 베기 --- */
+  const swipeSetup = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
+    st.particles.length = 0; st.floats.length = 0;
+    st.enemySpawned = 0; st.spawnTimer = 9e9; st.winAt = 0;
+    st.player.x = 150; st.player.y = 330; st.player.face = Math.PI / 2; st.player.pitch = 0;
+    st.player.atkCd = 0; st.player.dash = 0; st.player.atkAnim = 0; st.player.hp = st.player.maxHp; st.down = 0;
+    document.getElementById('arDown').classList.add('hidden');
+    st.enemies.push({
+      team: 'enemy', x: 150 + 4, y: 330 + 44, r: 9, hp: 76, maxHp: 76, speed: 0.0001,
+      face: -Math.PI / 2, cd: 99999, wind: 0, swing: 0, hit: 0, stun: 9e9,
+      dead: false, lastHitBy: null, dashHit: false, wob: 0
+    });
+    return { kills: st.kills, face: st.player.face };
+  });
+  // 실제 손가락처럼 빠른 스와이프 (포인터 이벤트를 한 번에 — 렌더가 느린 테스트 환경에서도 속도 조건을 지킨다)
+  const swipeDispatch = await page.evaluate(() => {
+    const root = document.getElementById('arena');
+    const mk = (type, x, y) => new PointerEvent(type, {
+      pointerId: 77, pointerType: 'touch', isPrimary: true,
+      clientX: x, clientY: y, bubbles: true, cancelable: true
+    });
+    root.dispatchEvent(mk('pointerdown', 300, 500));
+    for (let k = 1; k <= 5; k++) window.dispatchEvent(mk('pointermove', 300 + k * 11, 500 + k * 11));
+    window.dispatchEvent(mk('pointerup', 355, 555));
+    return true;
+  });
+  await waitPieces(2);
+  await more(1);
+  const swiped = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return {
+      kills: st.kills, face: st.player.face, lastSwipe: st.lastSwipe, lastSlice: st.lastSlice,
+      pieces: st.r3d.piecesInfo(), slashDir: st.r3d.info().fp.slashDir, viewPhase: st.r3d.info().fp.swordPhase
+    };
+  });
+  const sw = swiped.lastSwipe || { sx: 0, sy: 0 };
+  ok('오른쪽 빠른 스와이프(↘ 약 55px)로 적이 베인다',
+    swipeDispatch && swiped.kills > swipeSetup.kills && swiped.pieces.length === 2,
+    { kills: swiped.kills - swipeSetup.kills, pieces: swiped.pieces.length });
+  ok('스와이프 방향을 그대로 따라간다 (오른쪽 아래 대각선 · 검 궤적도 같음)',
+    sw.sx > 0.5 && sw.sy > 0.5 && Math.abs(swiped.slashDir.x - sw.sx) < 0.001 &&
+    Math.abs(swiped.slashDir.y - sw.sy) < 0.001,
+    { swipe: [sw.sx, sw.sy], view: swiped.slashDir });
+  ok('스와이프 각도 그대로 3D 두 조각 — 절단면 기울기 = asin(스와이프 x)',
+    swiped.pieces.every((p) => Math.abs(p.cut - swiped.lastSlice.cut) < 0.001) &&
+    swiped.pieces.every((p) => Math.abs(p.tilt - Math.asin(sw.sx)) < 0.02),
+    {
+      cut: swiped.pieces.map((p) => +p.cut.toFixed(3)), sliceCut: +swiped.lastSlice.cut.toFixed(3),
+      tilt: swiped.pieces.map((p) => +p.tilt.toFixed(3)), want: +Math.asin(sw.sx).toFixed(3)
+    });
+  await shot('27-fp-swipe-slash.png');
+  await waitNoPieces();
+
+  /* --- 오른쪽 천천히 드래그 = 베기 없이 시점만 회전 --- */
+  const slowSetup = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
+    st.player.atkCd = 0; st.player.dash = 0; st.player.atkAnim = 0;
+    st.player.x = 150; st.player.y = 330; st.player.face = Math.PI / 2; st.player.pitch = 0;
+    st.enemies.push({
+      team: 'enemy', x: 150, y: 330 + 46, r: 9, hp: 76, maxHp: 76, speed: 0.0001,
+      face: -Math.PI / 2, cd: 99999, wind: 0, swing: 0, hit: 0, stun: 9e9,
+      dead: false, lastHitBy: null, dashHit: false, wob: 0
+    });
+    return { kills: st.kills, face: st.player.face };
+  });
+  await page.mouse.move(300, 470);
+  await page.mouse.down();
+  for (let k = 1; k <= 10; k++) {
+    await page.mouse.move(300 - k * 8, 470);
+    await sleep(70);
+  }
+  await page.mouse.up();
+  await more(2);
+  const slow = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return { kills: st.kills, face: st.player.face, slashes: st.slashes.length, atkAnim: st.player.atkAnim };
+  });
+  ok('오른쪽 천천히 드래그(80px · 0.7초) → 베기 없이 시점만 돌아간다',
+    slow.kills === slowSetup.kills && slow.slashes === 0 &&
+    Math.abs(slow.face - slowSetup.face) > 0.3 && slow.atkAnim === 0, slow);
 
   // 적 칼 휘두름 — 예고(붉은 검기) · 팔 애니메이션
   const windNow = await page.evaluate(() => {
@@ -486,7 +631,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     dashAfter.pieces.map((p) => p.cut));
   await waitNoPieces();
 
-  // 막기 자세 (뷰모델 방패를 올린다)
+  // 막기 자세 (검을 옆으로 가로질러 화면 가운데를 막는다)
   const gpos = await page.evaluate(() => {
     const st = window.TWArena.state();
     st.enemies.length = 0; st.corpses.length = 0; st.particles.length = 0; st.floats.length = 0;
@@ -503,17 +648,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   await page.mouse.move(gpos.x, gpos.y);
   await page.mouse.down();
-  await more(4);
+  const guardIn = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st && st.r3d && st.r3d.info().fp.viewmodelGuard > 0.85;
+  }, { timeout: 8000 }).then(() => true).catch(() => false);
   const guarding = await page.evaluate(() => {
     const st = window.TWArena.state();
     const i = st.r3d.info();
-    const v = st.r3d.viewmodel;
-    return { guard: st.player.guard, vmGuard: i.fp.viewmodelGuard, shieldY: v.shieldArm.position.y, shieldX: v.shieldArm.position.x };
+    return { guard: st.player.guard, vmGuard: i.fp.viewmodelGuard, sword: i.fp.sword, shieldArm: st.r3d.viewmodel.shieldArm };
   });
   await shot('22-arena3d-guard.png');
   await page.mouse.up();
-  ok('🛡️ 막기 → 1인칭 방패가 화면 가운데로 올라온다',
-    guarding.guard === true && guarding.vmGuard > 0.5 && guarding.shieldX > -0.9 && guarding.shieldY > -1.6, guarding);
+  ok('🛡️ 막기 → 검을 옆으로 가로질러 화면 가운데를 막는다 (방패 없음)',
+    guardIn && guarding.guard === true && guarding.vmGuard > 0.85 &&
+    Math.abs(guarding.sword.rz) > 1.1 && Math.abs(guarding.sword.x) < 0.6 &&
+    guarding.sword.z > -4.2 && guarding.shieldArm === null, guarding);
+  const guardOut = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st && st.r3d && st.r3d.info().fp.viewmodelGuard < 0.15;
+  }, { timeout: 8000 }).then(() => true).catch(() => false);
+  ok('막기에서 놓으면 부드럽게 기본 자세로 돌아온다', guardOut,
+    await page.evaluate(() => (window.TWArena.state() ? +window.TWArena.state().r3d.info().fp.viewmodelGuard.toFixed(2) : -1)));
 
   await page.evaluate(() => window.TWArena.close());
   await sleep(400);
@@ -533,15 +688,56 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(900);
   const homeState = await page.evaluate(() => {
     const b = document.getElementById('btnBigBattle');
+    const en = document.getElementById('bigEnemy');
+    const al = document.getElementById('bigAlly');
+    const row = document.getElementById('bigSetup');
+    const rb = row ? row.getBoundingClientRect() : null;
+    const eb = en ? en.getBoundingClientRect() : null;
     return {
       exists: !!b,
       visible: b ? getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().height > 30 : false,
-      text: b ? b.textContent.replace(/\s+/g, ' ').trim() : null
+      text: b ? b.textContent.replace(/\s+/g, ' ').trim() : null,
+      enemy: en && { min: +en.min, max: +en.max, value: +en.value, w: eb ? Math.round(eb.width) : 0 },
+      ally: al && { min: +al.min, max: +al.max, value: +al.value },
+      chips: document.querySelectorAll('#bigEnemyChips button').length + document.querySelectorAll('#bigAllyChips button').length,
+      labels: [(document.getElementById('bigEnemyVal') || {}).textContent, (document.getElementById('bigAllyVal') || {}).textContent],
+      sub: (document.getElementById('bbSub') || {}).textContent,
+      layout: rb ? { w: Math.round(rb.width), h: Math.round(rb.height) } : null
     };
   });
   ok('홈 화면에 [⚔️ 대규모 3D 전장 · 바로 싸우기] 버튼이 있다',
     homeState.exists && homeState.visible && /대규모 3D 전장/.test(homeState.text || ''), homeState);
+  ok('적군·아군 병사 수를 따로 조절한다 (각 20~1000 슬라이더 + 100/300/500/1000 프리셋)',
+    !!homeState.enemy && !!homeState.ally &&
+    homeState.enemy.min === 20 && homeState.enemy.max === 1000 && homeState.enemy.w > 80 &&
+    homeState.ally.min === 20 && homeState.ally.max === 1000 &&
+    homeState.chips === 8 && homeState.layout && homeState.layout.w > 200 && homeState.layout.h > 80 &&
+    /적군 100 · 아군 100/.test(homeState.sub || ''),
+    homeState);
   await shot('23-home-big-battle.png');
+
+  // 적군 1000(프리셋 칩) · 아군 300(슬라이더) 으로 조절
+  await page.evaluate(() => {
+    document.querySelector('#bigEnemyChips button[data-count="1000"]').click();
+    const al = document.getElementById('bigAlly');
+    al.value = '300';
+    al.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await sleep(200);
+  const forceUi = await page.evaluate(() => ({
+    enemy: +document.getElementById('bigEnemy').value,
+    ally: +document.getElementById('bigAlly').value,
+    labels: [document.getElementById('bigEnemyVal').textContent, document.getElementById('bigAllyVal').textContent],
+    sub: document.getElementById('bbSub').textContent,
+    on: (document.querySelector('#bigEnemyChips button.on') || {}).textContent,
+    saved: [localStorage.getItem('tw_online_big_enemy'), localStorage.getItem('tw_online_big_ally')]
+  }));
+  ok('적군 1000 / 아군 300 으로 조절되고 화면·저장에 바로 반영된다',
+    forceUi.enemy === 1000 && forceUi.ally === 300 && forceUi.labels[0] === '1000' &&
+    forceUi.labels[1] === '300' && forceUi.on === '1000' &&
+    /1000/.test(forceUi.sub) && /300/.test(forceUi.sub) &&
+    forceUi.saved[0] === '1000' && forceUi.saved[1] === '300', forceUi);
+  await shot('28-home-force-1000.png');
 
   await page.click('#btnBigBattle');
   const bigOpen = await page.waitForFunction(() => window.TWArena && window.TWArena.isOpen(), { timeout: 25000 })
@@ -552,33 +748,35 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   } else {
     const bigCfg = await page.evaluate(() => {
       const st = window.TWArena.state();
+      const i = st.r3d.info();
       return {
         w: st.cfg.w, h: st.cfg.h, solo: !!st.cfg.solo,
-        enemyTotal: st.enemyTotal, allyTotal: st.allyTotal, maxAlive: st.maxAlive,
-        playerHp: st.player.maxHp,
+        enemyTotal: st.enemyTotal, allyTotal: st.allyTotal,
+        maxAlive: st.maxAlive, maxAlliesAlive: st.maxAlliesAlive,
+        playerHp: st.player.maxHp, timeLimit: st.timeLimit,
+        crowdMax: i.crowd.max,
         backLabel: document.getElementById('arBack').textContent.trim(),
         restartHidden: document.getElementById('arRestart').className.indexOf('hidden') >= 0,
-        camY: st.r3d.info().camera.y, fov: st.r3d.info().camera.fov
+        camY: i.camera.y, fov: i.camera.fov
       };
     });
     ok('전장이 2배 이상 넓다 (700×1500 · 280×600 대비)',
       bigCfg.w >= 560 && bigCfg.h >= 1200, { w: bigCfg.w, h: bigCfg.h });
-    ok('양쪽 병력이 파도처럼 증원된다 (적 50+ · 아군 40+ · 동시 25+)',
-      bigCfg.enemyTotal >= 50 && bigCfg.allyTotal >= 40 && bigCfg.maxAlive >= 25, bigCfg);
+    ok('내가 고른 수 그대로 시작한다 (적군 1000 vs 아군 300)',
+      bigCfg.enemyTotal === 1000 && bigCfg.allyTotal === 300 &&
+      bigCfg.maxAlive >= 120 && bigCfg.maxAlliesAlive >= 60 && bigCfg.timeLimit > 150000, bigCfg);
+    ok('동시에 세우는 병사 상한도 함께 커진다 (인스턴스 버퍼 260)',
+      bigCfg.crowdMax >= 260, { crowdMax: bigCfg.crowdMax, maxAlive: bigCfg.maxAlive });
     ok('나가기 버튼이 [🗺️ 홈으로] · [🔁 다시 싸우기] 로 바뀐다',
       /홈으로/.test(bigCfg.backLabel) && bigCfg.restartHidden === false, bigCfg);
 
-    // 증원을 즉시 돌려 다수 병사를 세운다
-    await page.evaluate(() => {
-      const st = window.TWArena.state();
-      st.spawnTimer = 0; st.allyTimer = 0;
-    });
+    // 증원을 즉시 당겨 다수 병사를 세운다 (테스트에서 스폰 타이머를 계속 0으로)
     const crowded = await page.waitForFunction(() => {
       const st = window.TWArena.state();
       if (!st || !st.r3d) return false;
-      const i = st.r3d.info();
-      return i.units >= 24;
-    }, { timeout: 120000 }).then(() => true).catch(() => false);
+      st.spawnTimer = 0; st.allyTimer = 0;
+      return st.r3d.info().units >= 100;
+    }, { timeout: 180000, polling: 120 }).then(() => true).catch(() => false);
     const army = await page.evaluate(() => {
       const st = window.TWArena.state();
       const i = st.r3d.info();
@@ -588,10 +786,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         camY: i.camera.y, fov: i.camera.fov, px: st.player.x, py: st.player.y, w: st.cfg.w, h: st.cfg.h
       };
     });
-    ok('한 화면에 병사 24명 이상이 실제로 세워진다 (대규모 난전)',
-      crowded && army.units >= 24, { units: army.units, enemies: army.enemies, allies: army.allies });
-    ok('인스턴싱 덕에 드로우콜이 300 이하로 유지된다',
-      army.calls < 300, { calls: army.calls, tri: army.tri });
+    ok('한 화면에 병사 100명 이상이 실제로 세워진다 (대규모 난전)',
+      crowded && army.units >= 100, { units: army.units, enemies: army.enemies, allies: army.allies });
+    ok('인스턴싱 덕에 드로우콜이 320 이하로 유지된다',
+      army.calls < 320, { calls: army.calls, tri: army.tri });
     ok('대형 전장에서도 1인칭 눈높이(≈20) · 세로 시야각 유지',
       Math.abs(army.camY - 20.5) < 4 && army.fov >= 72 && army.fov <= 92,
       { camY: +army.camY.toFixed(1), fov: army.fov, w: army.w, h: army.h });

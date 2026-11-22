@@ -19,6 +19,11 @@
   var SESSION_KEY = 'tw_online_session_v1';
   var NAME_KEY = 'tw_online_name';
   var RATIO_KEY = 'tw_online_ratio';
+  var BIG_ENEMY_KEY = 'tw_online_big_enemy';
+  var BIG_ALLY_KEY = 'tw_online_big_ally';
+  var BIG_MIN = 20;
+  var BIG_MAX = 1000;
+  var bigForce = { enemy: 100, ally: 100 };
 
   /* ---------------- 런타임 상태 ---------------- */
   var els = {};
@@ -2020,6 +2025,8 @@
     if (!window.TWArena) { toast('아레나를 불러오지 못했어요', 'bad'); return; }
     if (TWArena.isOpen()) return;
     var name = (els.nameInput && els.nameInput.value ? els.nameInput.value : '').trim().slice(0, 12) || '한윤';
+    var E = clampBig(bigForce.enemy);
+    var A = clampBig(bigForce.ally);
     var cfg = {
       id: 'solo-' + Date.now(),
       seed: (Date.now() % 100000) + 7,
@@ -2028,20 +2035,22 @@
       w: 700,
       h: 1500,
       playerY: 0.34,
-      enemyCount: 56,
-      allyCount: 50,
-      allyStart: 16,
-      maxAlive: 30,
-      maxAlliesAlive: 22,
-      spawnMs: 520,
-      allyMs: 1500,
+      // 내가 고른 수 그대로 — 적군 E명 vs 아군 A명 (각 최대 1000)
+      enemyCount: E,
+      allyCount: A,
+      allyStart: clampNum(Math.round(A * 0.32), 4, 40),
+      maxAlive: clampNum(Math.round(E * 0.3), 12, 150),
+      maxAlliesAlive: clampNum(Math.round(A * 0.22), 8, 90),
+      spawnMs: clampNum(Math.round(700 - E * 0.45), 110, 700),
+      allyMs: clampNum(Math.round(1500 - A * 0.6), 160, 1500),
       playerHp: 160,
       speedScale: 1.45,
+      timeLimit: 150000 + Math.round((E + A) * 90),
       me: { slot: 0, name: name, color: '#3b82f6' },
       enemy: { slot: 1, name: '적군', color: '#ef4444' },
       region: { name: '대평원' },
-      target: { name: '적군', troops: 56 },
-      maxKills: 99
+      target: { name: '적군', troops: E },
+      maxKills: E
     };
     var ok = TWArena.open(cfg, {
       onEnd: function (reason, kills) {
@@ -2052,10 +2061,83 @@
     else vibrate([12, 30, 12]);
   }
 
+  function clampBig(v) {
+    var n = Math.round(Number(v));
+    if (!isFinite(n)) n = 100;
+    return clampNum(n, BIG_MIN, BIG_MAX);
+  }
+
+  /** 홈 화면 병사 수 UI (적군 · 아군 따로) */
+  function renderBigForce() {
+    var pair = [[els.bigEnemy, els.bigEnemyVal, els.bigEnemyChips, 'enemy'],
+      [els.bigAlly, els.bigAllyVal, els.bigAllyChips, 'ally']];
+    for (var i = 0; i < pair.length; i++) {
+      var input = pair[i][0], val = pair[i][1], chips = pair[i][2], key = pair[i][3];
+      var n = clampBig(bigForce[key]);
+      bigForce[key] = n;
+      if (input) input.value = String(n);
+      if (val) val.textContent = String(n);
+      if (chips) {
+        var bs = chips.querySelectorAll('button');
+        for (var j = 0; j < bs.length; j++) {
+          bs[j].className = Number(bs[j].getAttribute('data-count')) === n ? 'on' : '';
+        }
+      }
+    }
+    if (els.bbSub) {
+      els.bbSub.textContent = '적군 ' + bigForce.enemy + ' · 아군 ' + bigForce.ally + ' · 1인칭 난전';
+    }
+  }
+
+  function applyBigForceFromStorage() {
+    var e = Number(storageGet(BIG_ENEMY_KEY));
+    var a = Number(storageGet(BIG_ALLY_KEY));
+    if (e >= BIG_MIN) bigForce.enemy = clampBig(e);
+    if (a >= BIG_MIN) bigForce.ally = clampBig(a);
+    renderBigForce();
+  }
+
+  /* 적군/아군 병사 수 조절 — 슬라이더 + 빠른 프리셋 (20~1000) */
+  function bindBigForce() {
+    var pairs = [[els.bigEnemy, els.bigEnemyChips, 'enemy', BIG_ENEMY_KEY],
+      [els.bigAlly, els.bigAllyChips, 'ally', BIG_ALLY_KEY]];
+    for (var i = 0; i < pairs.length; i++) {
+      (function (input, chips, key, storeKey) {
+        if (input) {
+          input.addEventListener('input', function () {
+            bigForce[key] = clampBig(input.value);
+            renderBigForce();
+            storageSet(storeKey, String(bigForce[key]));
+          });
+          input.addEventListener('change', function () {
+            storageSet(storeKey, String(bigForce[key]));
+            vibrate(6);
+          });
+        }
+        if (chips) {
+          chips.addEventListener('click', function (ev) {
+            var t = ev.target;
+            while (t && t !== chips) {
+              if (t.getAttribute && t.getAttribute('data-count')) {
+                bigForce[key] = clampBig(t.getAttribute('data-count'));
+                renderBigForce();
+                storageSet(storeKey, String(bigForce[key]));
+                vibrate(6);
+                return;
+              }
+              t = t.parentNode;
+            }
+          });
+        }
+      })(pairs[i][0], pairs[i][1], pairs[i][2], pairs[i][3]);
+    }
+  }
+
   function bindUI() {
     els.btnCreate.addEventListener('click', doCreate);
     els.btnSim.addEventListener('click', doSim);
     if (els.btnBigBattle) els.btnBigBattle.addEventListener('click', startBigBattle);
+    bindBigForce();
     els.btnJoin.addEventListener('click', doJoin);
     els.joinCode.addEventListener('keydown', function (e) { if (e.key === 'Enter') doJoin(); });
     els.nameInput.addEventListener('keydown', function (e) {
@@ -2339,7 +2421,9 @@
   function cacheEls() {
     var ids = [
       'app', 'lobby', 'homePanel', 'roomPanel', 'nameInput', 'joinCode', 'homeNote',
-      'btnCreate', 'btnSim', 'btnJoin', 'btnBigBattle', 'roomCode', 'btnCopyCode', 'btnShare', 'roomPlayers',
+      'btnCreate', 'btnSim', 'btnJoin', 'btnBigBattle', 'bbSub',
+      'bigEnemy', 'bigEnemyVal', 'bigEnemyChips', 'bigAlly', 'bigAllyVal', 'bigAllyChips',
+      'roomCode', 'btnCopyCode', 'btnShare', 'roomPlayers',
       'aiToggle', 'aiRow', 'roomSpeedRow', 'roomSpeed', 'roomNote', 'btnStart', 'waitHost', 'btnLeaveLobby',
       'netBar', 'netText', 'boot', 'bootText',
       'statTime', 'statLand', 'statTroops', 'statProd', 'btnSpeed', 'legend',
@@ -2390,6 +2474,7 @@
 
     bindUI();
     renderRatio();
+    applyBigForceFromStorage();
 
     try {
       var q = new URLSearchParams(location.search);

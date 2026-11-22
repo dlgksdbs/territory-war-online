@@ -21,11 +21,16 @@
   var SLASH_RANGE = 66;
   var SLASH_ARC = 1.3;      // 좌우 ±1.3rad
   var SLASH_CD = 330;
-  var SLASH_DMG = 34;
+  var SLASH_DMG = 9999;     // 한 방에 죽는다 (적 체력바·피 없음)
   var DASH_MS = 190;
   var DASH_SPEED = 470;
   var DASH_CD = 1500;
-  var DASH_DMG = 26;
+  var DASH_DMG = 9999;
+  var SLASH_ANIM = 420;     // 1인칭 검 궤적 ms (대각선 내려치기 → 위로 복귀)
+  var SWIPE_MS = 250;       // 오른쪽 화면 빠른 스와이프 판정 시간
+  var SWIPE_MIN = 36;       // 스와이프 최소 거리(px)
+  var SWIPE_VEL = 0.22;     // 스와이프 최소 속도(px/ms)
+  var SWIPE_DEFAULT = { sx: 0.7, sy: 0.72 };   // 버튼 베기의 기본 대각선(오른쪽 아래)
   var GUARD_MUL = 0.25;
   var PARRY_MS = 260;
 
@@ -209,7 +214,7 @@
       pendingSpawn: 0,
       input: {
         dx: 0, dy: 0, mag: 0, joyId: null, joyOX: 0, joyOY: 0, joyX: 0, joyY: 0,
-        lookId: null, lookOX: 0, lookOY: 0, lookLX: 0, lookLY: 0, lookT: 0, lookDist: 0
+        lookId: null, lookOX: 0, lookOY: 0, lookLX: 0, lookLY: 0, lookT: 0, lookDist: 0, lookSlash: false
       },
       keys: {},
       bound: [],
@@ -226,7 +231,11 @@
       allySpawned: 0,
       allyStart: Math.max(1, cfg.allyStart || cfg.allyCount || 3),
       playerHp: Math.max(40, cfg.playerHp || 100),
-      damageGiven: 0
+      damageGiven: 0,
+      timeLimit: cfg.timeLimit || 150000,
+      lastSwipe: null,
+      lastSlice: null,
+      hud: { hpBars: 0 }
     };
 
     buildWorld();
@@ -314,6 +323,11 @@
     for (var k = 0; k < 70; k++) {
       S.decor.push({ x: r() * W, y: r() * H, s: 1 + r() * 2.4, a: r() * 6.28 });
     }
+    // 시작 지점 앞을 장애물로 가리지 않는다 (1인칭 시야 확보)
+    var sx0 = W / 2, sy0 = H * (cfg.playerY || 0.18);
+    S.obstacles = S.obstacles.filter(function (o) {
+      return Math.sqrt((o.x - sx0) * (o.x - sx0) + (o.y - sy0) * (o.y - sy0)) > o.r + 120;
+    });
   }
 
   function spawnPlayer() {
@@ -359,13 +373,13 @@
 
   function makeUnit(team, x, y) {
     var enemy = team === 'enemy';
-    var lvl = enemy ? 1 + Math.min(1.2, S.targetTroops / 12) : 1;
     return {
       team: team,
       x: x, y: y,
       r: enemy ? 9.2 : 8.8,
-      hp: enemy ? Math.round(76 * lvl) : (S.big ? 110 : 78),
-      maxHp: enemy ? Math.round(76 * lvl) : (S.big ? 110 : 78),
+      // 적은 체력이 없다 — 칼에 닿으면 한 방에 쓰러진다 (체력바 없음)
+      hp: enemy ? 1 : (S.big ? 110 : 78),
+      maxHp: enemy ? 1 : (S.big ? 110 : 78),
       speed: (enemy ? (52 + Math.random() * 16) * (1 + Math.min(0.25, S.targetTroops / 40)) : 58) * S.speedScale,
       face: enemy ? -Math.PI / 2 : Math.PI / 2,
       cd: 200 + Math.random() * 500,
@@ -656,7 +670,7 @@
       return;
     }
     if (S.r3d) {
-      // 오른쪽 화면 드래그 = 시점 회전 (짧은 탭은 뗄 때 베기)
+      // 오른쪽 화면 드래그 = 시점 회전 · 빠른 스와이프 = 그 방향으로 베기 · 짧은 탭 = 베기
       if (S.input.lookId != null) return;
       S.input.lookId = e.pointerId;
       S.input.lookOX = p.x;
@@ -665,6 +679,7 @@
       S.input.lookLY = p.y;
       S.input.lookT = nowMs();
       S.input.lookDist = 0;
+      S.input.lookSlash = false;
     } else {
       tapSlash(e);
     }
@@ -702,6 +717,20 @@
       if (!pl) return;
       pl.face = normAngle(pl.face + mdx * LOOK_SENS);
       pl.pitch = clamp((pl.pitch || 0) - mdy * LOOK_PITCH_SENS, PITCH_MIN, PITCH_MAX);
+
+      // 빠른 스와이프(36px 이상 · 250ms 이내)면 그 방향 그대로 베기
+      var tNow = nowMs();
+      var fdx = lp.x - S.input.lookOX;
+      var fdy = lp.y - S.input.lookOY;
+      var total = Math.sqrt(fdx * fdx + fdy * fdy);
+      var dtms = tNow - S.input.lookT;
+      if (!S.input.lookSlash && !S.ended && total >= SWIPE_MIN && dtms <= SWIPE_MS) {
+        var vel = total / Math.max(1, dtms);
+        if (vel >= SWIPE_VEL) {
+          S.input.lookSlash = true;
+          doSlash({ sx: fdx, sy: fdy });
+        }
+      }
     }
   }
 
@@ -716,8 +745,10 @@
     }
     if (S.r3d && S.input.lookId != null && e && e.pointerId === S.input.lookId) {
       var quick = S.input.lookDist < 12 && (nowMs() - S.input.lookT) < 360;
+      var swiped = S.input.lookSlash;
       S.input.lookId = null;
-      if (quick && !S.ended) doSlash();
+      S.input.lookSlash = false;
+      if (!swiped && quick && !S.ended) doSlash();
     }
   }
 
@@ -822,20 +853,27 @@
   /* ---------------------------------------------------------------------------
      액션
      --------------------------------------------------------------------------- */
-  function doSlash() {
+  function doSlash(swipe) {
     if (!S || S.ended || S.down > 0) return;
     var pl = S.player;
     if (!pl || pl.atkCd > 0 || pl.dash > 0) return;
+    var dir = normSwipe(swipe);
+    var slice = sliceAngles(dir, pl.face);
     pl.atkCd = SLASH_CD;
-    pl.atkAnim = 260;
+    pl.atkAnim = SLASH_ANIM;
+    pl.swipe = dir;
+    S.lastSwipe = dir;
+    S.lastSlice = slice;
 
-    var dmg = SLASH_DMG + Math.min(30, S.combo * 5);
-    if (S.combo >= 5) dmg += 8;
-    S.slashes.push({ x: pl.x, y: pl.y, face: pl.face, t: 0, dur: 220, r: SLASH_RANGE });
+    S.slashes.push({
+      x: pl.x, y: pl.y, face: pl.face, t: 0, dur: 240, r: SLASH_RANGE,
+      cut: slice.cut, tilt: slice.tilt, sx: dir.sx, sy: dir.sy
+    });
     sfx('swing');
 
     var hits = 0;
-    for (var i = 0; i < S.enemies.length; i++) {
+    // 뒤에서부터 — 죽은 적을 지우면서 순회한다 (한 번에 여러 명을 베어도 빠지지 않게)
+    for (var i = S.enemies.length - 1; i >= 0; i--) {
       var en = S.enemies[i];
       if (en.dead) continue;
       var dx = en.x - pl.x, dy = en.y - pl.y;
@@ -843,7 +881,7 @@
       if (dist > SLASH_RANGE + en.r) continue;
       var a = Math.atan2(dy, dx);
       if (Math.abs(angDiff(a, pl.face)) > SLASH_ARC) continue;
-      hurtEnemy(en, dmg, a, 30, pl.face);
+      hurtEnemy(en, SLASH_DMG, a, 30, slice.cut, slice.tilt);
       hits++;
     }
     if (hits > 0) {
@@ -853,6 +891,28 @@
       spawnSparks(pl.x + Math.cos(pl.face) * 30, pl.y + Math.sin(pl.face) * 30, 8);
       sfx('hit');
     }
+  }
+
+  /** 스와이프 벡터를 단위 벡터로 (없으면 기본 대각선) */
+  function normSwipe(swipe) {
+    var sx = swipe && isFinite(swipe.sx) ? swipe.sx : SWIPE_DEFAULT.sx;
+    var sy = swipe && isFinite(swipe.sy) ? swipe.sy : SWIPE_DEFAULT.sy;
+    var d = Math.sqrt(sx * sx + sy * sy);
+    if (d < 0.001) { sx = SWIPE_DEFAULT.sx; sy = SWIPE_DEFAULT.sy; d = Math.sqrt(sx * sx + sy * sy); }
+    return { sx: sx / d, sy: sy / d };
+  }
+
+  /**
+   * 스와이프 방향 → 3D 절단면 (cut 수평 방위각 + tilt 기울기)
+   *  - 수직(↓) 스와이프: tilt 0 → 세로로 두 동강
+   *  - 대각선(↘): tilt ±45° → 대각선으로 두 동강
+   *  - 수평(→): tilt ±90° → 허리 높이로 수평 두 동강
+   */
+  function sliceAngles(dir, face) {
+    var sx = clamp(dir.sx, -1, 1), sy = clamp(dir.sy, -1, 1);
+    var cut = sy >= 0 ? face : normAngle(face + Math.PI);
+    var tilt = Math.asin(sx);
+    return { cut: cut, tilt: tilt, sx: sx, sy: sy };
   }
 
   function doDash() {
@@ -871,7 +931,7 @@
     for (var i = 0; i < S.enemies.length; i++) S.enemies[i].dashHit = false;
   }
 
-  function hurtEnemy(en, dmg, ang, kb, cutAngle) {
+  function hurtEnemy(en, dmg, ang, kb, cutAngle, cutTilt) {
     if (en.dead) return;
     en.hp -= dmg;
     en.hit = 140;
@@ -879,23 +939,22 @@
     en.x += Math.cos(ang) * (kb || 12) * 0.5;
     en.y += Math.sin(ang) * (kb || 12) * 0.5;
     en.stun = Math.max(en.stun, 220);
-    addFloat(en.x, en.y - 14, '-' + Math.round(dmg), '#fde68a');
     spawnSparks(en.x, en.y, 5);
     if (en.hp <= 0) {
-      killEnemy(en, true, cutAngle == null ? ang + Math.PI / 2 : cutAngle);
+      killEnemy(en, true, cutAngle == null ? ang : cutAngle, cutTilt || 0);
     }
   }
 
-  function killEnemy(en, byPlayer, cutAngle) {
+  function killEnemy(en, byPlayer, cutAngle, cutTilt) {
     if (en.dead) return;
     en.dead = true;
     S.defeated++;
     spawnSparks(en.x, en.y, 14);
     if (byPlayer) {
       // 칼이 지나간 각도 그대로 두 동강 — 조각이 칼날 수직 방향으로 갈라져 회전하며 날아간다
-      spawnCorpse(en, cutAngle);
+      spawnCorpse(en, cutAngle, cutTilt);
     } else {
-      spawnBlood(en.x, en.y);
+      spawnDeathSparks(en.x, en.y);
     }
     if (byPlayer) {
       S.kills++;
@@ -915,8 +974,9 @@
   }
 
   /** 칼이 지나간 각도 그대로 두 조각으로 가른다 (조각은 칼날 수직 방향으로 갈라져 회전) */
-  function spawnCorpse(en, cutAngle) {
-    var cut = Number.isFinite(cutAngle) ? cutAngle : -Math.PI / 2;
+  function spawnCorpse(en, cutAngle, cutTilt) {
+    var cut = Number.isFinite(cutAngle) ? cutAngle : 0;
+    var tilt = Number.isFinite(cutTilt) ? clamp(cutTilt, -1.5, 1.5) : 0;
     var col = hexA((S.cfg.enemy && S.cfg.enemy.color) || '#ef4444', 0.95);
     var nx = Math.cos(cut), ny = Math.sin(cut);
     var px = -ny, py = nx;                     // 칼날에 수직인 방향
@@ -926,6 +986,7 @@
         x: en.x + px * side * 2.6,
         y: en.y + py * side * 2.6,
         cut: cut,
+        tilt: tilt,
         side: side,
         r: en.r || 8.4,
         vx: px * side * push + nx * (Math.random() - 0.5) * 22,
@@ -937,7 +998,7 @@
         color: col
       });
     }
-    S.cuts.push({ x: en.x, y: en.y, ang: cut, len: Math.max(24, (en.r || 8) * 3.4), t: 0, dur: 220 });
+    S.cuts.push({ x: en.x, y: en.y, ang: cut, tilt: tilt, len: Math.max(24, (en.r || 8) * 3.4), t: 0, dur: 220 });
     S.hitstop = Math.max(S.hitstop, 45);
   }
 
@@ -959,7 +1020,7 @@
           from.y += Math.sin(a) * 46;
           from.hp -= 6;
           spawnSparks(pl.x + Math.cos(a) * 16, pl.y + Math.sin(a) * 16, 10);
-          if (from.hp <= 0) killEnemy(from, true, Math.atan2(from.y - pl.y, from.x - pl.x) + Math.PI / 2);
+          if (from.hp <= 0) killEnemy(from, true, Math.atan2(from.y - pl.y, from.x - pl.x), 0.5);
         }
         pl.guardT = 0;
         pl.atkCd = 120;
@@ -1017,7 +1078,7 @@
     var pl = S.player;
 
     // 시간 초과
-    if (S.elapsed >= 150000) { finish('timeout'); return; }
+    if (S.elapsed >= S.timeLimit) { finish('timeout'); return; }
 
     // 다운 · 부활
     if (S.down > 0) {
@@ -1064,14 +1125,14 @@
           life: 260, max: 260, color: hexA((S.cfg.me && S.cfg.me.color) || '#3b82f6', 0.7), size: 2.4
         });
       }
-      // 돌진 중 베기
-      for (var i = 0; i < S.enemies.length; i++) {
+      // 돌진 중 베기 (뒤에서부터 — 죽은 적을 지우면서 순회)
+      for (var i = S.enemies.length - 1; i >= 0; i--) {
         var en = S.enemies[i];
         if (en.dead || en.dashHit) continue;
         var ddx = en.x - pl.x, ddy = en.y - pl.y;
         if (ddx * ddx + ddy * ddy < (pl.r + en.r + 16) * (pl.r + en.r + 16)) {
           en.dashHit = true;
-          hurtEnemy(en, DASH_DMG, pl.dashDir, 26, pl.dashDir);
+          hurtEnemy(en, DASH_DMG, pl.dashDir, 26, pl.dashDir, 1.2);
           S.shake = Math.max(S.shake, 2.4);
           sfx('hit');
         }
@@ -1087,6 +1148,7 @@
     // 타이머
     if (pl.atkCd > 0) pl.atkCd -= dt;
     if (pl.atkAnim > 0) pl.atkAnim -= dt;
+    if (pl.atkAnim < 0) pl.atkAnim = 0;
     if (pl.dashCd > 0) pl.dashCd -= dt;
     if (pl.hit > 0) pl.hit -= dt;
     if (pl.guard) pl.guardT += dt;
@@ -1133,38 +1195,51 @@
   function stepUnits(dt) {
     var pl = S.player;
     var i;
+    var now = S.time;
 
-    // 아군
+    // 아군 — 표적은 0.5초마다 새로 고른다 (1000명 난전에서도 프레임 유지)
     for (i = 0; i < S.allies.length; i++) {
       var al = S.allies[i];
       if (al.dead) continue;
-      var target = nearestEnemy(al.x, al.y, 460);
-      aiUnit(al, target, dt, pl);
+      if (!al.tgt || al.tgt.dead || now - al.tgtAt > 520) {
+        al.tgt = nearestEnemy(al.x, al.y, 460);
+        al.tgtAt = now;
+      }
+      aiUnit(al, al.tgt, dt, pl);
     }
 
     // 적
     for (i = 0; i < S.enemies.length; i++) {
       var en = S.enemies[i];
       if (en.dead) continue;
-      var tgt = null;
-      var best = Infinity;
-      if (pl && S.down <= 0 && !pl.dead) {
-        var d0 = (pl.x - en.x) * (pl.x - en.x) + (pl.y - en.y) * (pl.y - en.y);
-        if (d0 < best) { best = d0; tgt = pl; }
+      if (!en.tgt || en.tgt.dead || now - en.tgtAt > 460) {
+        en.tgt = pickEnemyTarget(en, pl);
+        en.tgtAt = now;
       }
-      for (var k = 0; k < S.allies.length; k++) {
-        var a2 = S.allies[k];
-        if (a2.dead) continue;
-        var d1 = (a2.x - en.x) * (a2.x - en.x) + (a2.y - en.y) * (a2.y - en.y);
-        if (d1 < best) { best = d1; tgt = a2; }
-      }
-      aiUnit(en, tgt, dt, pl);
+      aiUnit(en, en.tgt, dt, pl);
     }
 
     // 아군 사망 정리
     for (i = S.allies.length - 1; i >= 0; i--) {
       if (S.allies[i].dead) S.allies.splice(i, 1);
     }
+  }
+
+  /** 적이 노릴 대상 — 가장 가까운 플레이어 또는 아군 */
+  function pickEnemyTarget(en, pl) {
+    var tgt = null;
+    var best = Infinity;
+    if (pl && S.down <= 0 && !pl.dead) {
+      var d0 = (pl.x - en.x) * (pl.x - en.x) + (pl.y - en.y) * (pl.y - en.y);
+      if (d0 < best) { best = d0; tgt = pl; }
+    }
+    for (var k = 0; k < S.allies.length; k++) {
+      var a2 = S.allies[k];
+      if (a2.dead) continue;
+      var d1 = (a2.x - en.x) * (a2.x - en.x) + (a2.y - en.y) * (a2.y - en.y);
+      if (d1 < best) { best = d1; tgt = a2; }
+    }
+    return tgt;
   }
 
   function nearestEnemy(x, y, maxD) {
@@ -1228,7 +1303,7 @@
                 spawnSparks(target.x, target.y, 4);
                 if (target.hp <= 0) {
                   target.dead = true;
-                  spawnBlood(target.x, target.y);
+                  spawnDeathSparks(target.x, target.y);
                 }
               }
             } else {
@@ -1252,7 +1327,8 @@
       var cap = S.maxAlive || (4 + Math.round(S.enemyTotal / 5));
       if (S.enemies.length < cap && S.spawnTimer <= 0) {
         S.spawnTimer = S.spawnMs || Math.max(420, 1000 - S.enemyTotal * 16);
-        var n = Math.min(S.big ? 3 : 2, S.enemyTotal - S.enemySpawned, cap - S.enemies.length);
+        var batch = S.big ? clamp(Math.round(S.enemyTotal / 40), 3, 26) : 2;
+        var n = Math.min(batch, S.enemyTotal - S.enemySpawned, cap - S.enemies.length);
         for (var i = 0; i < n; i++) {
           var en;
           if (S.big) {
@@ -1277,7 +1353,7 @@
       var acap = S.maxAlliesAlive || 999;
       if (S.allies.length < acap && S.allyTimer <= 0) {
         S.allyTimer = S.allyMs || 1500;
-        var m = Math.min(S.big ? 2 : 1, S.allyTotal - S.allySpawned);
+        var m = Math.min(S.big ? clamp(Math.round(S.allyTotal / 60), 2, 14) : 1, S.allyTotal - S.allySpawned);
         for (var j = 0; j < m; j++) {
           var ang = (S.player ? S.player.face : Math.PI / 2) + Math.PI + (S.rand() - 0.5) * 1.8;
           var dd = 70 + S.rand() * 90;
@@ -1370,18 +1446,19 @@
         x: x, y: y,
         vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 30,
         life: 220 + Math.random() * 200, max: 400,
-        color: Math.random() < 0.5 ? '#fde68a' : '#fca5a5',
+        color: Math.random() < 0.5 ? '#fde68a' : '#bfe9ff',
         size: 1.4 + Math.random() * 1.8
       });
     }
   }
 
-  function spawnBlood(x, y) {
-    for (var i = 0; i < 6; i++) {
+  /** 쓰러진 자리 — 피가 아니라 푸른 불꽃 · 검은 연기 */
+  function spawnDeathSparks(x, y) {
+    for (var i = 0; i < 7; i++) {
       var a = Math.random() * Math.PI * 2;
       S.particles.push({
-        x: x, y: y, vx: Math.cos(a) * 40, vy: Math.sin(a) * 40 - 10,
-        life: 600, max: 600, color: 'rgba(120,26,26,0.85)', size: 2.4
+        x: x, y: y, vx: Math.cos(a) * 42, vy: Math.sin(a) * 42 - 10,
+        life: 600, max: 600, color: i % 3 === 0 ? '#8fd6ff' : '#3c6b86', size: 2.2
       });
     }
   }
@@ -1399,6 +1476,7 @@
       try {
         S.r3d.render(S, ts);
       } catch (e) {
+        if (window.console) console.warn('[arena3d] 렌더 오류 → 2D 폴백', e && (e.stack || e.message));
         on3dLost(null);
       }
       drawOverlay3d(ts);
@@ -1465,6 +1543,17 @@
     var i, p;
     var cx = pw / 2, cy = ph / 2;
 
+    // 비네트 — 밤 전장의 깊이와 몰입 (가장자리 어둡게 · HUD보다 먼저)
+    if (!S.hud.vig || S.hud.vig.w !== pw || S.hud.vig.h !== ph) {
+      var vg = ctx.createRadialGradient(cx, cy, Math.min(pw, ph) * 0.34, cx, cy, Math.max(pw, ph) * 0.74);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(0.72, 'rgba(0,0,0,0.16)');
+      vg.addColorStop(1, 'rgba(0,0,0,0.52)');
+      S.hud.vig = { w: pw, h: ph, g: vg };
+    }
+    ctx.fillStyle = S.hud.vig.g;
+    ctx.fillRect(0, 0, pw, ph);
+
     // 조준선 · 적이 칼을 치켜들면 붉게 경고
     var danger = false;
     for (i = 0; i < S.enemies.length; i++) {
@@ -1518,19 +1607,6 @@
       ctx.restore();
     }
     ctx.globalAlpha = 1;
-
-    // 체력 바 (다친 유닛만)
-    for (i = 0; i < S.allies.length + S.enemies.length; i++) {
-      var u = i < S.allies.length ? S.allies[i] : S.enemies[i - S.allies.length];
-      if (!u || u.dead || u.hp >= u.maxHp) continue;
-      p = r.project(u.x, u.y, 32);
-      if (p.behind) continue;
-      var bw = 24;
-      ctx.fillStyle = 'rgba(0,0,0,0.62)';
-      ctx.fillRect(p.x - bw / 2 - 1, p.y - 2.4, bw + 2, 5);
-      ctx.fillStyle = u.team === 'enemy' ? '#f87171' : '#60a5fa';
-      ctx.fillRect(p.x - bw / 2, p.y - 1.4, bw * clamp(u.hp / u.maxHp, 0, 1), 3);
-    }
 
     // 데미지 · 콤보 숫자
     ctx.textAlign = 'center';
@@ -1666,8 +1742,8 @@
       else ctx.rect(-R, 0, R * 2, R);
       ctx.clip();                  // 칼날 한쪽만 남긴다
 
-      // 잘린 단면
-      ctx.strokeStyle = 'rgba(255,170,170,0.9)';
+      // 잘린 단면 — 피 대신 푸른 빛
+      ctx.strokeStyle = 'rgba(159,216,255,0.85)';
       ctx.lineWidth = 1.3;
       ctx.beginPath();
       ctx.moveTo(-c.r * 1.1, c.side < 0 ? -0.6 : 0.6);
@@ -1676,7 +1752,7 @@
 
       ctx.rotate(c.rot);           // 조각이 회전하며 날아간다
       // 반쪽 몸통
-      ctx.fillStyle = '#7f1d1d';
+      ctx.fillStyle = '#141d28';
       ctx.beginPath();
       ctx.arc(0, 0, c.r, 0, Math.PI * 2);
       ctx.fill();
@@ -1726,7 +1802,7 @@
   function drawUnit(ctx, u) {    var meCol = (S.cfg.me && S.cfg.me.color) || '#3b82f6';
     var enCol = (S.cfg.enemy && S.cfg.enemy.color) || '#ef4444';
     var col = u.team === 'enemy' ? enCol : meCol;
-    var body = u.team === 'enemy' ? '#7f1d1d' : '#1e3a8a';
+    var body = u.team === 'enemy' ? '#1a2430' : '#1e3a8a';
     ctx.save();
     ctx.translate(u.x, u.y);
 
@@ -1771,15 +1847,6 @@
       ctx.stroke();
     }
     ctx.restore();
-
-    // 체력
-    if (u.hp < u.maxHp) {
-      var w = 18;
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillRect(u.x - w / 2, u.y - u.r - 9, w, 3);
-      ctx.fillStyle = u.team === 'enemy' ? '#f87171' : '#60a5fa';
-      ctx.fillRect(u.x - w / 2, u.y - u.r - 9, w * clamp(u.hp / u.maxHp, 0, 1), 3);
-    }
   }
 
   function drawPlayer(ctx, pl) {
@@ -1824,32 +1891,44 @@
     ctx.arc(0, -pl.r * 0.28, pl.r * 0.66, Math.PI, 0);
     ctx.fill();
 
-    // 방패 (막기)
+    // 검을 옆으로 가로질러 막기 (방패 없음 · 2D 폴백)
     if (pl.guard) {
       ctx.save();
       ctx.rotate(pl.face);
       var fresh = pl.guardT <= PARRY_MS;
-      ctx.strokeStyle = fresh ? '#fef08a' : 'rgba(147,197,253,0.85)';
-      ctx.lineWidth = fresh ? 3.4 : 2.4;
+      ctx.strokeStyle = fresh ? '#fef08a' : 'rgba(191,232,255,0.92)';
+      ctx.lineWidth = fresh ? 4.2 : 3.2;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.arc(pl.r * 0.4, 0, pl.r + 9, -0.95, 0.95);
+      ctx.moveTo(-pl.r * 1.2, 0);
+      ctx.lineTo(pl.r * 1.7, 0);
       ctx.stroke();
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = fresh ? 'rgba(254,240,138,0.8)' : 'rgba(147,197,253,0.6)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(pl.r * 0.25, 0, pl.r + 7, -0.8, 0.8);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
       ctx.restore();
     }
 
-    // 칼
-    var swingT = pl.atkAnim > 0 ? (1 - pl.atkAnim / 260) : 0;
-    var ang = pl.face + (pl.atkAnim > 0 ? (-0.9 + swingT * 1.8) : 0.45);
-    ctx.strokeStyle = '#f8fafc';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.shadowColor = 'rgba(255,255,255,0.6)';
-    ctx.shadowBlur = 5;
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(pl.face) * pl.r * 0.4, Math.sin(pl.face) * pl.r * 0.4);
-    ctx.lineTo(Math.cos(ang) * (pl.r + 17), Math.sin(ang) * (pl.r + 17));
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+    // 검 (막는 동안에는 옆으로 가로지른 자세)
+    var swingT = pl.atkAnim > 0 ? clamp(1 - pl.atkAnim / SLASH_ANIM, 0, 1) : 0;
+    var swx = pl.swipe ? pl.swipe.sx : SWIPE_DEFAULT.sx;
+    var ang = pl.face + (pl.atkAnim > 0 ? (-0.9 + swingT * 1.8) * (swx >= 0 ? 1 : -1) : 0.45);
+    if (!pl.guard) {
+      ctx.strokeStyle = '#f8fafc';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = 'rgba(255,255,255,0.6)';
+      ctx.shadowBlur = 5;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(pl.face) * pl.r * 0.4, Math.sin(pl.face) * pl.r * 0.4);
+      ctx.lineTo(Math.cos(ang) * (pl.r + 17), Math.sin(ang) * (pl.r + 17));
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
 
     // 무적 깜빡임
     if (S.invuln > 0) {
@@ -1939,9 +2018,9 @@
       }
     }
     if (el.hint) {
-      if (pl.guard) el.hint.textContent = '막는 중 · 적이 휘두르기 직전에 누르면 패링';
+      if (pl.guard) el.hint.textContent = '검으로 옆을 막는 중 · 휘두르기 직전에 누르면 패링';
       else if (pl.dashCd > 0) el.hint.textContent = '돌진 준비 ' + (pl.dashCd / 1000).toFixed(1) + '초';
-      else if (S.r3d) el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 드래그 시점 · 오른쪽 탭/⚔️ 베기 · 🛡️ 막기';
+      else if (S.r3d) el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 빠른 스와이프로 그 방향 베기 · 천천히 드래그하면 시점';
       else el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 탭/⚔️ 베기 · 🛡️로 막고 패링';
     }
   }

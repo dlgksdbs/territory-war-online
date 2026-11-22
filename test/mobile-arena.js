@@ -148,6 +148,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     st.enemies.forEach((e) => { e.dead = true; });
     st.enemies.length = 0;
     st.enemySpawned = st.enemyTotal; // 추가 스폰 멈춤
+    st.enemyTotal = st.enemySpawned + 8; // 한 방에 다 베어도 승리로 끝나지 않게
+    st.winAt = 0;
     st.player.x = 180; st.player.y = 380;
     st.player.face = 0;
     st.player.atkCd = 0;

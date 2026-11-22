@@ -601,6 +601,40 @@ async function networkTests() {
   ok('게임 페이지에 참전 버튼 · 아레나 캔버스', home.body.indexOf('칼들고 참전') >= 0 &&
     home.body.indexOf('arenaCanvas') >= 0 && home.body.indexOf('/arena.js') >= 0);
 
+  // ---- 아레나 HUD·판정 규칙 (정적 검증: 버튼 겹침 · 적 전멸 종료 · 공정 스펙 · 증원) ----
+  console.log('아레나 HUD · 전투 판정 규칙');
+  const css = await httpGet(port, '/style.css');
+  const iv = home.body.indexOf('class="ar-actions"');
+  const ivw = home.body.indexOf('id="arView"');
+  const ivr = home.body.indexOf('id="arRestart"');
+  ok('🎬 관전 · 🔁 다시 싸우기 버튼이 한 칸(.ar-actions)에 함께 들어 있다',
+    iv >= 0 && ivw > iv && ivr > ivw, [iv, ivw, ivr]);
+  const actionsCss = (css.body.match(/\.ar-actions\s*\{[^}]*\}/) || [''])[0];
+  const viewCss = (css.body.match(/\.ar-view\s*\{[^}]*\}/) || [''])[0];
+  const againCss = (css.body.match(/\.ar-restart\s*\{[^}]*\}/) || [''])[0];
+  ok('.ar-actions 는 세로 flex — 두 버튼이 같은 자리에 겹치지 않는다',
+    /display:\s*flex/.test(actionsCss) && /flex-direction:\s*column/.test(actionsCss) && /gap:/.test(actionsCss),
+    actionsCss.replace(/\s+/g, ' ').slice(0, 120));
+  ok('관전·다시 싸우기 버튼은 각자 absolute 좌표(top/right)를 갖지 않는다 (겹침 원인 제거)',
+    /position:\s*static/.test(viewCss) && /position:\s*static/.test(againCss) &&
+    !/\btop:/.test(viewCss) && !/\btop:/.test(againCss), [viewCss.slice(0, 60), againCss.slice(0, 60)]);
+  ok('적 전멸 판정 = "약속한 적을 모두 내보냄 + 살아 있는 적 0" (죽은 병사 잔여물에 막히지 않는다)',
+    /function enemiesCleared\(\)/.test(arenaJs.body) && /aliveEnemies\(\) === 0/.test(arenaJs.body) &&
+    arenaJs.body.indexOf('S.enemies.length === 0') < 0, arenaJs.body.indexOf('S.enemies.length === 0'));
+  ok('적 사망은 한 번만 집계되고 그 자리에서 목록에서 빠진다 (아군이 벤 적 포함)',
+    /if \(!en \|\| en\.counted\) return;/.test(arenaJs.body) &&
+    /if \(!gone\.counted\) \{ gone\.counted = true; S\.defeated\+\+; \}/.test(arenaJs.body));
+  ok('적 증원 상한은 살아 있는 적만 센다 (쓰러진 병사가 증원을 막지 않는다)',
+    /var alive = aliveEnemies\(\);/.test(arenaJs.body) && /cap - alive/.test(arenaJs.body));
+  const makeUnitSrc = (arenaJs.body.match(/function makeUnit\(team, x, y\) \{[\s\S]*?\n  \}/) || [''])[0];
+  ok('아군·적군 병사 스펙이 한 벌(makeUnit)에서 나온다 (체력·공격력·속도 동일)',
+    /hp: UNIT_HP/.test(makeUnitSrc) && /dmg: UNIT_DMG/.test(makeUnitSrc) &&
+    /speed: UNIT_SPEED \* S\.speedScale/.test(makeUnitSrc) &&
+    !/team === 'ally'|team !== 'enemy'/.test(makeUnitSrc), makeUnitSrc.length);
+  ok('아군 증원은 고른 수(allyTotal)까지만 — 무한 생성 없음 (아군 0이면 0명)',
+    /if \(S\.allySpawned < S\.allyTotal\)/.test(arenaJs.body) &&
+    /allyCount == null \? 3 : cfg\.allyCount/.test(arenaJs.body));
+
   const d = await connect(port);
   send(d, { type: 'create', name: '참전러', sim: true });
   await next(d, (m) => m.type === 'joined');

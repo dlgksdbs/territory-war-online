@@ -426,6 +426,7 @@
       hit: 0,
       stun: 0,
       dead: false,
+      counted: false,          // 사망 집계(킬·전멸 판정)에 한 번만 잡히도록
       lastHitBy: null,
       dashHit: false,
       wob: Math.random() * 6.28,
@@ -1174,7 +1175,11 @@
   }
 
   function killEnemy(en, byPlayer, cutAngle, cutTilt) {
-    if (en.dead) return;
+    // 'dead' 로 막으면 아군이 이미 쓰러뜨려 dead=true 가 된 적을
+    // 집계·배열 정리 없이 그대로 남겨 버린다 (승리 판정·증원 상한이 막히던 원인).
+    // 한 번만 집계되도록 별도 표시(counted)로 막는다.
+    if (!en || en.counted) return;
+    en.counted = true;
     en.dead = true;
     S.defeated++;
     spawnSparks(en.x, en.y, 14);
@@ -1338,7 +1343,7 @@
       stepSpawn(dt);
       stepEffects(dt);
       if (S.comboT > 0) { S.comboT -= dt; if (S.comboT <= 0) S.combo = 0; }
-      if (S.enemySpawned >= S.enemyTotal && S.enemies.length === 0) {
+      if (enemiesCleared()) {
         if (!S.winAt) S.winAt = S.time;
         if (S.time - S.winAt > 900) { finish('win'); return; }
       }
@@ -1433,8 +1438,8 @@
       if (S.comboT <= 0) { S.combo = 0; updateHud(); }
     }
 
-    // 승리 판정
-    if (S.enemySpawned >= S.enemyTotal && S.enemies.length === 0) {
+    // 승리 판정 — 적을 다 내보냈고 살아 있는 적이 0명이면(아군이 벤 것 포함) 승리
+    if (enemiesCleared()) {
       if (!S.winAt) S.winAt = S.time;
       if (S.time - S.winAt > 900) { finish('win'); return; }
     }
@@ -1614,6 +1619,15 @@
       if (S.allies[i].dead) S.allies.splice(i, 1);
     }
 
+    // 적 사망 정리 — 어떤 경로로 쓰러졌든(플레이어·아군·패링) 살아 있는 목록만 남긴다.
+    // 남은 사망 병사가 목록에 쌓이면 승리(전멸) 판정과 적 증원 상한이 함께 막힌다.
+    for (i = S.enemies.length - 1; i >= 0; i--) {
+      var gone = S.enemies[i];
+      if (!gone.dead) continue;
+      if (!gone.counted) { gone.counted = true; S.defeated++; }   // 집계가 빠졌으면 마저 센다
+      S.enemies.splice(i, 1);
+    }
+
     // 뭉침 방지 — 이동·교전이 끝난 뒤 서로 밀어내 최소 간격(r*2.2)을 지킨다
     separateUnits(dt);
   }
@@ -1717,9 +1731,14 @@
               target.hit = 140;
               spawnSparks(target.x, target.y, 4);
               if (target.hp <= 0) {
-                target.dead = true;
-                if (u.team === 'enemy') spawnDeathSparks(target.x, target.y);
-                else killEnemy(target, false);
+                if (u.team === 'enemy') {
+                  // 적이 아군을 베어 쓰러뜨린 경우 — 아군은 stepUnits 에서 정리한다
+                  target.dead = true;
+                  spawnDeathSparks(target.x, target.y);
+                } else {
+                  // 아군이 적을 베어 쓰러뜨린 경우 — killEnemy 가 사망 처리·집계·배열 정리를 모두 맡는다
+                  killEnemy(target, false);
+                }
               }
             }
           }
@@ -1730,15 +1749,28 @@
     collideWorld(u);
   }
 
+  /** 지금 살아 있는 적 수 (쓰러진 병사는 세지 않는다 — 증원 상한 계산용) */
+  function aliveEnemies() {
+    var n = 0;
+    for (var i = 0; i < S.enemies.length; i++) if (!S.enemies[i].dead) n++;
+    return n;
+  }
+
+  /** 전멸 판정 — 약속한 적을 모두 내보냈고 살아 있는 적이 한 명도 없을 때만 참 */
+  function enemiesCleared() {
+    return S.enemySpawned >= S.enemyTotal && aliveEnemies() === 0;
+  }
+
   function stepSpawn(dt) {
     // ---- 적 증원 (파도) ----
     if (S.enemySpawned < S.enemyTotal) {
       S.spawnTimer -= dt;
       var cap = S.maxAlive || (4 + Math.round(S.enemyTotal / 5));
-      if (S.enemies.length < cap && S.spawnTimer <= 0) {
+      var alive = aliveEnemies();
+      if (alive < cap && S.spawnTimer <= 0) {
         S.spawnTimer = S.spawnMs || Math.max(420, 1000 - S.enemyTotal * 16);
         var batch = S.big ? clamp(Math.round(S.enemyTotal / 40), 3, 26) : 2;
-        var n = Math.min(batch, S.enemyTotal - S.enemySpawned, cap - S.enemies.length);
+        var n = Math.min(batch, S.enemyTotal - S.enemySpawned, cap - alive);
         for (var i = 0; i < n; i++) {
           var en;
           if (S.big) {

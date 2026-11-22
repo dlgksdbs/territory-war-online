@@ -1678,11 +1678,21 @@ body.arena-3d #arenaCanvas3d { display: block; }
   -webkit-backdrop-filter: blur(6px);
 }
 .ar-back:active { transform: translateY(1px); }
+/* 🎬 관전 · 🔁 다시 싸우기 — 오른쪽 위에 세로로 쌓는다 (두 버튼이 절대 겹치지 않게) */
+.ar-actions {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 50px);
+  right: 9px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  max-width: calc(100% - 18px);
+  z-index: 2;
+}
 /* 🎬 관전 / ⚔️ 참전 전환 */
 .ar-view {
-  position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 42px);
-  right: 9px;
+  position: static;
   padding: 8px 10px;
   border-radius: 11px;
   border: 1px solid rgba(125, 211, 252, 0.5);
@@ -1733,7 +1743,7 @@ body.arena-3d #arenaCanvas3d { display: block; }
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 78px);
   left: 0;
-  right: 0;
+  right: 112px;
   text-align: center;
   font-size: 10px;
   font-weight: 700;
@@ -1941,9 +1951,7 @@ body.arena-on { overflow: hidden; }
 @media (max-width: 350px) { .bb-set { flex-direction: column; } }
 
 .ar-restart {
-  position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 46px);
-  right: 9px;
+  position: static;
   padding: 8px 11px;
   border-radius: 11px;
   border: 1px solid rgba(251, 191, 36, 0.5);

@@ -148,7 +148,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     st.enemies.forEach((e) => { e.dead = true; });
     st.enemies.length = 0;
     st.enemySpawned = st.enemyTotal; // 추가 스폰 멈춤
-    st.enemyTotal = st.enemySpawned + 8; // 한 방에 다 베어도 승리로 끝나지 않게
+    st.enemyTotal = st.enemySpawned + 9999; // 한 방에 다 베어도 승리로 끝나지 않게 (수정판은 전멸하면 정말 끝난다)
+    st.spawnTimer = 9e9; st.spawnMs = 9e9;
     st.winAt = 0;
     st.player.x = 180; st.player.y = 380;
     st.player.face = 0;
@@ -168,7 +169,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return { kills: st.kills, corpses: st.corpses.length };
   });
   await page.click('#arSlash');
-  await sleep(120);
+  // 칼날이 적을 지나가는 순간 판정된다 — 고정 시간 대신 '베임'을 기다린다 (느린 2D 캔버스에서도 안정적)
+  await page.waitForFunction((k) => {
+    const st = window.TWArena.state();
+    return st && st.kills > k;
+  }, { timeout: 5000, polling: 16 }, cut.kills).catch(() => {});
+  await sleep(40);
   const afterSlash = await page.evaluate(() => {
     const st = window.TWArena.state();
     return {
@@ -263,7 +269,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return { kills: st.kills };
   });
   await page.click('#arSlash');
-  await sleep(70);
+  // 베기는 칼날이 적을 지나가는 순간 판정된다 — 느린 환경에서도 확실히 기다린다
+  const diagHit = await page.waitForFunction((k) => {
+    const st = window.TWArena.state();
+    return st && st.kills > k && st.corpses.length >= 2;
+  }, { timeout: 5000, polling: 16 }, diag.kills).then(() => true).catch(() => false);
   const diagAfter = await page.evaluate(() => {
     const st = window.TWArena.state();
     return {
@@ -274,8 +284,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       px: st.player.x, py: st.player.y
     };
   });
-  ok('대각선(0.62rad) 베기에서도 두 조각', diagAfter.pieces.length === 2 && diagAfter.kills > diag.kills,
-    diagAfter.pieces.length);
+  ok('대각선(0.62rad) 베기에서도 두 조각', diagHit && diagAfter.pieces.length === 2 && diagAfter.kills > diag.kills,
+    { pieces: diagAfter.pieces.length, hit: diagHit });
   const cutAng = 0.62;
   ok('조각의 절단각이 칼 각도와 같다',
     diagAfter.pieces.every((c) => Math.abs(c.cut - cutAng) < 0.001),
@@ -337,6 +347,124 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('지도 상태에 참전 전적(킬)이 기록된다', killsNow.stats.skirmishKills >= 2, killsNow.stats);
 
   await page.screenshot({ path: path.join(SHOTS, '14-back-to-map.png') });
+
+  /* ============ 아레나 HUD·판정 수정 검증 (2D) ============ */
+  // 🔁 다시 싸우기가 보이는 혼자 싸우기 판으로 열어 두 버튼의 실제 좌표를 본다
+  await page.evaluate(() => { window.__endReason = null; window.__clearInfo = null; window.__deadResidue = false; });
+  const soloOpen = await page.evaluate(() => window.TWArena.open({
+    id: 'fix2d', seed: 5150, solo: true, w: 280, h: 600, enemyCount: 10, allyCount: 6, allyStart: 6,
+    allyMs: 300, spawnMs: 300, timeLimit: 9e9, maxKills: 10, force2d: true,
+    me: { name: '한윤', color: '#3b82f6' }, enemy: { name: '적', color: '#ef4444' },
+    region: { name: '송천' }, target: { name: '적', troops: 10 }
+  }, { onEnd: function (reason) { window.__endReason = reason; } }));
+  await sleep(600);
+  ok('[수정판] 혼자 싸우기 판 개시 (🎬 관전 · 🔁 다시 싸우기 둘 다 보이는 상태)',
+    soloOpen === true && await page.evaluate(() => {
+      const a = document.getElementById('arView'), b = document.getElementById('arRestart');
+      return !!(a && b) && a.getBoundingClientRect().height > 20 &&
+        getComputedStyle(b).display !== 'none';
+    }));
+
+  const measure = () => page.evaluate(() => {
+    const box = (id) => {
+      const el = document.getElementById(id);
+      const b = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      const hitEl = document.elementFromPoint(cx, cy);
+      return {
+        id: id, text: el.textContent.trim(),
+        x: +b.left.toFixed(1), y: +b.top.toFixed(1), w: +b.width.toFixed(1), h: +b.height.toFixed(1),
+        visible: cs.display !== 'none' && b.width > 20 && b.height > 20,
+        hit: !!hitEl && (hitEl === el || el.contains(hitEl))
+      };
+    };
+    const overlapOf = (a, b) => {
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      return (ox > 0.5 && oy > 0.5) ? Math.round(ox * oy) : 0;
+    };
+    const view = box('arView'), again = box('arRestart'), back = box('arBack');
+    return {
+      view: view, again: again, back: back, vw: innerWidth, vh: innerHeight,
+      overlap: overlapOf(view, again) + overlapOf(view, back) + overlapOf(again, back),
+      inside: [view, again].every((b) => b.x >= 0 && b.y >= 0 && b.x + b.w <= innerWidth && b.y + b.h <= innerHeight)
+    };
+  });
+  const wide = await measure();
+  ok('[🎬 관전] · [🔁 다시 싸우기] 버튼이 겹치지 않고 각자 눌린다 (390×844)',
+    wide.view.visible && wide.again.visible && wide.view.hit && wide.again.hit &&
+    wide.overlap === 0 && wide.inside && wide.again.y >= wide.view.y + wide.view.h - 0.5, wide);
+  await page.screenshot({ path: path.join(SHOTS, '18-fix-buttons-portrait.png') });
+
+  await page.setViewport({ width: 320, height: 568, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await sleep(500);
+  const narrow = await measure();
+  ok('좀은 화면(320×568)에서도 두 버튼이 겹치지 않는다',
+    narrow.view.visible && narrow.again.visible && narrow.overlap === 0 && narrow.inside &&
+    narrow.again.y >= narrow.view.y + narrow.view.h - 0.5, narrow);
+  await page.screenshot({ path: path.join(SHOTS, '19-fix-buttons-narrow.png') });
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await sleep(400);
+
+  // 아군은 고른 수(6)까지만 — 다 죽어도 새로 생기지 않는다
+  const allyCounted = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    for (let i = 0; i < st.allies.length; i++) st.allies[i].dead = true;   // 아군 전멸
+    return { spawned: st.allySpawned, total: st.allyTotal, alive: st.allies.length };
+  });
+  await sleep(2000);
+  const allyAfter = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return { spawned: st.allySpawned, total: st.allyTotal, alive: st.allies.length };
+  });
+  ok('아군은 고른 수(6)까지만 증원되고, 전멸해도 그 이상 새로 생기지 않는다',
+    allyCounted.total === 6 && allyAfter.spawned === 6 && allyAfter.alive === 0,
+    { before: allyCounted, after: allyAfter });
+
+  // 같은 판을 다시 열어, 살아 있는 아군 손으로 적을 전멸시킨다
+  await page.evaluate(() => { window.__endReason = null; window.__clearInfo = null; window.__deadResidue = false; });
+  await page.evaluate(() => window.TWArena.open({
+    id: 'fix2d-win', seed: 5151, solo: true, w: 280, h: 600, enemyCount: 10, allyCount: 6, allyStart: 6,
+    allyMs: 300, spawnMs: 300, timeLimit: 9e9, maxKills: 10, force2d: true,
+    me: { name: '한윤', color: '#3b82f6' }, enemy: { name: '적', color: '#ef4444' },
+    region: { name: '송천' }, target: { name: '적', troops: 10 }
+  }, { onEnd: function (reason) { window.__endReason = reason; } }));
+  await sleep(500);
+
+  // 적을 아군 없이 플레이어가 아닌 아군 손으로 전멸시킨다
+  const cleared = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    if (!st) return true;
+    if (st.enemies.some((e) => e.dead)) window.__deadResidue = true;
+    st.spawnTimer = 0; st.allyTimer = 0;
+    st.player.hp = st.player.maxHp; st.invuln = 9e9;
+    for (const e of st.enemies) {
+      e.hp = 1; e.stun = 99999; e.speed = 0.0001;
+      if (Math.hypot(e.x - st.player.x, e.y - st.player.y) > 150) {
+        e.x = st.player.x + (Math.random() - 0.5) * 100;
+        e.y = st.player.y + (Math.random() - 0.5) * 100;
+      }
+    }
+    const done = st.enemySpawned >= st.enemyTotal && st.defeated >= st.enemyTotal && st.enemies.length === 0;
+    if (done && !window.__clearInfo) {
+      window.__clearInfo = { defeated: st.defeated, killed: st.kills,
+        enemyLeft: (document.getElementById('arEnemyLeft') || {}).textContent };
+    }
+    return done;
+  }, { timeout: 120000, polling: 120 }).then(() => true).catch(() => false);
+  const winOk = await page.waitForFunction(() => !!window.__endReason, { timeout: 20000, polling: 50 })
+    .then(() => true).catch(() => false);
+  const winInfo = await page.evaluate(() => ({
+    reason: window.__endReason, clear: window.__clearInfo, residue: window.__deadResidue,
+    title: (document.getElementById('arResultTitle') || {}).textContent
+  }));
+  ok('적을 모두 쓰러뜨리면 게임이 승리로 끝난다 — 플레이어 0베기여도 끝난다',
+    cleared && winOk && winInfo.reason === 'win' && winInfo.clear && winInfo.clear.killed === 0, winInfo);
+  ok('전멸 순간 남은 적 표시 “적 0” · 쓰러진 병사가 목록에 남지 않는다',
+    !!winInfo.clear && winInfo.clear.enemyLeft === '적 0' && winInfo.residue === false, winInfo);
+  await page.screenshot({ path: path.join(SHOTS, '20-fix-win-result.png') }).catch(() => {});
+  await page.waitForFunction(() => !window.TWArena.isOpen(), { timeout: 15000 }).catch(() => {});
 
   ok('콘솔 · 페이지 오류 0', errors.length === 0, errors.slice(0, 5));
 

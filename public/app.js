@@ -1828,9 +1828,18 @@
     return v;
   }
 
+  function ensureName(fallback) {
+    var v = (els.nameInput.value || '').trim().slice(0, 12);
+    if (!v) {
+      v = fallback || '사령관';
+      els.nameInput.value = v;
+    }
+    storageSet(NAME_KEY, v);
+    return v;
+  }
+
   function doCreate() {
-    var name = currentName();
-    if (!name) return;
+    var name = ensureName('사령관');
     me.name = name;
     els.btnCreate.disabled = true;
     var ok = send({ type: 'create', name: name, aiFill: true });
@@ -1839,8 +1848,7 @@
   }
 
   function doSim() {
-    var name = currentName();
-    if (!name) return;
+    var name = ensureName('사령관');
     me.name = name;
     els.btnSim.disabled = true;
     var ok = send({ type: 'create', name: name, sim: true });
@@ -1849,8 +1857,7 @@
   }
 
   function doJoin() {
-    var name = currentName();
-    if (!name) return;
+    var name = ensureName('사령관');
     var code = (els.joinCode.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (code.length < 4) {
       toast('방 코드 4자리를 입력해 주세요', 'warn');

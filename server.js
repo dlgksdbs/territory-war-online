@@ -2695,9 +2695,9 @@ function handleControl(room, player, type, msg) {
   if (type === 'delegate') {
     const ctl = controlOf(room, player);
     if (ctl < 0) { notify(player.ws, '참전할 나라를 먼저 고르세요.', 'warn'); return; }
-    const humans = room.players.filter((p) => !p.isAI).length;
-    if (humans > 1) { notify(player.ws, '여러 명이 함께할 때는 위임을 쓸 수 없어요.', 'warn'); return; }
     const on = msg.value !== false;
+    const humans = room.players.filter((p) => !p.isAI).length;
+    if (on && humans > 1) { notify(player.ws, '여러 명이 함께할 때는 위임을 쓸 수 없어요.', 'warn'); return; }
     if (!on && st.human[ctl]) return;
     if (on && !st.human[ctl]) return;
     st.human[ctl] = !on;

@@ -12,6 +12,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <link rel="manifest" href="/manifest.webmanifest" />
 <link rel="stylesheet" href="/style.css" />
+<link rel="modulepreload" href="/vendor/three.module.min.js" />
 </head>
 <body>
 
@@ -319,6 +320,7 @@
 
 <!-- ==================== 직접 참전 · 칼질 액션 아레나 ==================== -->
 <div id="arena" class="arena hidden" aria-hidden="true" role="application" aria-label="직접 참전 · 칼싸움 아레나">
+  <canvas id="arenaCanvas3d" aria-hidden="true"></canvas>
   <canvas id="arenaCanvas"></canvas>
 
   <div class="ar-top">
@@ -359,6 +361,7 @@
   </div>
 </div>
 
+<script type="module" src="/arena3d.js"></script>
 <script src="/arena.js"></script>
 <script src="/app.js"></script>
 </body>

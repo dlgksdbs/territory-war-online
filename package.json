@@ -1,13 +1,15 @@
 {
   "name": "territory-war-online",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "한 손으로 즐기는 실시간(RTS) 영토 확장 전략 게임 · 병사로 직접 참전하는 2D 칼질 액션 · Node.js + WebSocket 멀티플레이",
+  "description": "한 손으로 즐기는 실시간(RTS) 영토 확장 전략 게임 · 병사로 직접 참전하는 3D(Three.js) 칼질 액션 · Node.js + WebSocket 멀티플레이",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node test/smoke.js"
+    "test": "node test/smoke.js",
+    "test:arena": "node test/mobile-arena.js",
+    "test:arena3d": "node test/mobile-arena3d.js"
   },
   "engines": {
     "node": ">=18"
@@ -20,10 +22,14 @@
     "mobile",
     "korean",
     "action",
-    "sword"
+    "sword",
+    "three.js",
+    "webgl",
+    "3d"
   ],
   "license": "MIT",
   "dependencies": {
+    "three": "^0.169.0",
     "ws": "^8.18.0"
   }
 }

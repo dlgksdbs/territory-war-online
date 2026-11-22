@@ -121,6 +121,7 @@
   function cacheDom() {
     el.root = $('arena');
     el.canvas = $('arenaCanvas');
+    el.canvas3d = $('arenaCanvas3d');
     el.hpFill = $('arHpFill');
     el.hpText = $('arHpText');
     el.kills = $('arKills');
@@ -209,6 +210,7 @@
     buildWorld();
     spawnPlayer();
     spawnAllies();
+    start3d(cfg);
     bindControls();
     if (el.banner) {
       el.banner.textContent = (cfg.region && cfg.region.name ? cfg.region.name : '전선') +
@@ -232,6 +234,12 @@
     S.running = false;
     if (S.raf) cancelAnimationFrame(S.raf);
     S.raf = 0;
+    if (S.r3d) {
+      try { S.r3d.dispose(); } catch (e) { /* noop */ }
+      S.r3d = null;
+    }
+    document.body.classList.remove('arena-3d');
+    if (el.canvas3d) el.canvas3d.style.display = 'none';
     unbindControls();
     if (el.root) {
       el.root.classList.add('hidden');
@@ -336,6 +344,61 @@
   }
 
   /* ---------------------------------------------------------------------------
+     3D 렌더러 (Three.js WebGL) — 없거나 실패하면 2D로 그대로 돌아간다
+     --------------------------------------------------------------------------- */
+  function start3d(cfg) {
+    S.r3d = null;
+    var ready = !!(window.TWArena3D && window.TWArena3D.supported());
+    if (cfg && cfg.force2d) ready = false;
+    if (ready) {
+      // 매번 새 캔버스를 쓴다 (이전 WebGL 컨텍스트 재사용 문제 방지)
+      var c3 = freshCanvas3d();
+      if (c3) {
+        try {
+          S.r3d = window.TWArena3D.create({
+            canvas: c3,
+            cfg: cfg,
+            obstacles: S.obstacles
+          });
+          S.bound.push([c3, 'webglcontextlost', on3dLost, false]);
+          c3.addEventListener('webglcontextlost', on3dLost, false);
+        } catch (e) {
+          S.r3d = null;
+          if (window.console) console.warn('[arena3d] 3D 초기화 실패 → 2D로 진행', e && e.message);
+        }
+      }
+    }
+    document.body.classList.toggle('arena-3d', !!S.r3d);
+    if (el.canvas3d) el.canvas3d.style.display = S.r3d ? 'block' : 'none';
+    return !!S.r3d;
+  }
+
+  /** 3D 캔버스를 새 것으로 교체 (컨텍스트가 죽은 캔버스를 다시 쓰지 않도록) */
+  function freshCanvas3d() {
+    var old = document.getElementById('arenaCanvas3d');
+    if (!old || !old.parentNode) return null;
+    var c = document.createElement('canvas');
+    c.id = 'arenaCanvas3d';
+    c.setAttribute('aria-hidden', 'true');
+    old.parentNode.replaceChild(c, old);
+    el.canvas3d = c;
+    return c;
+  }
+
+  /** WebGL 컨텍스트를 잃으면 2D 렌더러로 자동 폴백 */
+  function on3dLost(ev) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (!S) return;
+    if (S.r3d) {
+      try { S.r3d.dispose(); } catch (e) { /* noop */ }
+      S.r3d = null;
+    }
+    document.body.classList.remove('arena-3d');
+    if (el.canvas3d) el.canvas3d.style.display = 'none';
+    try { resize(); } catch (e) { /* noop */ }
+  }
+
+  /* ---------------------------------------------------------------------------
      크기 · 화면
      --------------------------------------------------------------------------- */
   function resize() {
@@ -350,7 +413,8 @@
     S.scale = Math.min(w / W, h / H);
     S.offX = (w - W * S.scale) / 2;
     S.offY = (h - H * S.scale) / 2;
-    buildBackground();
+    if (S.r3d) S.r3d.resize(w, h);
+    else buildBackground();
   }
 
   function buildBackground() {
@@ -1153,6 +1217,15 @@
      --------------------------------------------------------------------------- */
   function draw(ts) {
     if (!S) return;
+    if (S.r3d) {
+      try {
+        S.r3d.render(S, ts);
+      } catch (e) {
+        on3dLost(null);
+      }
+      drawOverlay3d(ts);
+      return;
+    }
     var ctx = S.ctx;
     var dpr = S.dpr;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1199,6 +1272,79 @@
     vg.addColorStop(1, 'rgba(0,0,0,0.55)');
     ctx.fillStyle = vg;
     ctx.fillRect(0, 0, S.pw, S.ph);
+  }
+
+  /* 3D 모드의 2D 오버레이 — 체력 바 · 데미지 숫자 · 화면 밖 적 방향 */
+  function drawOverlay3d(ts) {
+    if (!S || !S.r3d || !S.ctx || !el.canvas) return;
+    var r = S.r3d;
+    var ctx = S.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, el.canvas.width, el.canvas.height);
+    ctx.setTransform(S.dpr, 0, 0, S.dpr, 0, 0);
+    var pw = S.pw, ph = S.ph;
+    if (pw < 2 || ph < 2) return;
+    var i, p;
+    var cx = pw / 2, cy = ph / 2;
+
+    // 화면 밖 적 → 가장자리 화살표
+    var enCol = (S.cfg.enemy && S.cfg.enemy.color) || '#ef4444';
+    for (i = 0; i < S.enemies.length; i++) {
+      var en = S.enemies[i];
+      if (en.dead) continue;
+      p = r.project(en.x, en.y, 16);
+      var inside = !p.behind && p.x > 18 && p.x < pw - 18 && p.y > 44 && p.y < ph - 96;
+      if (inside) continue;
+      var a = r.edgeAngle(en.x, en.y, 16);
+      var ex = cx + Math.sin(a) * (pw / 2 - 18);
+      var ey = cy - Math.cos(a) * (ph / 2 - 54);
+      ctx.save();
+      ctx.translate(ex, ey);
+      ctx.rotate(a);
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = hexA(enCol, 0.95);
+      ctx.strokeStyle = 'rgba(8,12,18,0.75)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, -8);
+      ctx.lineTo(6.5, 6);
+      ctx.lineTo(-6.5, 6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+
+    // 체력 바 (다친 유닛만)
+    for (i = 0; i < S.allies.length + S.enemies.length; i++) {
+      var u = i < S.allies.length ? S.allies[i] : S.enemies[i - S.allies.length];
+      if (!u || u.dead || u.hp >= u.maxHp) continue;
+      p = r.project(u.x, u.y, 32);
+      if (p.behind) continue;
+      var bw = 24;
+      ctx.fillStyle = 'rgba(0,0,0,0.62)';
+      ctx.fillRect(p.x - bw / 2 - 1, p.y - 2.4, bw + 2, 5);
+      ctx.fillStyle = u.team === 'enemy' ? '#f87171' : '#60a5fa';
+      ctx.fillRect(p.x - bw / 2, p.y - 1.4, bw * clamp(u.hp / u.maxHp, 0, 1), 3);
+    }
+
+    // 데미지 · 콤보 숫자
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (i = 0; i < S.floats.length; i++) {
+      var f = S.floats[i];
+      p = r.project(f.x, f.y, 38 + (900 - f.life) * 0.012);
+      if (p.behind) continue;
+      ctx.globalAlpha = clamp(f.life / 900, 0, 1);
+      ctx.font = '800 12px -apple-system, "Segoe UI", system-ui, sans-serif';
+      ctx.lineWidth = 3.2;
+      ctx.strokeStyle = 'rgba(4,8,14,0.9)';
+      ctx.strokeText(f.text, p.x, p.y);
+      ctx.fillStyle = f.color;
+      ctx.fillText(f.text, p.x, p.y);
+    }
+    ctx.globalAlpha = 1;
   }
 
   function drawDecor(ctx) {
@@ -1696,6 +1842,8 @@
     open: open,
     close: closeLocal,
     isOpen: isOpen,
+    mode: function () { return S ? (S.r3d ? '3d' : '2d') : 'none'; },
+    renderer3d: function () { return S ? S.r3d : null; },
     applyUpdate: applyUpdate,
     forceClose: forceClose,
     summaryText: summaryText,

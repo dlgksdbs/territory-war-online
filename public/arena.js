@@ -1,16 +1,22 @@
 'use strict';
 
 /* =============================================================================
-   직접 참전 · 칼질 액션 아레나 (2D 탑다운 실시간 칼싸움)
+   직접 참전 · 칼질 액션 아레나 (실시간 칼싸움)
    - 지도 게임(app.js)과 분리된 독립 모듈. window.TWArena.open(cfg, hooks) 로 연다.
-   - 왼쪽 절반 드래그 = 가상 조이스틱, 오른쪽 절반 탭 = 칼 휘두르기
-   - ⚔️ 베기 · 💨 돌진 베기 · 🛡️ 막기(패링) + 키보드 WASD/화살표, Space/Shift/L
+   - 3D(1인칭)일 때: 왼쪽 드래그 = 시점 기준 이동, 오른쪽 드래그 = 시점 회전,
+     오른쪽 짧은 탭 = 베기. 2D 폴백에서는 예전처럼 조이스틱 방향으로 몸이 돈다.
+   - ⚔️ 베기 · 💨 돌진 베기 · 🛡️ 막기(패링) + 키보드 WASD, ←→ 시점, Space/Shift/L
    - 아레나 결과(킬)는 주기적으로 서버에 보고 → 서버가 검증해 지도 병력에 반영
+   - cfg.solo = 지도 없이 바로 하는 대규모 1인칭 전장 (홈 화면 버튼)
    ============================================================================= */
 (function () {
   var W = 280;              // 논리 좌표 (세로형 · 서버 설정으로 덮어쓴다)
   var H = 600;
   var PLAYER_SPEED = 158;
+  var LOOK_SENS = 0.0072;       // 오른쪽 드래그 px → 회전 rad
+  var LOOK_PITCH_SENS = 0.0055;
+  var PITCH_MIN = -1.05, PITCH_MAX = 0.9;
+  var TURN_KEY_SPEED = 2.6;     // ← → 초당 회전
   var PLAYER_R = 11;
   var SLASH_RANGE = 66;
   var SLASH_ARC = 1.3;      // 좌우 ±1.3rad
@@ -136,6 +142,7 @@
     el.btnDash = $('arDash');
     el.btnGuard = $('arGuard');
     el.btnBack = $('arBack');
+    el.btnRestart = $('arRestart');
     el.down = $('arDown');
     el.downSec = $('arDownSec');
     el.flash = $('arFlash');
@@ -190,7 +197,7 @@
       spawnTimer: 900,
       enemySpawned: 0,
       enemyTotal: Math.max(1, cfg.enemyCount || 8),
-      allyTotal: Math.max(1, cfg.allyCount || 3),
+      allyTotal: Math.max(0, cfg.allyCount == null ? 3 : cfg.allyCount),
       down: 0,
       respawns: 0,
       ended: false,
@@ -200,11 +207,26 @@
       reported: 0,
       reportAt: 0,
       pendingSpawn: 0,
-      input: { dx: 0, dy: 0, mag: 0, joyId: null, joyOX: 0, joyOY: 0, joyX: 0, joyY: 0 },
+      input: {
+        dx: 0, dy: 0, mag: 0, joyId: null, joyOX: 0, joyOY: 0, joyX: 0, joyY: 0,
+        lookId: null, lookOX: 0, lookOY: 0, lookLX: 0, lookLY: 0, lookT: 0, lookDist: 0
+      },
       keys: {},
       bound: [],
       bg: null,
-      targetTroops: cfg.target ? cfg.target.troops : 0
+      targetTroops: cfg.target ? cfg.target.troops : 0,
+      solo: !!cfg.solo,
+      big: !!cfg.big || !!cfg.solo,
+      speedScale: clamp(cfg.speedScale || 1, 0.4, 3),
+      maxAlive: cfg.maxAlive || 0,
+      maxAlliesAlive: cfg.maxAlliesAlive || 0,
+      spawnMs: cfg.spawnMs || 0,
+      allyMs: cfg.allyMs || 0,
+      allyTimer: 0,
+      allySpawned: 0,
+      allyStart: Math.max(1, cfg.allyStart || cfg.allyCount || 3),
+      playerHp: Math.max(40, cfg.playerHp || 100),
+      damageGiven: 0
     };
 
     buildWorld();
@@ -222,6 +244,8 @@
     document.body.classList.add('arena-on');
     if (el.result) el.result.classList.add('hidden');
     if (el.down) el.down.classList.add('hidden');
+    if (el.btnBack) el.btnBack.textContent = S.solo ? '🗺️ 홈으로' : '🗺️ 지도로 복귀';
+    if (el.btnRestart) el.btnRestart.classList.toggle('hidden', !S.solo);
     updateHud();
     resize();
     S.lastT = 0;
@@ -270,6 +294,12 @@
       { fx: 0.50, fy: 0.66, r: 20 }, { fx: 0.35, fy: 0.78, r: 15 },
       { fx: 0.68, fy: 0.79, r: 13 }
     ];
+    // 대규모 전장은 넓은 땅에 장애물도 더 흩뿌린다
+    if (W > 420 || H > 900) {
+      for (var e = 0; e < 11; e++) {
+        spots.push({ fx: 0.08 + r() * 0.84, fy: 0.2 + r() * 0.6, r: 12 + r() * 11 });
+      }
+    }
     for (var i = 0; i < spots.length; i++) {
       var s = spots[i];
       S.obstacles.push({
@@ -289,11 +319,12 @@
   function spawnPlayer() {
     S.player = {
       x: W / 2,
-      y: H * 0.18,
+      y: H * (S.cfg.playerY || 0.18),
       r: PLAYER_R,
-      hp: 100,
-      maxHp: 100,
+      hp: S.playerHp,
+      maxHp: S.playerHp,
       face: Math.PI / 2,
+      pitch: 0,
       vx: 0,
       vy: 0,
       atk: 0,
@@ -313,10 +344,16 @@
 
   function spawnAllies() {
     var r = S.rand;
-    for (var i = 0; i < S.allyTotal; i++) {
-      var a = rndRange(r, 0, Math.PI * 2);
-      var d = rndRange(r, 24, 66);
-      S.allies.push(makeUnit('ally', W / 2 + Math.cos(a) * d, H * 0.19 + Math.sin(a) * d * 0.7));
+    var n = Math.min(S.allyTotal, S.allyStart);
+    var face = S.player ? S.player.face : Math.PI / 2;
+    for (var i = 0; i < n; i++) {
+      var a = S.big
+        ? face + Math.PI + (r() - 0.5) * 2.4                    // 대규모: 내 뒤·옆에서 따라온다
+        : rndRange(r, 0, Math.PI * 2);
+      var d = S.big ? 70 + r() * 130 : rndRange(r, 78, 120);
+      S.allies.push(makeUnit('ally', clamp(S.player.x + Math.cos(a) * d, W * 0.08, W * 0.92),
+        clamp(S.player.y + Math.sin(a) * d * 0.85, H * 0.1, H * 0.9)));
+      S.allySpawned++;
     }
   }
 
@@ -327,9 +364,9 @@
       team: team,
       x: x, y: y,
       r: enemy ? 9.2 : 8.8,
-      hp: enemy ? Math.round(76 * lvl) : 78,
-      maxHp: enemy ? Math.round(76 * lvl) : 78,
-      speed: enemy ? (52 + Math.random() * 16) * (1 + Math.min(0.25, S.targetTroops / 40)) : 58,
+      hp: enemy ? Math.round(76 * lvl) : (S.big ? 110 : 78),
+      maxHp: enemy ? Math.round(76 * lvl) : (S.big ? 110 : 78),
+      speed: (enemy ? (52 + Math.random() * 16) * (1 + Math.min(0.25, S.targetTroops / 40)) : 58) * S.speedScale,
       face: enemy ? -Math.PI / 2 : Math.PI / 2,
       cd: 200 + Math.random() * 500,
       wind: 0,
@@ -564,6 +601,13 @@
       if (!S || S.ended) return;
       finish('return');
     });
+    if (el.btnRestart) {
+      add(el.btnRestart, 'click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        restartBattle();
+      });
+    }
   }
 
   function unbindControls() {
@@ -579,6 +623,16 @@
   function localPoint(e) {
     var rect = el.root.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top, w: rect.width, h: rect.height };
+  }
+
+  function nowMs() {
+    return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  }
+
+  function normAngle(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
   }
 
   function onPointerDown(e) {
@@ -599,28 +653,56 @@
       if (e.pointerType !== 'mouse') {
         try { el.root.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
       }
+      return;
+    }
+    if (S.r3d) {
+      // 오른쪽 화면 드래그 = 시점 회전 (짧은 탭은 뗄 때 베기)
+      if (S.input.lookId != null) return;
+      S.input.lookId = e.pointerId;
+      S.input.lookOX = p.x;
+      S.input.lookOY = p.y;
+      S.input.lookLX = p.x;
+      S.input.lookLY = p.y;
+      S.input.lookT = nowMs();
+      S.input.lookDist = 0;
     } else {
       tapSlash(e);
     }
   }
 
   function onPointerMove(e) {
-    if (!S || S.input.joyId == null || e.pointerId !== S.input.joyId) return;
-    var p = localPoint(e);
-    var dx = p.x - S.input.joyOX;
-    var dy = p.y - S.input.joyOY;
-    var R = 52;
-    var d = Math.sqrt(dx * dx + dy * dy);
-    if (d > R) { dx = (dx / d) * R; dy = (dy / d) * R; }
-    S.input.joyX = S.input.joyOX + dx;
-    S.input.joyY = S.input.joyOY + dy;
-    S.input.mag = clamp(d / R, 0, 1);
-    S.input.dx = d > 0.001 ? dx / (d > R ? R : d) : 0;
-    S.input.dy = d > 0.001 ? dy / (d > R ? R : d) : 0;
-    if (Math.abs(S.input.dx) + Math.abs(S.input.dy) > 0.2) {
-      S.player.face = Math.atan2(S.input.dy, S.input.dx);
+    if (!S) return;
+    if (S.input.joyId != null && e.pointerId === S.input.joyId) {
+      var p = localPoint(e);
+      var dx = p.x - S.input.joyOX;
+      var dy = p.y - S.input.joyOY;
+      var R = 52;
+      var d = Math.sqrt(dx * dx + dy * dy);
+      if (d > R) { dx = (dx / d) * R; dy = (dy / d) * R; }
+      S.input.joyX = S.input.joyOX + dx;
+      S.input.joyY = S.input.joyOY + dy;
+      S.input.mag = clamp(d / R, 0, 1);
+      S.input.dx = d > 0.001 ? dx / (d > R ? R : d) : 0;
+      S.input.dy = d > 0.001 ? dy / (d > R ? R : d) : 0;
+      // 2D 폴백에서만: 조이스틱 방향으로 몸을 돌린다 (시점이 곧 화면)
+      if (!S.r3d && Math.abs(S.input.dx) + Math.abs(S.input.dy) > 0.2) {
+        S.player.face = Math.atan2(S.input.dy, S.input.dx);
+      }
+      placeJoy();
+      return;
     }
-    placeJoy();
+    if (S.r3d && S.input.lookId != null && e.pointerId === S.input.lookId) {
+      var lp = localPoint(e);
+      var mdx = lp.x - S.input.lookLX;
+      var mdy = lp.y - S.input.lookLY;
+      S.input.lookLX = lp.x;
+      S.input.lookLY = lp.y;
+      S.input.lookDist += Math.abs(mdx) + Math.abs(mdy);
+      var pl = S.player;
+      if (!pl) return;
+      pl.face = normAngle(pl.face + mdx * LOOK_SENS);
+      pl.pitch = clamp((pl.pitch || 0) - mdy * LOOK_PITCH_SENS, PITCH_MIN, PITCH_MAX);
+    }
   }
 
   function onPointerUp(e) {
@@ -631,6 +713,11 @@
       S.input.dx = 0;
       S.input.dy = 0;
       if (el.joy) el.joy.classList.add('hidden');
+    }
+    if (S.r3d && S.input.lookId != null && e && e.pointerId === S.input.lookId) {
+      var quick = S.input.lookDist < 12 && (nowMs() - S.input.lookT) < 360;
+      S.input.lookId = null;
+      if (quick && !S.ended) doSlash();
     }
   }
 
@@ -658,12 +745,48 @@
     doSlash();
   }
 
+  /** 화면 기준 입력 (x 오른쪽, y 아래) — 키보드 우선, 없으면 조이스틱 */
+  function moveVector() {
+    var kv = keyVector();
+    if (kv) return kv;
+    if (S.input.mag > 0.08) return { sdx: S.input.dx, sdy: S.input.dy, mag: S.input.mag };
+    return null;
+  }
+
+  /** 화면 기준 입력을 시점(face) 기준 월드 방향으로 */
+  function worldMove(mv) {
+    var f = S.player ? S.player.face : 0;
+    var fx = Math.cos(f), fy = Math.sin(f);
+    var wx = fx * (-mv.sdy) - fy * mv.sdx;
+    var wy = fy * (-mv.sdy) + fx * mv.sdx;
+    var d = Math.sqrt(wx * wx + wy * wy);
+    if (d > 0.0001) { wx /= d; wy /= d; }
+    return { x: wx, y: wy, mag: mv.mag };
+  }
+
+  function dashNow() {
+    if (!S) return;
+    var pl = S.player;
+    var mv = moveVector();
+    if (mv && mv.mag > 0.15) {
+      var w = worldMove(mv);
+      pl.dashDir = Math.atan2(w.y, w.x);
+    } else {
+      pl.dashDir = pl.face;
+    }
+    doDash();
+  }
+
   function tapDash(e) {
     if (!S) return;
     var pl = S.player;
-    if (S.input.mag > 0.15) pl.dashDir = Math.atan2(S.input.dy, S.input.dx);
-    else pl.dashDir = pl.face;
-    doDash();
+    if (!S.r3d) {
+      if (S.input.mag > 0.15) pl.dashDir = Math.atan2(S.input.dy, S.input.dx);
+      else pl.dashDir = pl.face;
+      doDash();
+      return;
+    }
+    dashNow();
   }
 
   function onKeyDown(e) {
@@ -672,12 +795,7 @@
     if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) e.preventDefault();
     S.keys[k] = true;
     if (k === ' ' || k === 'j') doSlash();
-    if (k === 'k' || k === 'shift') {
-      var pl = S.player;
-      if (S.input.mag > 0.15) pl.dashDir = Math.atan2(S.input.dy, S.input.dx);
-      else pl.dashDir = pl.face;
-      doDash();
-    }
+    if (k === 'k' || k === 'shift') dashNow();
     if (k === 'l') { S.player.guard = true; S.player.guardT = 0; el.btnGuard.classList.add('on'); }
     if (k === 'escape') finish('return');
   }
@@ -692,13 +810,13 @@
   function keyVector() {
     var k = S.keys;
     var dx = 0, dy = 0;
-    if (k['a'] || k['arrowleft']) dx -= 1;
-    if (k['d'] || k['arrowright']) dx += 1;
-    if (k['w'] || k['arrowup']) dy -= 1;
-    if (k['s'] || k['arrowdown']) dy += 1;
+    if (k['a']) dx -= 1;
+    if (k['d']) dx += 1;
+    if (k['w']) dy -= 1;
+    if (k['s']) dy += 1;
     var d = Math.sqrt(dx * dx + dy * dy);
     if (d < 0.01) return null;
-    return { dx: dx / d, dy: dy / d, mag: 1 };
+    return { sdx: dx / d, sdy: dy / d, mag: 1 };
   }
 
   /* ---------------------------------------------------------------------------
@@ -912,16 +1030,31 @@
       return;
     }
 
-    // 플레이어 이동
-    var mv = keyVector();
+    // 플레이어 이동 (시점 기준 · 시점은 사용자가 돌릴 때만 바뀐다)
+    var mv = moveVector();
     var dx = 0, dy = 0, mag = 0;
-    if (mv) { dx = mv.dx; dy = mv.dy; mag = 1; }
-    else if (S.input.mag > 0.08) { dx = S.input.dx; dy = S.input.dy; mag = S.input.mag; }
+    if (mv) {
+      if (S.r3d) {
+        var wm = worldMove(mv);
+        dx = wm.x; dy = wm.y;
+      } else {
+        var dl = Math.sqrt(mv.sdx * mv.sdx + mv.sdy * mv.sdy) || 1;
+        dx = mv.sdx / dl; dy = mv.sdy / dl;
+      }
+      mag = mv.mag;
+    }
+
+    // 키보드 ←→ 시점 회전 · ↑↓ 시점 상하 (3D)
+    if (S.r3d) {
+      var turn = (S.keys['arrowright'] ? 1 : 0) - (S.keys['arrowleft'] ? 1 : 0);
+      if (turn) pl.face = normAngle(pl.face + turn * TURN_KEY_SPEED * (dt / 1000));
+      var pit = (S.keys['arrowup'] ? 1 : 0) - (S.keys['arrowdown'] ? 1 : 0);
+      if (pit) pl.pitch = clamp((pl.pitch || 0) + pit * 1.5 * (dt / 1000), PITCH_MIN, PITCH_MAX);
+    }
 
     if (pl.dash > 0) {
       pl.dash -= dt;
-      pl.face = pl.dashDir;
-      var dashStep = DASH_SPEED * (dt / 1000);
+      var dashStep = DASH_SPEED * S.speedScale * (dt / 1000);
       pl.x += Math.cos(pl.dashDir) * dashStep;
       pl.y += Math.sin(pl.dashDir) * dashStep;
       if (S.rand() < 0.7) {
@@ -944,11 +1077,11 @@
         }
       }
     } else if (mag > 0.06) {
-      var sp = PLAYER_SPEED * (pl.guard ? 0.5 : 1) * clamp(mag * 1.15, 0.35, 1);
+      var sp = PLAYER_SPEED * S.speedScale * (pl.guard ? 0.55 : 1) * clamp(mag * 1.15, 0.35, 1);
       pl.x += dx * sp * (dt / 1000);
       pl.y += dy * sp * (dt / 1000);
-      if (!pl.guard) pl.face = Math.atan2(dy, dx);
-      else pl.face = Math.atan2(dy, dx);
+      // 2D 폴백에서만 이동 방향으로 몸이 돈다 (3D는 시점 고정)
+      if (!S.r3d) pl.face = Math.atan2(dy, dx);
     }
 
     // 타이머
@@ -981,12 +1114,17 @@
   function respawn() {
     var pl = S.player;
     pl.hp = pl.maxHp;
-    pl.x = W / 2;
-    pl.y = H * 0.2;
-    pl.face = Math.PI / 2;
+    if (S.big) {
+      // 대규모 전장: 쓰러진 자리에서 조금 뒤로 물러나 일어난다
+      pl.x = clamp(pl.x - Math.cos(pl.face) * 90, W * 0.08, W * 0.92);
+      pl.y = clamp(pl.y - Math.sin(pl.face) * 90, H * 0.12, H * 0.88);
+    } else {
+      pl.x = W / 2;
+      pl.y = H * 0.2;
+    }
     pl.atkCd = 0; pl.dash = 0; pl.dashCd = 0; pl.guard = false;
     S.respawns++;
-    S.invuln = 1200;
+    S.invuln = 1400;
     if (el.down) el.down.classList.add('hidden');
     addFloat(pl.x, pl.y - 28, '부활!', '#a7f3d0');
     updateHud();
@@ -1052,9 +1190,9 @@
 
     var tx, ty;
     if (u.team === 'ally' && (!target)) {
-      // 적이 없으면 플레이어 주변을 지킨다
-      tx = pl.x + Math.cos(u.wob + S.time / 900) * 44;
-      ty = pl.y + Math.sin(u.wob + S.time / 900) * 34 + 10;
+      // 적이 없으면 플레이어 주변을 지킨다 (1인칭 시야를 가리지 않게 조금 떨어져서)
+      tx = pl.x + Math.cos(u.wob + S.time / 900) * (S.big ? 120 : 62);
+      ty = pl.y + Math.sin(u.wob + S.time / 900) * (S.big ? 96 : 48) + 10;
     } else if (target) {
       tx = target.x; ty = target.y;
     } else {
@@ -1075,27 +1213,31 @@
 
     if (u.wind > 0) {
       u.wind -= dt;
-      if (u.wind <= 0 && target) {
-        var rr = (u.r + target.r) + 24;
-        var ddx = target.x - u.x, ddy = target.y - u.y;
-        if (ddx * ddx + ddy * ddy <= rr * rr) {
-          u.swing = 180;
-          if (u.team === 'enemy') {
-            if (target === pl) hurtPlayer(9 + Math.random() * 4, u);
-            else {
-              target.hp -= 10;
+      if (u.wind <= 0) {
+        // 빗나가도 칼을 휘두르는 동작·검기(3D 예고→휘두름)는 그대로 보여 준다
+        u.swing = 180;
+        if (target) {
+          var rr = (u.r + target.r) + 24;
+          var ddx = target.x - u.x, ddy = target.y - u.y;
+          if (ddx * ddx + ddy * ddy <= rr * rr) {
+            if (u.team === 'enemy') {
+              if (target === pl) hurtPlayer(9 + Math.random() * 4, u);
+              else {
+                target.hp -= 10;
+                target.hit = 140;
+                spawnSparks(target.x, target.y, 4);
+                if (target.hp <= 0) {
+                  target.dead = true;
+                  spawnBlood(target.x, target.y);
+                }
+              }
+            } else {
+              target.hp -= 11;
               target.hit = 140;
               spawnSparks(target.x, target.y, 4);
-              if (target.hp <= 0) {
-                target.dead = true;
-                spawnBlood(target.x, target.y);
-              }
+              if (target.hp <= 0) killEnemy(target, false);
             }
-          } else {
-            target.hp -= 11;
-            target.hit = 140;
-            spawnSparks(target.x, target.y, 4);
-            if (target.hp <= 0) killEnemy(target, false);          }
+          }
         }
         u.cd = 760 + Math.random() * 320;
       }
@@ -1104,19 +1246,46 @@
   }
 
   function stepSpawn(dt) {
-    if (S.enemySpawned >= S.enemyTotal) return;
-    S.spawnTimer -= dt;
-    var aliveCap = 4 + Math.round(S.enemyTotal / 5);
-    if (S.enemies.length >= aliveCap) return;
-    if (S.spawnTimer > 0) return;
-    S.spawnTimer = Math.max(420, 1000 - S.enemyTotal * 16);
-    var n = Math.min(2, S.enemyTotal - S.enemySpawned, aliveCap - S.enemies.length);
-    for (var i = 0; i < n; i++) {
-      var en = makeUnit('enemy', W * 0.18 + Math.random() * W * 0.64,
-      H * 0.84 - Math.random() * H * 0.07);
-      en.wind = 0;
-      S.enemies.push(en);
-      S.enemySpawned++;
+    // ---- 적 증원 (파도) ----
+    if (S.enemySpawned < S.enemyTotal) {
+      S.spawnTimer -= dt;
+      var cap = S.maxAlive || (4 + Math.round(S.enemyTotal / 5));
+      if (S.enemies.length < cap && S.spawnTimer <= 0) {
+        S.spawnTimer = S.spawnMs || Math.max(420, 1000 - S.enemyTotal * 16);
+        var n = Math.min(S.big ? 3 : 2, S.enemyTotal - S.enemySpawned, cap - S.enemies.length);
+        for (var i = 0; i < n; i++) {
+          var en;
+          if (S.big) {
+            // 플레이어 앞쪽으로 파도처럼 몰려온다
+            var a = (S.player ? S.player.face : Math.PI / 2) + (S.rand() - 0.5) * 2.8;
+            var d = 240 + S.rand() * 200;
+            en = makeUnit('enemy', clamp(S.player.x + Math.cos(a) * d, W * 0.05, W * 0.95),
+              clamp(S.player.y + Math.sin(a) * d, H * 0.06, H * 0.94));
+          } else {
+            en = makeUnit('enemy', W * 0.18 + Math.random() * W * 0.64,
+              H * 0.84 - Math.random() * H * 0.07);
+          }
+          en.wind = 0;
+          S.enemies.push(en);
+          S.enemySpawned++;
+        }
+      }
+    }
+    // ---- 아군 증원 (파도) ----
+    if (S.allySpawned < S.allyTotal) {
+      S.allyTimer -= dt;
+      var acap = S.maxAlliesAlive || 999;
+      if (S.allies.length < acap && S.allyTimer <= 0) {
+        S.allyTimer = S.allyMs || 1500;
+        var m = Math.min(S.big ? 2 : 1, S.allyTotal - S.allySpawned);
+        for (var j = 0; j < m; j++) {
+          var ang = (S.player ? S.player.face : Math.PI / 2) + Math.PI + (S.rand() - 0.5) * 1.8;
+          var dd = 70 + S.rand() * 90;
+          S.allies.push(makeUnit('ally', clamp(S.player.x + Math.cos(ang) * dd, W * 0.06, W * 0.94),
+            clamp(S.player.y + Math.sin(ang) * dd, H * 0.08, H * 0.92)));
+          S.allySpawned++;
+        }
+      }
     }
   }
 
@@ -1172,6 +1341,15 @@
     if (u.x > W - margin) u.x = W - margin;
     if (u.y < H * 0.13) u.y = H * 0.13;
     if (u.y > H * 0.87) u.y = H * 0.87;
+    // 1인칭 카메라 바로 앞을 아군이 막지 않도록
+    if (S.r3d && S.player && u !== S.player && u.team === 'ally') {
+      var pdx = u.x - S.player.x, pdy = u.y - S.player.y;
+      var pd = Math.sqrt(pdx * pdx + pdy * pdy);
+      if (pd < 48 && pd > 0.001) {
+        u.x = S.player.x + (pdx / pd) * 48;
+        u.y = S.player.y + (pdy / pd) * 48;
+      }
+    }
     for (var i = 0; i < S.obstacles.length; i++) {
       var o = S.obstacles[i];
       var dx = u.x - o.x, dy = u.y - o.y;
@@ -1286,6 +1464,31 @@
     if (pw < 2 || ph < 2) return;
     var i, p;
     var cx = pw / 2, cy = ph / 2;
+
+    // 조준선 · 적이 칼을 치켜들면 붉게 경고
+    var danger = false;
+    for (i = 0; i < S.enemies.length; i++) {
+      var ew = S.enemies[i];
+      if (ew.dead || !(ew.wind > 0)) continue;
+      var edx = ew.x - S.player.x, edy = ew.y - S.player.y;
+      if (edx * edx + edy * edy < 260 * 260) { danger = true; break; }
+    }
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.strokeStyle = danger ? 'rgba(255,124,92,0.95)' : 'rgba(202,232,255,0.66)';
+    ctx.lineWidth = danger ? 2.1 : 1.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, danger ? 10 : 7.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-14, 0); ctx.lineTo(-6, 0);
+    ctx.moveTo(6, 0); ctx.lineTo(14, 0);
+    ctx.moveTo(0, -14); ctx.lineTo(0, -6);
+    ctx.moveTo(0, 6); ctx.lineTo(0, 14);
+    ctx.stroke();
+    ctx.fillStyle = danger ? '#ff9276' : '#e4f1ff';
+    ctx.beginPath(); ctx.arc(0, 0, 1.7, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
 
     // 화면 밖 적 → 가장자리 화살표
     var enCol = (S.cfg.enemy && S.cfg.enemy.color) || '#ef4444';
@@ -1736,8 +1939,9 @@
       }
     }
     if (el.hint) {
-      if (pl.guard) el.hint.textContent = '막는 중 · 적 공격 직전에 누르면 패링';
+      if (pl.guard) el.hint.textContent = '막는 중 · 적이 휘두르기 직전에 누르면 패링';
       else if (pl.dashCd > 0) el.hint.textContent = '돌진 준비 ' + (pl.dashCd / 1000).toFixed(1) + '초';
+      else if (S.r3d) el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 드래그 시점 · 오른쪽 탭/⚔️ 베기 · 🛡️ 막기';
       else el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 탭/⚔️ 베기 · 🛡️로 막고 패링';
     }
   }
@@ -1792,6 +1996,19 @@
   /* ---------------------------------------------------------------------------
      종료
      --------------------------------------------------------------------------- */
+  /** 같은 설정으로 새 판 (대규모 전장 · 다시 싸우기) */
+  function restartBattle() {
+    if (!S) return;
+    var prev = S.cfg;
+    var hooks = S.hooks;
+    var next = {};
+    for (var k in prev) next[k] = prev[k];
+    next.seed = ((prev.seed || 1) * 7919 + 1013) % 2147483647;
+    next.id = String(prev.id || 'arena') + '-r';
+    closeLocal();
+    open(next, hooks);
+  }
+
   function finish(reason) {
     if (!S || S.ended) return;
     var kills = S.kills;
@@ -1841,6 +2058,7 @@
   window.TWArena = {
     open: open,
     close: closeLocal,
+    restart: restartBattle,
     isOpen: isOpen,
     mode: function () { return S ? (S.r3d ? '3d' : '2d') : 'none'; },
     renderer3d: function () { return S ? S.r3d : null; },

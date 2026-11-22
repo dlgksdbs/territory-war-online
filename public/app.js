@@ -2015,9 +2015,47 @@
     }, 3500);
   }
 
+  /** 지도 없이 바로 하는 대규모 1인칭 3D 전장 (홈 버튼) */
+  function startBigBattle() {
+    if (!window.TWArena) { toast('아레나를 불러오지 못했어요', 'bad'); return; }
+    if (TWArena.isOpen()) return;
+    var name = (els.nameInput && els.nameInput.value ? els.nameInput.value : '').trim().slice(0, 12) || '한윤';
+    var cfg = {
+      id: 'solo-' + Date.now(),
+      seed: (Date.now() % 100000) + 7,
+      solo: true,
+      big: true,
+      w: 700,
+      h: 1500,
+      playerY: 0.34,
+      enemyCount: 56,
+      allyCount: 50,
+      allyStart: 16,
+      maxAlive: 30,
+      maxAlliesAlive: 22,
+      spawnMs: 520,
+      allyMs: 1500,
+      playerHp: 160,
+      speedScale: 1.45,
+      me: { slot: 0, name: name, color: '#3b82f6' },
+      enemy: { slot: 1, name: '적군', color: '#ef4444' },
+      region: { name: '대평원' },
+      target: { name: '적군', troops: 56 },
+      maxKills: 99
+    };
+    var ok = TWArena.open(cfg, {
+      onEnd: function (reason, kills) {
+        if (kills > 0) toast('전장에서 ' + kills + '명 베고 돌아왔어요', 'good');
+      }
+    });
+    if (!ok) toast('전장을 열지 못했어요 · 잠시 후 다시', 'bad');
+    else vibrate([12, 30, 12]);
+  }
+
   function bindUI() {
     els.btnCreate.addEventListener('click', doCreate);
     els.btnSim.addEventListener('click', doSim);
+    if (els.btnBigBattle) els.btnBigBattle.addEventListener('click', startBigBattle);
     els.btnJoin.addEventListener('click', doJoin);
     els.joinCode.addEventListener('keydown', function (e) { if (e.key === 'Enter') doJoin(); });
     els.nameInput.addEventListener('keydown', function (e) {
@@ -2301,7 +2339,7 @@
   function cacheEls() {
     var ids = [
       'app', 'lobby', 'homePanel', 'roomPanel', 'nameInput', 'joinCode', 'homeNote',
-      'btnCreate', 'btnSim', 'btnJoin', 'roomCode', 'btnCopyCode', 'btnShare', 'roomPlayers',
+      'btnCreate', 'btnSim', 'btnJoin', 'btnBigBattle', 'roomCode', 'btnCopyCode', 'btnShare', 'roomPlayers',
       'aiToggle', 'aiRow', 'roomSpeedRow', 'roomSpeed', 'roomNote', 'btnStart', 'waitHost', 'btnLeaveLobby',
       'netBar', 'netText', 'boot', 'bootText',
       'statTime', 'statLand', 'statTroops', 'statProd', 'btnSpeed', 'legend',

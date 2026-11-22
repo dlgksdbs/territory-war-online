@@ -85,6 +85,13 @@
     <section id="homePanel" class="lobby-card">
       <div class="pick-label" for="nameInput">내 이름</div>
       <input id="nameInput" class="text-input" type="text" maxlength="12" placeholder="닉네임 (최대 12자)" autocomplete="nickname" autofocus />
+      <button id="btnBigBattle" class="primary big-battle" type="button">
+        <span class="bb-ico" aria-hidden="true">⚔️</span>
+        <span class="bb-txt">
+          <b>대규모 3D 전장 · 바로 싸우기</b>
+          <small>지도 없이 1인칭 시점 · 병사 100명 난전</small>
+        </span>
+      </button>
       <button id="btnCreate" class="primary" type="button">방 만들기</button>
       <button id="btnSim" class="primary sim" type="button">🤖 AI 시뮬레이션 (관전 + 난입)</button>
       <div class="or"><span>또는</span></div>
@@ -341,8 +348,9 @@
   </div>
 
   <button id="arBack" class="ar-back" type="button">🗺️ 지도로 복귀</button>
+  <button id="arRestart" class="ar-restart hidden" type="button">🔁 다시 싸우기</button>
 
-  <div id="arHint" class="ar-hint">왼쪽 드래그 이동 · 오른쪽 탭/⚔️ 베기</div>
+  <div id="arHint" class="ar-hint">왼쪽 드래그 이동 · 오른쪽 드래그 시점 · 오른쪽 탭 베기</div>
 
   <div id="arJoy" class="ar-joy hidden" aria-hidden="true"><i id="arJoyKnob"></i></div>
 

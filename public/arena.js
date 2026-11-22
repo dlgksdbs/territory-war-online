@@ -27,7 +27,7 @@
   var DASH_CD = 1500;
   var DASH_DMG = 9999;
   var SLASH_ANIM = 480;     // 1인칭 검 궤적 ms (예비동작 → 가로 횡베기 → 팔로우스루 → 복귀)
-  var SLASH_HIT_P = 0.489;   // 검끝이 적 몸통을 지나가는 지점 (궤적의 45%) — 이 순간에 절단
+  var SLASH_HIT_P = 0.44;    // 검끝이 적 몸통을 지나가는 지점 (궤적 44%) — 이 순간에 절단
   var SLASH_HIT_AT = SLASH_ANIM * SLASH_HIT_P;  // 베기 시작 후 절단·스파크가 터지는 시각(ms)
   var SWIPE_MS = 250;       // 오른쪽 화면 빠른 스와이프 판정 시간
   var SWIPE_MIN = 36;       // 스와이프 최소 거리(px)
@@ -36,6 +36,19 @@
   var COMBO_MS = 780;       // 이 안에 이어서 베면 좌↔우를 번갈아 가로지른다 (1타 우→좌 · 2타 좌→우)
   var GUARD_MUL = 0;          // 꾹 누르고 있는 동안은 100% 막는다 (데미지 0)
   var PARRY_MS = 260;
+
+  /* 병사(아군·적군) 전투 스펙 — 양쪽이 '완전히' 같다.
+     같은 수가 붙으면 팽팽하게 싸우고, 어느 쪽도 일방적으로 세지 않다. */
+  var UNIT_HP = 100;          // 체력 (아군 = 적군)
+  var UNIT_DMG = 10;          // 한 대 데미지 (아군 → 적군 = 적군 → 아군/플레이어)
+  var UNIT_SPEED = 56;        // 이동 속도
+  var UNIT_R = 9.0;           // 몸 반지름
+  var UNIT_WIND = 320;        // 칼을 치켜드는 예비동작 시간(ms)
+  var UNIT_CD = 760;          // 공격 후 쉬는 시간(ms) + 0~320 랜덤 (양쪽 같은 식)
+  var UNIT_CD_VAR = 320;
+  var UNIT_REACH = 17;        // 칼이 닿는 거리 = r + r + 17
+  var UNIT_HIT_PAD = 24;      // 휘두름 판정 여유
+  var SPECTATE_SPEED = 320;   // 🎬 관전 카메라 비행 속도(초당 월드 단위)
 
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
   function lerp(a, b, t) { return a + (b - a) * t; }
@@ -157,6 +170,7 @@
     el.btnSlash = $('arSlash');
     el.btnDash = $('arDash');
     el.btnGuard = $('arGuard');
+    el.btnView = $('arView');
     el.btnBack = $('arBack');
     el.btnRestart = $('arRestart');
     el.down = $('arDown');
@@ -211,7 +225,10 @@
       hitstop: 0,
       shake: 0,
       pending: null,          // 칼날이 적을 지나가는 순간 터질 베기 판정
+      lastHitAt: null,        // 마지막으로 칼이 닿은 적의 위치 (1회 1명 검증용)
       nextSweep: -1,          // 다음 타의 횡베기 방향 (1: 좌→우, -1: 우→좌)
+      view: 'fp',             // 'fp' = 1인칭 참전 · 'spectate' = 🎬 관전
+      spectate: null,         // 관전 카메라 자리 (x, y, h, yaw, pitch)
       lastSlashAt: -9e9,
       spawnTimer: 900,
       enemySpawned: 0,
@@ -272,6 +289,7 @@
     if (el.down) el.down.classList.add('hidden');
     if (el.btnBack) el.btnBack.textContent = S.solo ? '🗺️ 홈으로' : '🗺️ 지도로 복귀';
     if (el.btnRestart) el.btnRestart.classList.toggle('hidden', !S.solo);
+    updateViewUi();
     updateHud();
     resize();
     S.lastT = 0;
@@ -388,18 +406,19 @@
     }
   }
 
+  /** 아군 병사와 적군 병사 — 체력·공격력·쿨다운·속도·사거리·몸집이 모두 같은 스펙 */
   function makeUnit(team, x, y) {
     var enemy = team === 'enemy';
     return {
       team: team,
       x: x, y: y,
-      r: enemy ? 9.2 : 8.8,
-      // 적은 체력이 없다 — 칼에 닿으면 한 방에 쓰러진다 (체력바 없음)
-      hp: enemy ? 1 : (S.big ? 110 : 78),
-      maxHp: enemy ? 1 : (S.big ? 110 : 78),
-      speed: (enemy ? (52 + Math.random() * 16) * (1 + Math.min(0.25, S.targetTroops / 40)) : 58) * S.speedScale,
+      r: UNIT_R,
+      hp: UNIT_HP,
+      maxHp: UNIT_HP,
+      dmg: UNIT_DMG,
+      speed: UNIT_SPEED * S.speedScale,
       face: enemy ? -Math.PI / 2 : Math.PI / 2,
-      cd: 200 + Math.random() * 500,
+      cd: UNIT_CD + Math.random() * UNIT_CD_VAR,
       wind: 0,
       swing: 0,
       hit: 0,
@@ -408,6 +427,15 @@
       lastHitBy: null,
       dashHit: false,
       wob: Math.random() * 6.28
+    };
+  }
+
+  /** 지금 병사 스펙(양쪽 공통) — 검증·표시용 */
+  function unitSpec() {
+    return {
+      hp: UNIT_HP, dmg: UNIT_DMG, speed: UNIT_SPEED, radius: UNIT_R,
+      wind: UNIT_WIND, cd: UNIT_CD, cdVar: UNIT_CD_VAR,
+      reach: UNIT_REACH, hitPad: UNIT_HIT_PAD
     };
   }
 
@@ -470,7 +498,7 @@
     if (el.canvas3d) el.canvas3d.style.display = 'none';
     try { resize(); } catch (e) { /* noop */ }
     // 휴대폰에서 판을 막 열 때 GPU 컨텍스트가 잠깐 끊기는 경우가 있다 → 한 번만 다시 3D로
-    if (!S.retried3d && S.elapsed < 1500) {
+    if (!S.retried3d) {
       S.retried3d = true;
       setTimeout(function () {
         if (!S || S.r3d || S.ended) return;
@@ -627,7 +655,7 @@
     add(el.btnDash, 'pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); tapDash(e); });
     add(el.btnGuard, 'pointerdown', function (e) {
       e.preventDefault(); e.stopPropagation();
-      if (!S) return;
+      if (!S || S.view === 'spectate') return;
       S.player.guard = true;
       S.player.guardT = 0;
       el.btnGuard.classList.add('on');
@@ -641,6 +669,13 @@
     add(el.btnGuard, 'pointerup', release);
     add(el.btnGuard, 'pointercancel', release);
     add(el.btnGuard, 'pointerleave', release);
+    if (el.btnView) {
+      add(el.btnView, 'click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleView();
+      });
+    }
     add(el.btnBack, 'click', function (e) {
       e.preventDefault();
       if (!S || S.ended) return;
@@ -746,6 +781,13 @@
       S.input.lookDist += Math.abs(mdx) + Math.abs(mdy);
       var pl = S.player;
       if (!pl) return;
+      if (S.view === 'spectate' && S.spectate) {
+        // 관전 — 카메라 각도를 돌린다 (제자리에서 둘러보기)
+        var sp = S.spectate;
+        sp.yaw = normAngle(sp.yaw + mdx * LOOK_SENS);
+        sp.pitch = clamp(sp.pitch - mdy * LOOK_PITCH_SENS, -1.35, 0.92);
+        return;
+      }
       pl.face = normAngle(pl.face + mdx * LOOK_SENS);
       pl.pitch = clamp((pl.pitch || 0) - mdy * LOOK_PITCH_SENS, PITCH_MIN, PITCH_MAX);
 
@@ -779,7 +821,7 @@
       var swiped = S.input.lookSlash;
       S.input.lookId = null;
       S.input.lookSlash = false;
-      if (!swiped && quick && !S.ended) doSlash();
+      if (!swiped && quick && !S.ended && S.view !== 'spectate') doSlash();
     }
   }
 
@@ -824,6 +866,110 @@
     var d = Math.sqrt(wx * wx + wy * wy);
     if (d > 0.0001) { wx /= d; wy /= d; }
     return { x: wx, y: wy, mag: mv.mag };
+  }
+
+  /* ---------------------------------------------------------------------------
+     🎬 관전 모드 — 참전을 잠시 멈추고 전장 위를 날아다니며 구경한다
+     · 왼쪽 드래그 = 보는 방향으로 비행(상하좌우) · 오른쪽 드래그 = 시점
+     · 관전 중엔 공격·방어 버튼과 1인칭 뷰모델이 사라지고 적도 나를 노리지 않는다
+     · ⚔️ 참전 버튼을 누르면 그 자리(관전하던 지면)로 내려와 바로 싸운다
+     --------------------------------------------------------------------------- */
+  function toggleView() {
+    if (!S || S.ended) return;
+    if (S.view === 'spectate') exitSpectate();
+    else enterSpectate();
+  }
+
+  function enterSpectate() {
+    if (!S || S.ended || S.down > 0) return;
+    var pl = S.player;
+    pl.guard = false;
+    pl.atkAnim = 0;
+    pl.dash = 0;
+    pl.atkCd = Math.max(pl.atkCd, 140);
+    S.pending = null;
+    S.view = 'spectate';
+    // 플레이어 머리 위에서 출발해 전장을 내려다본다
+    S.spectate = {
+      x: pl.x, y: pl.y,
+      h: clamp(165 + (S.big ? 45 : 0), 110, 240),
+      yaw: pl.face,
+      pitch: -0.74
+    };
+    S.combo = 0;
+    if (el.btnGuard) el.btnGuard.classList.remove('on');
+    updateViewUi();
+    updateHud();
+    if (el.hint) el.hint.textContent = '🎬 관전 중 — 왼쪽 드래그로 전장을 날아다니고, 오른쪽 드래그로 시점을 돌린다';
+    sfx('dash');
+  }
+
+  function exitSpectate() {
+    if (!S) return;
+    var sp = S.spectate;
+    var pl = S.player;
+    S.view = 'fp';
+    if (sp) {
+      // 관전하던 지면으로 내려와 참전한다 (필드 밖으로는 나가지 않는다)
+      pl.x = clamp(sp.x, W * 0.1, W * 0.9);
+      pl.y = clamp(sp.y, H * 0.16, H * 0.84);
+      pl.face = sp.yaw;
+      pl.pitch = clamp(sp.pitch + 0.28, PITCH_MIN, PITCH_MAX);
+      // 내려온 자리 주변의 적은 잠깐 밀려난다 (바로 둘러싸여 죽지 않게)
+      for (var i = 0; i < S.enemies.length; i++) {
+        var en = S.enemies[i];
+        if (en.dead) continue;
+        var dx = en.x - pl.x, dy = en.y - pl.y;
+        var d = Math.sqrt(dx * dx + dy * dy);
+        if (d > 62) continue;
+        var a = d > 0.001 ? Math.atan2(dy, dx) : S.rand() * 6.28;
+        en.x = clamp(pl.x + Math.cos(a) * 66, W * 0.06, W * 0.94);
+        en.y = clamp(pl.y + Math.sin(a) * 66, H * 0.13, H * 0.87);
+        en.stun = Math.max(en.stun, 520);
+        en.wind = 0;
+      }
+      collideWorld(pl);
+    }
+    pl.atkCd = Math.max(pl.atkCd, 220);
+    S.invuln = Math.max(S.invuln || 0, 900);
+    updateViewUi();
+    updateHud();
+    sfx('block');
+  }
+
+  function updateViewUi() {
+    if (!S) return;
+    var spec = S.view === 'spectate';
+    if (el.btnView) {
+      el.btnView.textContent = spec ? '⚔️ 참전' : '🎬 관전';
+      el.btnView.setAttribute('aria-label', spec ? '1인칭으로 참전하기' : '전장을 위에서 관전하기');
+      el.btnView.setAttribute('aria-pressed', spec ? 'true' : 'false');
+      el.btnView.className = 'ar-view' + (spec ? ' on' : '');
+    }
+    if (el.root) {
+      el.root.classList.toggle('spectate', spec);
+      el.root.setAttribute('data-view', spec ? 'spectate' : 'fp');
+    }
+  }
+
+  /** 관전 카메라 이동 — 왼쪽 드래그/키로 보는 방향으로 난다 */
+  function stepSpectate(dt) {
+    var sp = S.spectate;
+    if (!sp) return;
+    var mv = moveVector();
+    if (mv && mv.mag > 0.05) {
+      var f = sp.yaw;
+      var fx = Math.cos(f), fy = Math.sin(f);
+      var wx = fx * (-mv.sdy) - fy * mv.sdx;
+      var wy = fy * (-mv.sdy) + fx * mv.sdx;
+      var wl = Math.sqrt(wx * wx + wy * wy);
+      if (wl > 0.0001) { wx /= wl; wy /= wl; }
+      var spd = SPECTATE_SPEED * S.speedScale * clamp(mv.mag * 1.15, 0.32, 1);
+      sp.x = clamp(sp.x + wx * spd * (dt / 1000), W * 0.02, W * 0.98);
+      sp.y = clamp(sp.y + wy * spd * (dt / 1000), H * 0.04, H * 0.96);
+      // 아래를 보며 앞으로 가면 내려가고, 위를 보면 올라간다 (지면에 붙지 않게 최소 높이)
+      sp.h = clamp(sp.h + (-mv.sdy) * Math.sin(sp.pitch) * spd * (dt / 1000) * 1.1, 34, 300);
+    }
   }
 
   function dashNow() {
@@ -885,7 +1031,7 @@
      액션
      --------------------------------------------------------------------------- */
   function doSlash(swipe) {
-    if (!S || S.ended || S.down > 0) return;
+    if (!S || S.ended || S.down > 0 || S.view === 'spectate') return;
     var pl = S.player;
     if (!pl || pl.atkCd > 0 || pl.dash > 0) return;
     var dir = slashDir(swipe);
@@ -933,32 +1079,36 @@
     return dir;
   }
 
-  /** 칼이 실제로 적을 지나가는 순간에 판정 — 스파크·절단·히트스톱이 한 박자로 터진다 */
+  /** 칼이 실제로 적을 지나가는 순간에 판정 — 스파크·절단·히트스톱이 한 박자로 터진다
+      한 번의 베기에는 딱 한 명 — 공격 범위 안에서 가장 정면(그다음 가까운) 적 하나만 벤다. */
   function resolveSlashHit(pd) {
     var pl = S.player;
     if (!pl) return;
     var slice = pd.slice, dir = pd.dir;
     // 가로 횡베기: 몸이 칼이 지나간 쪽(화면 기준 좌/우)으로 밀린다
     var pushAng = normAngle(pd.face + (dir.sx < 0 ? -Math.PI / 2 : Math.PI / 2));
-    var hits = 0, hx = 0, hy = 0;
-    for (var i = S.enemies.length - 1; i >= 0; i--) {
+    var best = null, bestScore = Infinity;
+    for (var i = 0; i < S.enemies.length; i++) {
       var en = S.enemies[i];
       if (en.dead) continue;
       var dx = en.x - pl.x, dy = en.y - pl.y;
       var dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > SLASH_RANGE + en.r) continue;
       var a = Math.atan2(dy, dx);
-      if (Math.abs(angDiff(a, pd.face)) > SLASH_ARC) continue;
-      hx += en.x; hy += en.y; hits++;
-      hurtEnemy(en, SLASH_DMG, pushAng, 34, slice.cut, slice.tilt);
+      var off = Math.abs(angDiff(a, pd.face));
+      if (off > SLASH_ARC) continue;
+      // 정면에 가까울수록 · 가까울수록 먼저 (정면 우선, 동률이면 가까운 쪽)
+      var score = off * 1.6 + (dist / SLASH_RANGE) * 0.9;
+      if (score < bestScore) { bestScore = score; best = en; }
     }
-    if (hits > 0) {
+    if (best) {
       S.hitstop = Math.max(S.hitstop, 62);
       S.lastImpactAt = S.time;
       S.shake = Math.max(S.shake, 4.2);
-      hx /= hits; hy /= hits;
-      spawnSparks(hx, hy, 9);
+      S.lastHitAt = { x: best.x, y: best.y, t: S.time };
+      spawnSparks(best.x, best.y, 9);
       sfx('hit');
+      hurtEnemy(best, SLASH_DMG, pushAng, 34, slice.cut, slice.tilt);
     }
   }
 
@@ -1003,7 +1153,7 @@
   }
 
   function doDash() {
-    if (!S || S.ended || S.down > 0) return;
+    if (!S || S.ended || S.down > 0 || S.view === 'spectate') return;
     var pl = S.player;
     if (!pl || pl.dashCd > 0) return;
     pl.dash = DASH_MS;
@@ -1097,6 +1247,8 @@
   function hurtPlayer(dmg, from) {
     var pl = S.player;
     if (!pl || S.down > 0) return;
+    if (S.view === 'spectate') return;          // 🎬 관전 중엔 맞지 않는다
+    if (S.invuln > 0) return;                    // 부활·참전 복귀 직후 잠깐 무적
     if (pl.guard) {
       // 🛡️ 꾹 누르고 있는 동안은 어떤 공격이든 100% 막힌다 (데미지 0)
       //    누른 직후(0.26초)에 받으면 '패링' — 상대가 크게 휘청이며 한 대 반격한다.
@@ -1182,6 +1334,30 @@
     // 시간 초과
     if (S.elapsed >= S.timeLimit) { finish('timeout'); return; }
 
+    // 🎬 관전 — 카메라만 움직이고 플레이어는 싸우지 않는다 (전장은 계속 돌아간다)
+    if (S.view === 'spectate') {
+      if (S.r3d) {
+        var sturn = (S.keys['arrowright'] ? 1 : 0) - (S.keys['arrowleft'] ? 1 : 0);
+        var spit = (S.keys['arrowup'] ? 1 : 0) - (S.keys['arrowdown'] ? 1 : 0);
+        if (S.spectate) {
+          if (sturn) S.spectate.yaw = normAngle(S.spectate.yaw + sturn * TURN_KEY_SPEED * (dt / 1000));
+          if (spit) S.spectate.pitch = clamp(S.spectate.pitch + spit * 1.5 * (dt / 1000), -1.35, 0.92);
+        }
+      }
+      stepSpectate(dt);
+      stepUnits(dt);
+      stepSpawn(dt);
+      stepEffects(dt);
+      if (S.comboT > 0) { S.comboT -= dt; if (S.comboT <= 0) S.combo = 0; }
+      if (S.enemySpawned >= S.enemyTotal && S.enemies.length === 0) {
+        if (!S.winAt) S.winAt = S.time;
+        if (S.time - S.winAt > 900) { finish('win'); return; }
+      }
+      updateHud();
+      report(false);
+      return;
+    }
+
     // 다운 · 부활
     if (S.down > 0) {
       S.down -= dt;
@@ -1227,16 +1403,18 @@
           life: 260, max: 260, color: hexA((S.cfg.me && S.cfg.me.color) || '#3b82f6', 0.7), size: 2.4
         });
       }
-      // 돌진 중 베기 (뒤에서부터 — 죽은 적을 지우면서 순회)
+      // 돌진 중 베기 (뒤에서부터 — 죽은 적을 지우면서 순회) — 한 번의 돌진에도 한 명만
       for (var i = S.enemies.length - 1; i >= 0; i--) {
         var en = S.enemies[i];
         if (en.dead || en.dashHit) continue;
         var ddx = en.x - pl.x, ddy = en.y - pl.y;
         if (ddx * ddx + ddy * ddy < (pl.r + en.r + 16) * (pl.r + en.r + 16)) {
           en.dashHit = true;
+          S.lastHitAt = { x: en.x, y: en.y, t: S.time };
           hurtEnemy(en, DASH_DMG, pl.dashDir, 26, pl.dashDir, 1.2);
           S.shake = Math.max(S.shake, 2.4);
           sfx('hit');
+          break;
         }
       }
     } else if (mag > 0.06) {
@@ -1333,7 +1511,7 @@
   function pickEnemyTarget(en, pl) {
     var tgt = null;
     var best = Infinity;
-    if (pl && S.down <= 0 && !pl.dead) {
+    if (pl && S.down <= 0 && !pl.dead && S.view !== 'spectate') {
       var d0 = (pl.x - en.x) * (pl.x - en.x) + (pl.y - en.y) * (pl.y - en.y);
       if (d0 < best) { best = d0; tgt = pl; }
     }
@@ -1381,7 +1559,7 @@
     var d = Math.sqrt(dx * dx + dy * dy) || 1;
     u.face = Math.atan2(dy, dx);
 
-    var reach = (u.r + (target ? target.r : 0)) + 17;
+    var reach = (u.r + (target ? target.r : 0)) + UNIT_REACH;
     if (target && d > reach) {
       u.x += (dx / d) * u.speed * (dt / 1000);
       u.y += (dy / d) * u.speed * (dt / 1000);
@@ -1396,29 +1574,26 @@
         // 빗나가도 칼을 휘두르는 동작·검기(3D 예고→휘두름)는 그대로 보여 준다
         u.swing = 180;
         if (target) {
-          var rr = (u.r + target.r) + 24;
+          var rr = (u.r + target.r) + UNIT_HIT_PAD;
           var ddx = target.x - u.x, ddy = target.y - u.y;
           if (ddx * ddx + ddy * ddy <= rr * rr) {
-            if (u.team === 'enemy') {
-              if (target === pl) hurtPlayer(9 + Math.random() * 4, u);
-              else {
-                target.hp -= 10;
-                target.hit = 140;
-                spawnSparks(target.x, target.y, 4);
-                if (target.hp <= 0) {
-                  target.dead = true;
-                  spawnDeathSparks(target.x, target.y);
-                }
-              }
+            // 아군이 적을 베든 적이 아군을 베든 데미지는 똑같다
+            var dmg = u.dmg || UNIT_DMG;
+            if (u.team === 'enemy' && target === pl) {
+              hurtPlayer(dmg, u);
             } else {
-              target.hp -= 11;
+              target.hp -= dmg;
               target.hit = 140;
               spawnSparks(target.x, target.y, 4);
-              if (target.hp <= 0) killEnemy(target, false);
+              if (target.hp <= 0) {
+                target.dead = true;
+                if (u.team === 'enemy') spawnDeathSparks(target.x, target.y);
+                else killEnemy(target, false);
+              }
             }
           }
         }
-        u.cd = 760 + Math.random() * 320;
+        u.cd = UNIT_CD + Math.random() * UNIT_CD_VAR;
       }
     }
     collideWorld(u);
@@ -1599,8 +1774,15 @@
     else { ctx.fillStyle = '#101a16'; ctx.fillRect(0, 0, S.pw, S.ph); }
 
     ctx.save();
-    ctx.translate(S.offX, S.offY);
-    ctx.scale(S.scale, S.scale);
+    // 🎬 관전(2D 폴백) — 전장을 넓게 내려다본다
+    var dsc = S.scale, dox = S.offX, doy = S.offY;
+    if (S.view === 'spectate' && S.spectate) {
+      dsc = S.scale * 0.52;
+      dox = S.pw / 2 - S.spectate.x * dsc;
+      doy = S.ph / 2 - S.spectate.y * dsc;
+    }
+    ctx.translate(dox, doy);
+    ctx.scale(dsc, dsc);
 
     drawDecor(ctx);
     drawObstacles(ctx);
@@ -1611,7 +1793,7 @@
     var list = [];
     for (var i = 0; i < S.allies.length; i++) list.push(S.allies[i]);
     for (var j = 0; j < S.enemies.length; j++) list.push(S.enemies[j]);
-    if (S.player) list.push(S.player);
+    if (S.player && S.view !== 'spectate') list.push(S.player);
     list.sort(function (a, b) { return a.y - b.y; });
 
     for (var k = 0; k < list.length; k++) {
@@ -1668,6 +1850,16 @@
       if (edx * edx + edy * edy < 260 * 260) { danger = true; break; }
     }
     ctx.save();
+    if (S.view === 'spectate') {
+      // 🎬 관전 중엔 조준선 없이 — 관전 표시만 작게
+      ctx.globalAlpha = 0.75;
+      ctx.font = '800 11px -apple-system, "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(226,240,255,0.9)';
+      ctx.fillText('🎬 관전 중', cx, cy);
+      ctx.globalAlpha = 1;
+    } else {
     ctx.translate(cx, cy);
     ctx.strokeStyle = danger ? 'rgba(255,124,92,0.95)' : 'rgba(202,232,255,0.66)';
     ctx.lineWidth = danger ? 2.1 : 1.4;
@@ -1682,6 +1874,7 @@
     ctx.stroke();
     ctx.fillStyle = danger ? '#ff9276' : '#e4f1ff';
     ctx.beginPath(); ctx.arc(0, 0, 1.7, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.restore();
 
     // 화면 밖 적 → 가장자리 화살표
@@ -2123,11 +2316,13 @@
       }
     }
     if (el.hint) {
-      if (pl.guard) el.hint.textContent = '🛡️ 꾹 누르고 있는 동안은 모두 막는다 · 누른 직후에 받으면 패링';
+      if (S.view === 'spectate') el.hint.textContent = '🎬 관전 — 왼쪽 드래그 비행 · 오른쪽 드래그 시점 · ⚔️ 참전으로 복귀';
+      else if (pl.guard) el.hint.textContent = '🛡️ 꾹 누르고 있는 동안은 모두 막는다 · 누른 직후에 받으면 패링';
       else if (pl.dashCd > 0) el.hint.textContent = '돌진 준비 ' + (pl.dashCd / 1000).toFixed(1) + '초';
       else if (S.r3d) el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 빠른 스와이프로 그 방향 베기 · 천천히 드래그하면 시점';
       else el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 탭/⚔️ 베기 · 🛡️로 막고 패링';
     }
+    if (el.btnSlash) el.btnSlash.setAttribute('aria-disabled', S.view === 'spectate' ? 'true' : 'false');
   }
 
   function report(force) {
@@ -2245,6 +2440,10 @@
     restart: restartBattle,
     isOpen: isOpen,
     mode: function () { return S ? (S.r3d ? '3d' : '2d') : 'none'; },
+    view: function () { return S ? S.view : 'none'; },
+    spectate: function () { return S ? S.spectate : null; },
+    toggleView: toggleView,
+    spec: function () { return S ? unitSpec() : null; },
     renderer3d: function () { return S ? S.r3d : null; },
     applyUpdate: applyUpdate,
     forceClose: forceClose,

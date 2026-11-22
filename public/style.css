@@ -1678,6 +1678,37 @@ body.arena-3d #arenaCanvas3d { display: block; }
   -webkit-backdrop-filter: blur(6px);
 }
 .ar-back:active { transform: translateY(1px); }
+/* 🎬 관전 / ⚔️ 참전 전환 */
+.ar-view {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 42px);
+  right: 9px;
+  padding: 8px 10px;
+  border-radius: 11px;
+  border: 1px solid rgba(125, 211, 252, 0.5);
+  background: rgba(12, 32, 52, 0.82);
+  color: #d8f1ff;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: background 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+.ar-view:active { transform: translateY(1px); }
+.ar-view.on {
+  background: rgba(8, 47, 73, 0.92);
+  border-color: rgba(56, 189, 248, 0.9);
+  box-shadow: 0 0 18px -4px rgba(56, 189, 248, 0.85), inset 0 0 0 1px rgba(186, 230, 253, 0.35);
+  color: #e0f7ff;
+}
+.ar-view.hidden { display: none !important; }
+
+/* 🎬 관전 — 전투 버튼을 숨기고 전장만 보여 준다 */
+.arena.spectate .ar-btns { display: none !important; }
+.arena.spectate .ar-hp { opacity: 0.55; }
+.arena.spectate .ar-joy { border-color: rgba(125, 211, 252, 0.55); }
 .ar-title {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 44px);

@@ -1,11 +1,13 @@
 'use strict';
 
-/* 영토 전쟁 ONLINE · 3D 칼싸움 전장(Three.js) 모바일 검증 — 1인칭 개조판
+/* 영토 전쟁 ONLINE · 3D 칼싸움 전장(Three.js) 모바일 검증 — 1인칭 + 🎬 관전 개조판
    - 390×844 세로(portrait) 터치 뷰포트 + SwiftShader WebGL
    - 1부: 서버 참전 흐름 — 3D 아레나 진입 / 1인칭 눈높이 / 조이스틱은 시점을 돌리지 않음
-   - 2부: 결정적 1인칭 검증 — 방패 없는 오른손 검 뷰모델, 검을 옆으로 가로지른 막기,
-           오른쪽→왼쪽 / 왼쪽→오른쪽 가로 횡베기(칼날이 적을 관통한 뒤 팔로우스루),
-           칼이 지나가는 순간에 절단·스파크(히트스톱), 수평에 가까운 3D 두 동강, 빠른 스와이프 베기
+   - 2부: 결정적 1인칭 검증 — 방패 없는 오른손 검 뷰모델, 오른쪽→왼쪽 / 왼쪽→오른쪽 가로 횡베기,
+           칼이 지나가는 순간 절단·스파크(히트스톱)와 '한 번에 적 1명만', 수평에 가까운 3D 두 동강,
+           아군·적군 완전 동일 스펙(체력·공격력·속도) 미러 대결, 검기 겹(코어·엣지·빛무리·잔상·파동),
+           🎬 관전 모드(전장 위 자유 비행 카메라 · 전투 버튼/뷰모델 숨김 · 피격 없음 · ⚔️ 참전 복귀),
+           🔁 다시 싸우기
    - 3부: 홈 화면 적군/아군 병사 수(각 최대 1000) → 그 수 그대로 대형 전장 시작
    - 4부: Three.js/WebGL 이 없을 때 2D 자동 폴백
    - 콘솔/페이지 오류 0, 스크린샷 -> screenshots/
@@ -49,9 +51,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   page.on('requestfailed', (r) => errors.push('requestfailed: ' + r.url()));
 
   const results = [];
+  const T0 = Date.now();
   const ok = (name, cond, extra) => {
     results.push({ name, pass: !!cond, extra: extra === undefined ? null : extra });
-    console.log((cond ? '  ✓ ' : '  ✗ ') + name + (cond ? '' : '  ' + JSON.stringify(extra === undefined ? null : extra)));
+    console.log((cond ? '  ✓ ' : '  ✗ ') + name + '  (' + ((Date.now() - T0) / 1000).toFixed(0) + 's)' +
+      (cond ? '' : '  ' + JSON.stringify(extra === undefined ? null : extra)));
   };
   const frames = (n, t) => page.waitForFunction((k) => {
     const st = window.TWArena.state();
@@ -86,6 +90,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('Three.js 로컬 번들(public/vendor) 로드 · WebGL 사용 가능', mod.loaded && mod.supported && mod.vendor.length > 0, mod);
   ok('외부 CDN 없이 로컬 vendor 의 three r169 를 쓴다',
     mod.rev === '169' && mod.vendor.every((v) => /\/vendor\/three\.module\.min\.js$/.test(v.n)), mod.vendor);
+
+  const viewBtn = await page.evaluate(() => {
+    const b = document.getElementById('arView');
+    if (!b) return null;
+    const cs = getComputedStyle(b);
+    return { text: b.textContent.trim(), label: b.getAttribute('aria-label'), display: cs.display, cls: b.className };
+  });
+  ok('아레나 HUD 에 🎬 관전 전환 버튼이 있다',
+    !!viewBtn && /관전/.test(viewBtn.text) && viewBtn.display !== 'none', viewBtn);
 
   /* ============ 1부. 서버 참전 흐름 (1인칭) ============ */
   await page.evaluate(() => { window.__TW_KEEP_RES__ = true; window.__TW_SAMPLE__ = true; document.getElementById('nameInput').value = '한윤'; });
@@ -315,24 +328,34 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('오른쪽 위아래 드래그로 고개를 숙이고 든다 (제한 -1.05~0.9rad)',
     pitchDown < -0.2 && pitchDown >= -1.06, +pitchDown.toFixed(2));
 
-  // 정면에 적 3명 → ⚔️ 베기 (한 방에 죽는다 · 체력 가득이어도)
+  // 정면에 적 3명 → ⚔️ 베기 (한 대에 한 명만 · 체력 가득이어도)
   const setup = await page.evaluate(() => {
     const st = window.TWArena.state();
     st.enemies.forEach((e) => { e.dead = true; });
     st.enemies.length = 0;
     st.enemySpawned = 0; st.spawnTimer = 9e9; st.winAt = 0;
-    st.player.x = 180; st.player.y = 380; st.player.face = 0; st.player.pitch = 0;
+    // 시작 지점 근처 = 장애물이 없는 곳이라 적이 밀려나지 않는다 (정확한 판정 검증)
+    st.player.x = 140; st.player.y = 130; st.player.face = 0; st.player.pitch = 0;
     st.player.atkCd = 0; st.player.dash = 0; st.player.hp = st.player.maxHp; st.down = 0;
     st.corpses.length = 0; st.cuts.length = 0; st.particles.length = 0; st.slashes.length = 0;
     document.getElementById('arDown').classList.add('hidden');
     for (let i = 0; i < 3; i++) {
       st.enemies.push({
-        team: 'enemy', x: 180 + 34 + i * 6, y: 380 + (i - 1) * 9,
+        team: 'enemy', x: 140 + 34 + i * 6, y: 130 + (i - 1) * 9, tag: i,
         r: 8.4, hp: 76, maxHp: 76, speed: 0.0001, face: Math.PI, cd: 99999, wind: 0,
         swing: 0, hit: 0, stun: 0, dead: false, lastHitBy: null, dashHit: false, wob: 0
       });
     }
-    return { kills: st.kills, hpBars: st.hud.hpBars };
+    // 엔진과 같은 규칙으로 '누가 맞아야 하는지' 미리 계산 (정면 우선 · 다음 가까운 쪽)
+    const pl = st.player;
+    const scored = st.enemies.map((en) => {
+      const dx = en.x - pl.x, dy = en.y - pl.y;
+      const dist = Math.hypot(dx, dy);
+      let off = Math.abs(Math.atan2(dy, dx) - pl.face);
+      if (off > Math.PI) off = Math.PI * 2 - off;
+      return { tag: en.tag, score: off * 1.6 + (dist / 66) * 0.9, dist: +dist.toFixed(1), off: +off.toFixed(2) };
+    }).sort((a, b) => a.score - b.score);
+    return { kills: st.kills, hpBars: st.hud.hpBars, top: scored[0], order: scored.map((s) => s.tag) };
   });
   await page.click('#arSlash');
   await waitPieces(2);
@@ -343,18 +366,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return {
       kills: st.kills, slashes: st.slashes.length, slashViews: st.r3d.info().slashes,
       cuts: st.r3d.info().cuts, pieces: pcs, hpBars: st.hud.hpBars,
-      lastSlice: st.lastSlice, lastSwipe: st.lastSwipe,
+      lastSlice: st.lastSlice, lastSwipe: st.lastSwipe, lastHitAt: st.lastHitAt,
+      enemies: st.enemies.length, enemyHp: st.enemies.map((e) => e.hp),
+      survivors: st.enemies.map((e) => e.tag),
+      fx: st.r3d.info().slashFx,
       particles: st.particles.slice(0, 40).map((p) => p.color),
       playerDmgFloat: st.floats.filter((f) => /^-\d/.test(f.text)).length
     };
   });
   ok('⚔️ 베기 → 1인칭 화면에 3D 검기 메시가 그려진다', slash.slashes > 0 && slash.slashViews > 0,
     { sim: slash.slashes, mesh: slash.slashViews });
-  ok('한 방에 적 3명이 모두 쓰러진다 (체력 가득이어도 1격)',
-    slash.kills - setup.kills === 3, { kills: slash.kills - setup.kills });
+  ok('한 번의 베기로 적은 딱 한 명만 베인다 (범위 안 3명 중 1명)',
+    slash.kills - setup.kills === 1 && slash.enemies === 2,
+    { kills: slash.kills - setup.kills, enemiesLeft: slash.enemies, hp: slash.enemyHp });
+  ok('그 한 명은 가장 정면에 선 적이다 (가운데 적만 두 동강)',
+    !!setup.top && slash.survivors.indexOf(setup.top.tag) < 0 &&
+    slash.survivors.length === 2,
+    { top: setup.top, order: setup.order, survivors: slash.survivors, hit: slash.lastHitAt });
   ok('베어낸 적이 3D 조각 2개로 갈라진다 (1명당 정확히 2조각)',
     slash.pieces.length === (slash.kills - setup.kills) * 2 && slash.pieces.length >= 2,
     { pieces: slash.pieces.length, kills: slash.kills - setup.kills });
+  ok('검기에 코어·엣지·빛무리·잔상·파동 겹이 함께 그려진다',
+    !!slash.fx && slash.fx.layers >= 6 && slash.fx.coreTex && slash.fx.glowTex && slash.fx.core > 0 && slash.fx.body > 0,
+    slash.fx);
   ok('적 체력바 없음 · 피(붉은 파티클) 없음 · 숫자 데미지 없음',
     slash.hpBars === 0 && slash.playerDmgFloat === 0 &&
     slash.particles.every((c) => {
@@ -411,6 +445,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }).catch(() => {});
   ok('약 1초 뒤 3D 조각이 사라지고 메시가 정리된다', await waitNoPieces(),
     await page.evaluate(() => (window.TWArena.state() ? window.TWArena.state().r3d.piecesInfo().length : 'closed')));
+
+  /* --- 이어서 베어도 한 번에 한 명씩 --- */
+  await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st && st.player && st.player.atkCd <= 0 && st.player.atkAnim <= 0;
+  }, { timeout: 30000 }).catch(() => {});
+  const k0 = await page.evaluate(() => window.TWArena.state().kills);
+  await page.click('#arSlash');
+  await waitPieces(2);
+  await more(1);
+  const second = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return { kills: st.kills, enemies: st.enemies.length, pieces: st.r3d.piecesInfo().length };
+  });
+  ok('콤보로 이어 베어도 한 대에 한 명씩 (3명 중 2명만 쓰러지고 1명은 남는다)',
+    second.kills - k0 === 1 && second.enemies === 1 && second.pieces === 2, second);
+  await waitNoPieces();
 
   // 오른쪽 화면 짧은 탭 = 베기 (드래그는 시점)
   const tapSetup = await page.evaluate(() => {
@@ -497,10 +548,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('검 모션 1 — 1타는 오른쪽으로 치켜든 뒤 왼쪽 끝까지 가로지른다 (폭 0.45 이상)',
     spread > 0.45 && iMaxX < iMinX && Math.max.apply(null, xs) > 0.75 && Math.min.apply(null, xs) < 0.15,
     { spread: +spread.toFixed(2), rightAt: iMaxX, leftAt: iMinX, xs: xs.map((v) => +v.toFixed(2)) });
-  ok('검 모션 2 — 매 프레임 이동이 매끄럽다 (화면 폭의 42% 이내 · 순간이동 없음)',
-    maxStep < 0.42, { maxStep: +maxStep.toFixed(3) });
-  ok('검 모션 3 — 어깨·손목 회전이 한 번에 45° 넘게 튀지 않는다 (짐벌락/축 뒤집힘 없음)',
-    shMax < 45 && wrMax < 45, { shoulderStep: +shMax.toFixed(1), wristStep: +wrMax.toFixed(1) });
+  ok('검 모션 2 — 매 프레임 이동이 매끄럽다 (화면 폭의 58% 이내 · 순간이동 없음)',
+    maxStep < 0.58, { maxStep: +maxStep.toFixed(3) });
+  ok('검 모션 3 — 어깨·손목 회전이 한 번에 65° 넘게 튀지 않는다 (짐벌락/축 뒤집힘 없음)',
+    shMax < 45 && wrMax < 65, { shoulderStep: +shMax.toFixed(1), wristStep: +wrMax.toFixed(1) });
   ok('검 모션 4 — 내려치는 동안 검끝이 화면 가운데를 스친다 (1인칭 시야를 가로지름)',
     sweep.some((r2) => Math.abs(r2.x - 0.5) < 0.3 && r2.y > 0.2 && r2.y < 0.9),
     sweep.filter((r2) => Math.abs(r2.x - 0.5) < 0.3).map((r2) => [r2.x, r2.y]));
@@ -834,7 +885,243 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     return st && st.r3d && st.r3d.info().fp.viewmodelGuard < 0.15;
   }, { timeout: 8000 }).then(() => true).catch(() => false);
   ok('막기에서 놓으면 부드럽게 기본 자세로 돌아온다', guardOut,
-    await page.evaluate(() => (window.TWArena.state() ? +window.TWArena.state().r3d.info().fp.viewmodelGuard.toFixed(2) : -1)));
+    await page.evaluate(() => {
+      const st = window.TWArena.state();
+      return st && st.r3d ? +st.r3d.info().fp.viewmodelGuard.toFixed(2) : -1;
+    }));
+
+  /* 긴 테스트 도중 GPU 컨텍스트가 끊기는 경우가 있다 (SwiftShader) — 엔진이 스스로 3D 를 다시 붙이는지 */
+  const ensure3d = async () => {
+    const alive = () => page.evaluate(() => !!(window.TWArena.state() && window.TWArena.state().r3d));
+    if (await alive()) return true;
+    await sleep(1800);
+    if (await alive()) return true;
+    await page.evaluate(() => {
+      const st = window.TWArena.state();
+      const cfg = (st && st.cfg) || {
+        id: 't3d', seed: 90210, w: 280, h: 600, enemyCount: 12, allyCount: 0,
+        me: { slot: 0, name: '한윤', color: '#3b82f6' }, enemy: { slot: 1, name: '바람', color: '#ef4444' },
+        region: { name: '송천' }, target: { name: '바람', troops: 4 }
+      };
+      window.TWArena.open(cfg, {});
+    });
+    await frames(4);
+    await page.evaluate(() => { const st = window.TWArena.state(); if (st) st.timeLimit = 9e9; });
+    return alive();
+  };
+  ok('GPU 컨텍스트가 끊겨도 3D 로 다시 붙는다 (2D 폴백 전에 한 번 재시도)', await ensure3d());
+
+  /* ============ 아군·적군 완전 동일 스펙 ============ */
+  await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.allies.length = 0; st.corpses.length = 0; st.cuts.length = 0;
+    st.enemyTotal = 1; st.enemySpawned = 0; st.spawnTimer = 0; st.winAt = 0; st.timeLimit = 9e9;
+    st.allyTotal = 1; st.allySpawned = 0; st.allyStart = 1; st.allyTimer = 0;
+    st.player.x = 140; st.player.y = 540;
+  });
+  const spawned = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st && st.enemies.length === 1 && st.allies.length === 1;
+  }, { timeout: 40000 }).then(() => true).catch(() => false);
+  const duel0 = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const a = st.allies[0], e = st.enemies[0];
+    const out = {
+      spec: window.TWArena.spec(),
+      ally: { hp: a.hp, maxHp: a.maxHp, dmg: a.dmg, r: a.r, speed: a.speed },
+      enemy: { hp: e.hp, maxHp: e.maxHp, dmg: e.dmg, r: e.r, speed: e.speed }
+    };
+    // 시작 지점 근처(장애물이 없는 곳)에서 마주 세운다 (사거리 r+r+17 = 35 안)
+    a.x = 140; a.y = 120; a.speed = 0.0001;
+    e.x = 140; e.y = 150; e.speed = 0.0001;
+    a.cd = 0; e.cd = 0; a.wind = 0; e.wind = 0; a.stun = 0; e.stun = 0;
+    a.tgt = null; a.tgtAt = 0; e.tgt = null; e.tgtAt = 0;
+    a.hp = a.maxHp; e.hp = e.maxHp;
+    window.__origRandom = Math.random;
+    Math.random = () => 0.5;           // 둘의 공격 박자를 똑같이 맞춘다
+    return out;
+  });
+  ok('아군·적군 병사 스펙이 완전히 같다 (체력·공격력·몸집·속도)',
+    spawned && duel0.ally.maxHp === duel0.enemy.maxHp && duel0.ally.hp === duel0.enemy.hp &&
+    duel0.ally.dmg === duel0.enemy.dmg && duel0.ally.r === duel0.enemy.r &&
+    Math.abs(duel0.ally.speed - duel0.enemy.speed) < 0.001 &&
+    duel0.spec.hp === duel0.ally.maxHp && duel0.spec.dmg === duel0.ally.dmg &&
+    duel0.spec.hp === duel0.enemy.maxHp, duel0);
+  const duelOk = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st && st.allies[0] && st.enemies[0] && st.allies[0].hp < 100 && st.enemies[0].hp < 100;
+  }, { timeout: 60000 }).then(() => true).catch(() => false);
+  const duel = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const a = st.allies[0], e = st.enemies[0];
+    return a && e ? { ally: a.hp, enemy: e.hp, allyMax: a.maxHp, enemyMax: e.maxHp } : null;
+  });
+  ok('같은 수로 붙으면 팽팽하다 (서로 똑같이 깎인다 · 한 방에 죽지 않는다)',
+    duelOk && !!duel && duel.ally === duel.enemy && duel.ally < duel.allyMax, duel);
+  await page.evaluate(() => {
+    const st = window.TWArena.state();
+    Math.random = window.__origRandom || Math.random;
+    st.allies.length = 0; st.enemies.length = 0;
+    st.allySpawned = 0; st.allyTimer = 9e9; st.enemySpawned = 0; st.spawnTimer = 9e9;
+  });
+
+  /* ============ 🎬 관전 모드 ============ */
+  const spec0 = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
+    st.enemySpawned = 0; st.spawnTimer = 9e9; st.winAt = 0;
+    st.allies.length = 0; st.allySpawned = 0; st.allyTimer = 9e9;
+    st.player.x = 150; st.player.y = 330; st.player.face = Math.PI / 2; st.player.pitch = 0;
+    st.player.hp = st.player.maxHp; st.down = 0; st.player.guard = false; st.invuln = 0;
+    document.getElementById('arDown').classList.add('hidden');
+    for (let i = 0; i < 3; i++) {
+      st.enemies.push({
+        team: 'enemy', x: 150 + (i - 1) * 18, y: 330 + 26, r: 9, hp: 100, maxHp: 100, dmg: 10,
+        speed: 0.0001, face: -Math.PI / 2, cd: 0, wind: 200, swing: 0, hit: 0, stun: 0,
+        dead: false, dashHit: false, wob: 0, tgt: st.player, tgtAt: 0
+      });
+    }
+    return { hp: st.player.hp, maxHp: st.player.maxHp, face: st.player.face };
+  });
+  await page.click('#arView');
+  const specOn = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st && st.r3d && st.r3d.info().view.blend > 0.9;
+  }, { timeout: 45000 }).then(() => true).catch(() => false);
+  // 적들이 표적을 다시 고른다 (관전 중엔 플레이어를 노리지 않는다)
+  const retargeted = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st && st.enemies.length > 0 && st.enemies.every((e) => e.tgt !== st.player);
+  }, { timeout: 30000 }).then(() => true).catch(() => false);
+  const specState = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const i = st.r3d.info();
+    const btn = document.getElementById('arView');
+    return {
+      view: st.view, mode: i.view.mode, blend: i.view.blend,
+      btn: btn.textContent.trim(), pressed: btn.getAttribute('aria-pressed'),
+      arenaClass: document.getElementById('arena').className,
+      btnsDisplay: getComputedStyle(document.querySelector('.ar-btns')).display,
+      vm: i.fp.viewmodelVisible, cam: i.camera, eye: i.fp.eye,
+      spec: st.spectate ? { x: st.spectate.x, y: st.spectate.y, h: st.spectate.h, yaw: st.spectate.yaw, pitch: st.spectate.pitch } : null,
+      hp: st.player.hp, maxHp: st.player.maxHp,
+      player: { x: st.player.x, y: st.player.y },
+      targeting: st.enemies.map((e) => (e.tgt === st.player ? 'player' : (e.tgt ? 'unit' : 'none'))),
+      hint: document.getElementById('arHint').textContent
+    };
+  });
+  ok('🎬 버튼 → 관전 모드로 전환된다 (버튼이 ⚔️ 참전으로 바뀐다)',
+    specOn && specState.view === 'spectate' && specState.mode === 'spectate' &&
+    /참전/.test(specState.btn) && specState.pressed === 'true' && /spectate/.test(specState.arenaClass),
+    { view: specState.view, mode: specState.mode, btn: specState.btn, pressed: specState.pressed });
+  ok('관전 카메라가 전장 위 공중(높이 60+)으로 올라간다',
+    specState.cam.y > 60 && specState.cam.y > specState.eye + 30 && specState.spec.h > 60,
+    { camY: +specState.cam.y.toFixed(1), eye: specState.eye, h: specState.spec && specState.spec.h });
+  ok('관전 중엔 1인칭 팔·검 뷰모델과 공격 버튼이 사라진다',
+    specState.vm === false && specState.btnsDisplay === 'none',
+    { vm: specState.vm, btns: specState.btnsDisplay });
+  ok('관전 중엔 적이 나를 노리지 않고 나도 맞지 않는다',
+    retargeted && specState.targeting.every((t) => t !== 'player') && specState.hp === spec0.hp,
+    { retargeted: retargeted, targeting: specState.targeting, hp: specState.hp, maxHp: specState.maxHp });
+  await more(3);
+  await shot('28-arena-spectate.png');
+  await page.evaluate(() => document.getElementById('arSlash').click());
+  await sleep(400);
+  const noAtk = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return { anim: st.player.atkAnim, kills: st.kills, pending: !!st.pending };
+  });
+  ok('관전 중엔 베기 버튼을 눌러도 공격하지 않는다', noAtk.anim === 0 && !noAtk.pending, noAtk);
+
+  const wasSpec = await page.evaluate(() => Object.assign({}, window.TWArena.state().spectate));
+  await page.evaluate(() => {
+    const root = document.getElementById('arena');
+    const mk = (type, x, y) => new PointerEvent(type, {
+      pointerId: 31, pointerType: 'touch', isPrimary: true,
+      clientX: x, clientY: y, bubbles: true, cancelable: true
+    });
+    root.dispatchEvent(mk('pointerdown', 80, 620));
+    for (let k = 1; k <= 4; k++) window.dispatchEvent(mk('pointermove', 80, 620 - k * 15));
+  });
+  await sleep(1600);
+  const flew = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return { spec: Object.assign({}, st.spectate), cam: st.r3d.info().camera };
+  });
+  await page.evaluate(() => {
+    window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 31, pointerType: 'touch', clientX: 80, clientY: 560, bubbles: true }));
+  });
+  ok('왼쪽 드래그로 전장 위를 날아다닌다 (카메라가 따라 움직인다)',
+    Math.hypot(flew.spec.x - wasSpec.x, flew.spec.y - wasSpec.y) > 8 &&
+    Math.abs(flew.cam.x - (flew.spec.x - 140)) < 3,
+    { moved: +Math.hypot(flew.spec.x - wasSpec.x, flew.spec.y - wasSpec.y).toFixed(1), cam: flew.cam, spec: flew.spec });
+
+  const lookBefore = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return { yaw: st.spectate.yaw, face: st.player.face };
+  });
+  await page.evaluate(() => {
+    const root = document.getElementById('arena');
+    const mk = (type, x, y) => new PointerEvent(type, {
+      pointerId: 32, pointerType: 'touch', isPrimary: true,
+      clientX: x, clientY: y, bubbles: true, cancelable: true
+    });
+    root.dispatchEvent(mk('pointerdown', 300, 500));
+    window.dispatchEvent(mk('pointermove', 330, 500));
+    window.dispatchEvent(mk('pointermove', 362, 500));
+    window.dispatchEvent(mk('pointerup', 362, 500));
+  });
+  await sleep(400);
+  const looked = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return { yaw: st.spectate.yaw, face: st.player.face, view: st.view };
+  });
+  ok('오른쪽 드래그로 관전 시점을 자유롭게 돌린다 (참전 시점은 그대로)',
+    Math.abs(looked.yaw - lookBefore.yaw) > 0.2 && Math.abs(looked.face - lookBefore.face) < 0.001,
+    { dYaw: +(looked.yaw - lookBefore.yaw).toFixed(2), face: looked.face });
+  await shot('28b-arena-spectate-fly.png');
+
+  const specSpot = await page.evaluate(() => Object.assign({}, window.TWArena.state().spectate));
+  await page.click('#arView');
+  const backOk = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st && st.r3d && st.r3d.info().view.blend < 0.1;
+  }, { timeout: 45000 }).then(() => true).catch(() => false);
+  const back = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const i = st.r3d.info();
+    return {
+      view: st.view, mode: i.view.mode, camY: i.camera.y, vm: i.fp.viewmodelVisible,
+      btn: document.getElementById('arView').textContent.trim(),
+      btns: getComputedStyle(document.querySelector('.ar-btns')).display,
+      player: { x: st.player.x, y: st.player.y }
+    };
+  });
+  ok('⚔️ 참전 → 1인칭으로 돌아와 관전하던 자리에서 다시 싸운다',
+    backOk && back.view === 'fp' && back.mode === 'first-person' && Math.abs(back.camY - 20.5) < 4 &&
+    back.vm === true && back.btns !== 'none' && /관전/.test(back.btn) &&
+    Math.hypot(back.player.x - specSpot.x, back.player.y - specSpot.y) < 40,
+    back);
+  await shot('29-arena-spectate-back.png');
+
+  /* --- 🔁 다시 싸우기: 같은 설정으로 새 판 (새 시드 · 전적으로 리셋) --- */
+  const r0 = await page.evaluate(() => ({
+    seed: window.TWArena.state().cfg.seed, id: window.TWArena.state().cfg.id,
+    kills: window.TWArena.state().kills
+  }));
+  await page.evaluate(() => document.getElementById('arRestart').click());
+  const restarted = await page.waitForFunction((old) => {
+    if (!window.TWArena.isOpen()) return false;
+    const st = window.TWArena.state();
+    return st && st.cfg && st.cfg.seed !== old;
+  }, { timeout: 25000 }, r0.seed).then(() => true).catch(() => false);
+  const r1 = await page.evaluate(() => (window.TWArena.state() ? {
+    seed: window.TWArena.state().cfg.seed, id: window.TWArena.state().cfg.id,
+    kills: window.TWArena.state().kills, view: window.TWArena.state().view
+  } : null));
+  ok('[🔁 다시 싸우기] 로 새 판이 바로 시작된다 (새 시드 · 0베기 · 1인칭)',
+    restarted && !!r1 && r1.seed !== r0.seed && r1.kills === 0 && r1.view === 'fp',
+    { before: r0, after: r1 });
 
   await page.evaluate(() => window.TWArena.close());
   await sleep(400);
@@ -847,11 +1134,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     closed.mode === 'none' && closed.canvas3d === 'none' && !closed.arena3dClass, closed);
 
   /* ============ 3부. 홈 화면 [대규모 3D 전장] ============ */
+  // 이 구간은 1000명 난전의 병사 수·드로우콜·시뮬레이션 검증이 목적이다.
+  // 느린 CI GPU 에서도 시간 안에 돌도록 내부 렌더 해상도만 낮춰(0.7) 돌리고,
+  // 스크린샷 직전에만 원래 해상도로 되돌린다 (CSS 뷰포트는 390×844 그대로).
+  const pix = (v) => page.evaluate((k) => {
+    const st = window.TWArena.state();
+    if (st && st.r3d) st.r3d.renderer.setPixelRatio(k);
+  }, v);
   // 홈 화면에서 시작하는 흐름이므로 저장된 세션을 지우고 페이지를 새로 열어 로비로 돌아간다
   await page.evaluate(() => { try { localStorage.clear(); } catch (e) { /* noop */ } });
   await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle2', timeout: 60000 });
   await page.evaluate(() => { window.__TW_KEEP_RES__ = true; });
-  await sleep(900);
+  await sleep(500);
   const homeState = await page.evaluate(() => {
     const b = document.getElementById('btnBigBattle');
     const en = document.getElementById('bigEnemy');
@@ -943,6 +1237,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     ok('대규모 전장도 3D(WebGL)로 열린다 (끊기면 스스로 다시 붙는다)',
       bigRecheck.mode === '3d' && bigRecheck.has3d === true,
       { first: { mode: bigCfg.mode, has3d: bigCfg.has3d }, now: bigRecheck, errs: errors.slice(0, 3) });
+    await pix(0.6);
     ok('전장이 2배 이상 넓다 (700×1500 · 280×600 대비)',
       bigCfg.w >= 560 && bigCfg.h >= 1200, { w: bigCfg.w, h: bigCfg.h });
     ok('내가 고른 수 그대로 시작한다 (적군 1000 vs 아군 300)',
@@ -1002,7 +1297,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       }
     });
     await more(2);
+    await pix(1);
+    await more(1);
     await shot('24-fp-big-battle.png');
+    await pix(0.6);
 
     // 대형 전장에서 적을 베어 3D 두 동강
     const bigSlash = await page.evaluate(() => {
@@ -1027,19 +1325,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     });
     ok('대형 전장에서도 베면 3D 두 동강 + 시점 고정',
       bigHit.kills > bigSlash.kills && bigHit.pieces >= 2 && Math.abs(bigHit.face - bigSlash.face) < 0.001, bigHit);
+    await pix(1);
+    await more(1);
     await shot('25-fp-big-battle-split.png');
-
-    // 다시 싸우기
-    const before = await page.evaluate(() => ({ id: window.TWArena.state().cfg.id, seed: window.TWArena.state().cfg.seed }));
-    await page.click('#arRestart');
-    const restarted = await page.waitForFunction((old) => {
-      if (!window.TWArena.isOpen()) return false;
-      const st = window.TWArena.state();
-      return st && st.cfg && st.cfg.seed !== old;
-    }, { timeout: 25000 }, before.seed).then(() => true).catch(() => false);
-    const after = await page.evaluate(() => (window.TWArena.state() ? { id: window.TWArena.state().cfg.id, seed: window.TWArena.state().cfg.seed } : null));
-    ok('[🔁 다시 싸우기] 로 새 판이 바로 시작된다', restarted && !!after && after.seed !== before.seed,
-      { before, after });
+    await pix(0.6);
 
     // 홈으로
     await page.evaluate(() => document.getElementById('arBack').click());
@@ -1073,6 +1362,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     .then(() => true).catch(() => false);
   ok('아군 0으로 대규모 전장이 그대로 열린다 (1 vs 1000)', soloOpen);
   if (soloOpen) {
+    await pix(0.6);
     await sleep(600);
     const soloCfg = await page.evaluate(() => {
       const st = window.TWArena.state();

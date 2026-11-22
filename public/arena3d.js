@@ -175,28 +175,104 @@ function cloudTexture() {
   return t;
 }
 
+/* 초승달 검기 — 양 끝이 뾰족하게 사라지는 띠를 그린다 (중심이 아래, 호가 위로 뜬다) */
+function crescentPath(x, cw, ch, width, pow, a0, a1, N) {
+  const cx = cw / 2, cy = ch * 1.34;
+  const rx = cw * 0.545, ry = ch * 1.06;
+  const n = N || 72;
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const a = a0 + (a1 - a0) * t;
+    pts.push({
+      x: cx + Math.cos(a) * rx,
+      y: cy + Math.sin(a) * ry,
+      w: Math.pow(Math.sin(Math.PI * t), pow || 0.8)
+    });
+  }
+  x.beginPath();
+  for (let i = 0; i <= n; i++) {
+    const p = pts[i], w = width * p.w;
+    if (i === 0) x.moveTo(p.x, p.y - w); else x.lineTo(p.x, p.y - w);
+  }
+  for (let i = n; i >= 0; i--) {
+    const p = pts[i], w = width * p.w;
+    x.lineTo(p.x, p.y + w);
+  }
+  x.closePath();
+}
+
+function slashTexture(kind) {
+  const W0 = 256, H0 = 128;
+  const A0 = Math.PI * 1.115, A1 = Math.PI * 1.885;
+  return canvasTex(W0, H0, (x) => {
+    x.clearRect(0, 0, W0, H0);
+    x.lineJoin = 'round';
+    if (kind === 'glow') {
+      // 부드러운 빛무리 — 넓게 번지고 낮은 알파 (흰색으로 뭉개지지 않게)
+      for (let i = 4; i >= 1; i--) {
+        const g = x.createLinearGradient(0, 0, W0, 0);
+        g.addColorStop(0, 'rgba(90,180,255,0)');
+        g.addColorStop(0.22, 'rgba(110,200,255,' + (0.05 * i) + ')');
+        g.addColorStop(0.5, 'rgba(150,225,255,' + (0.10 * i) + ')');
+        g.addColorStop(0.78, 'rgba(110,200,255,' + (0.05 * i) + ')');
+        g.addColorStop(1, 'rgba(90,180,255,0)');
+        crescentPath(x, W0, H0, 7 + i * 8, 0.95, A0, A1);
+        x.fillStyle = g;
+        x.fill();
+      }
+      return;
+    }
+    if (kind === 'core') {
+      // 칼날이 지나간 자리의 하얀 심 — 가늘고 날카롭다
+      const g = x.createLinearGradient(0, 0, W0, 0);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.16, 'rgba(255,255,255,0.55)');
+      g.addColorStop(0.5, 'rgba(255,255,255,1)');
+      g.addColorStop(0.84, 'rgba(255,255,255,0.55)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      crescentPath(x, W0, H0, 4.2, 0.62, A0, A1);
+      x.fillStyle = g;
+      x.fill();
+      // 끝으로 갈수록 뾰족하게 빠지는 잔날
+      crescentPath(x, W0, H0, 2.2, 1.5, A0 + 0.12, A1 - 0.12);
+      x.fillStyle = 'rgba(255,255,255,0.9)';
+      x.fill();
+      return;
+    }
+    // 본체 — 시안빛 코어에서 푸른 엣지로 번지는 초승달
+    const g = x.createLinearGradient(0, 0, W0, 0);
+    g.addColorStop(0, 'rgba(120,205,255,0)');
+    g.addColorStop(0.14, 'rgba(140,215,255,0.30)');
+    g.addColorStop(0.42, 'rgba(196,240,255,0.88)');
+    g.addColorStop(0.5, 'rgba(226,248,255,0.98)');
+    g.addColorStop(0.58, 'rgba(196,240,255,0.88)');
+    g.addColorStop(0.86, 'rgba(140,215,255,0.30)');
+    g.addColorStop(1, 'rgba(120,205,255,0)');
+    crescentPath(x, W0, H0, 15, 0.8, A0, A1);
+    x.fillStyle = g;
+    x.fill();
+    // 엣지 라인 — 초승달 바깥쪽을 따라 얇게 빛나는 선
+    const e = x.createLinearGradient(0, 0, W0, 0);
+    e.addColorStop(0, 'rgba(180,235,255,0)');
+    e.addColorStop(0.3, 'rgba(210,245,255,0.55)');
+    e.addColorStop(0.5, 'rgba(255,255,255,0.9)');
+    e.addColorStop(0.7, 'rgba(210,245,255,0.55)');
+    e.addColorStop(1, 'rgba(180,235,255,0)');
+    crescentPath(x, W0, H0, 3.4, 0.55, A0 - 0.02, A1 + 0.02);
+    x.fillStyle = e;
+    x.fill();
+  });
+}
+
 const TEX = {
   shadow: radialTexture(64, [[0, 'rgba(0,0,0,0.55)'], [0.6, 'rgba(0,0,0,0.24)'], [1, 'rgba(0,0,0,0)']]),
   glow: radialTexture(64, [[0, 'rgba(255,255,255,1)'], [0.35, 'rgba(255,244,214,0.62)'], [1, 'rgba(255,226,170,0)']]),
   sun: radialTexture(128, [[0, 'rgba(255,255,255,1)'], [0.16, 'rgba(255,250,225,0.95)'], [0.5, 'rgba(255,236,180,0.34)'], [1, 'rgba(255,224,150,0)']]),
   cloud: cloudTexture(),
-  slash: canvasTex(256, 128, (x) => {
-    // 휘두른 자국: 얇게 시작해 두꺼워졌다가 사라지는 초승달
-    for (let i = 0; i < 4; i++) {
-      const g = x.createLinearGradient(0, 0, 256, 0);
-      g.addColorStop(0, 'rgba(255,255,255,0)');
-      g.addColorStop(0.26, 'rgba(255,255,255,' + (0.42 - i * 0.1) + ')');
-      g.addColorStop(0.6, 'rgba(255,255,255,' + (0.98 - i * 0.2) + ')');
-      g.addColorStop(0.9, 'rgba(255,255,255,' + (0.4 - i * 0.1) + ')');
-      g.addColorStop(1, 'rgba(255,255,255,0)');
-      x.strokeStyle = g;
-      x.lineWidth = 15 - i * 3.2;
-      x.lineCap = 'round';
-      x.beginPath();
-      x.ellipse(128, 176, 138 - i * 8, 132 - i * 6, 0, Math.PI * 1.16, Math.PI * 1.84);
-      x.stroke();
-    }
-  }),
+  slash: slashTexture('body'),
+  slashCore: slashTexture('core'),
+  slashGlow: slashTexture('glow'),
   core: canvasTex(128, 256, (x) => {
     /* 잘린 단면 — 피 대신 깨끗한 검은 심 + 푸른 빛 절단면 */
     x.clearRect(0, 0, 128, 256);
@@ -1657,8 +1733,8 @@ function create(opts) {
     for (const [sl, v] of slashViews) {
       if (!live.has(sl)) {
         camera.remove(v.group);
-        v.mat.dispose(); v.glowMat.dispose();
-        v.arc.geometry.dispose(); v.glow.geometry.dispose();
+        for (const m of v.mats) m.dispose();
+        for (const g of v.geos) g.dispose();
         slashViews.delete(sl);
       }
     }
@@ -1667,32 +1743,70 @@ function create(opts) {
       if (!v) {
         const group = new THREE.Group();
         camera.add(group);
-        const mat = new THREE.MeshBasicMaterial({
-          map: TEX.slash, transparent: true, opacity: 1, side: THREE.DoubleSide,
-          blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
-        });
-        const arc = new THREE.Mesh(new THREE.PlaneGeometry(13, 5.2), mat);
-        arc.position.set(0, 0, -26);
-        group.add(arc);
-        const glowMat = new THREE.MeshBasicMaterial({
-          color: 0xd6f0ff, transparent: true, opacity: 0.22, side: THREE.DoubleSide,
-          blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
-        });
-        const glow = new THREE.Mesh(new THREE.PlaneGeometry(15, 2.0), glowMat);
-        glow.position.set(0, 0, -26.4);
-        group.add(glow);
-        v = { group: group, arc: arc, glow: glow, mat: mat, glowMat: glowMat };
+        const mats = [], geos = [];
+        const mk = (w, h, map, color, z) => {
+          const geo = new THREE.PlaneGeometry(w, h);
+          const mat = new THREE.MeshBasicMaterial({
+            map: map, color: color, transparent: true, opacity: 0, side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.position.z = z;
+          group.add(mesh);
+          mats.push(mat); geos.push(geo);
+          return mesh;
+        };
+        // 겹으로 쌓아 '선명한 코어 → 시안 엣지 → 부드러운 빛무리' 그라데이션을 만든다
+        v = {
+          group: group, mats: mats, geos: geos,
+          halo: mk(17.0, 7.4, TEX.slashGlow, 0x8fd4ff, -26.5),
+          body: mk(13.4, 5.4, TEX.slash, 0xd8f2ff, -26.0),
+          core: mk(12.8, 4.9, TEX.slashCore, 0xffffff, -25.8),
+          echo1: mk(12.9, 5.2, TEX.slash, 0x9ddcff, -26.2),
+          echo2: mk(12.2, 5.0, TEX.slash, 0x8ecdff, -26.3),
+          wave: mk(10.5, 4.2, TEX.slash, 0xcdeeff, -27.2),
+          shown: 0
+        };
         slashViews.set(sl, v);
       }
       const p = clamp(sl.t / sl.dur, 0, 1);
-      const e = 1 - Math.pow(1 - p, 1.7);
+      const e = 1 - Math.pow(1 - p, 1.9);
       // 가로 횡베기 — 오른쪽에서 왼쪽(또는 반대)으로 화면을 가로지르는 호
       const sgn = sl.sx >= 0 ? 1 : -1;
-      v.group.position.set(-sgn * (0.38 - 0.76 * e), -1.05 + e * 0.2, 0);
-      v.group.rotation.z = sgn * (0.30 - 0.60 * e);
-      v.mat.opacity = (1 - p) * 0.2;
-      v.glowMat.opacity = (1 - p) * 0.07;
-      v.arc.scale.set(0.85 + p * 0.5, 0.75 + p * 0.3, 1);
+      // 세로로 그은 스와이프는 호가 기울어진다
+      const tilt = clamp((sl.sy || 0) * 0.55, -0.4, 0.4);
+      const rise = -1.02 + e * 0.26 + tilt * 0.32;
+      const arc = (pp) => ({
+        x: -sgn * (0.44 - 0.88 * (1 - Math.pow(1 - pp, 1.9))),
+        rz: sgn * (0.36 - 0.72 * (1 - Math.pow(1 - pp, 1.9))) - tilt
+      });
+      const grow = 0.8 + p * 0.62;
+      const here = arc(p);
+      v.group.position.set(here.x, rise, 0);
+      v.group.rotation.z = here.rz;
+      v.group.scale.setScalar(grow);
+
+      const fadeIn = Math.min(1, p / 0.1);
+      v.body.material.opacity = 0.68 * Math.pow(1 - p, 1.15) * fadeIn;
+      v.core.material.opacity = 0.95 * Math.pow(1 - p, 1.75) * fadeIn;
+      v.halo.material.opacity = 0.42 * Math.pow(1 - p, 1.5) * fadeIn;
+
+      // 잔상 트레일 — 칼이 지나간 자리에 호가 살짝 남는다
+      const p1 = Math.max(0, p - 0.09), p2 = Math.max(0, p - 0.18);
+      const a1 = arc(p1), a2 = arc(p2);
+      v.echo1.position.set(a1.x - here.x, -0.03, 0);
+      v.echo1.rotation.z = a1.rz - here.rz;
+      v.echo1.material.opacity = 0.26 * Math.pow(1 - p1, 2) * fadeIn;
+      v.echo2.position.set(a2.x - here.x, -0.06, 0);
+      v.echo2.rotation.z = a2.rz - here.rz;
+      v.echo2.material.opacity = 0.16 * Math.pow(1 - p2, 2) * fadeIn;
+
+      // 검기 파동 — 칼이 적을 지나가는 순간 칼날 앞으로 날아가며 커지는 초승달
+      const pw = clamp((p - 0.24) / 0.5, 0, 1);
+      const wOn = p > 0.24 ? 1 : 0;
+      v.wave.position.z = -26.7 - pw * 11;
+      v.wave.scale.setScalar(0.46 + pw * 1.55);
+      v.wave.material.opacity = wOn * 0.62 * Math.pow(1 - pw, 2.1);
     }
   }
 
@@ -1955,6 +2069,14 @@ function create(opts) {
   let camKickZX = 0, camKickZY = 0;
   let prevAtkForCam = 0;
 
+  let viewK = 0;                 // 0 = 1인칭 참전 · 1 = 🎬 관전
+  let viewMode = 'first-person';
+  const fpPos = new THREE.Vector3();
+  const fpLook = new THREE.Vector3();
+  const spPos = new THREE.Vector3(0, 150, 0);
+  const spLook = new THREE.Vector3(0, 0, 0);
+  let spReady = false;
+
   function updateCamera(S, dt) {
     const pl = S.player;
     if (!pl) return;
@@ -1990,7 +2112,8 @@ function create(opts) {
     camKickZX = damp(camKickZX, strike * 0.55 * clamp(sw.sx, -1, 1), dt, 90);
     camKickZY = damp(camKickZY, -strike * 0.2 - brace * 0.12, dt, 90);
 
-    camera.position.set(
+    // ---- 1인칭 자리 (병사 눈높이) ----
+    fpPos.set(
       px + Math.cos(camYaw) * camKickZX * 0.22 - Math.sin(camYaw) * sway * 0.1,
       EYE + bob + camKickZY + breath,
       pz + Math.sin(camYaw) * camKickZX * 0.22 + Math.cos(camYaw) * sway * 0.1
@@ -1999,17 +2122,43 @@ function create(opts) {
     const fx = Math.cos(camYaw), fz = Math.sin(camYaw);
     // 휘두르는 방향으로 시선이 아주 살짝 따라간다
     const lookSide = strike * 0.9 * clamp(sw.sx, -1, 1);
-    lookNow.set(
+    fpLook.set(
       px + fx * cp * 120 - fz * lookSide,
       EYE + bob + sp * 120 + camKickZY * 1.4 + breath,
       pz + fz * cp * 120 + fx * lookSide
     );
-    // 머리를 기울이는 롤 (휘두를 때 · 옆으로 걸을 때)
+
+    // ---- 🎬 관전 자리 (전장 위 자유 시점) ----
+    const spec = (S.view === 'spectate' && S.spectate) ? S.spectate : null;
+    if (spec) {
+      const sscp = Math.cos(spec.pitch), sssp = Math.sin(spec.pitch);
+      spPos.set(spec.x - W / 2, spec.h, spec.y - H / 2);
+      spLook.set(
+        spPos.x + Math.cos(spec.yaw) * sscp * 160,
+        spPos.y + sssp * 160,
+        spPos.z + Math.sin(spec.yaw) * sscp * 160
+      );
+      spReady = true;
+    }
+    viewK = damp(viewK, spec ? 1 : 0, dt, 165);
+    if (viewK < 0.0015) viewK = 0;
+    if (viewK > 0.9985) viewK = 1;
+    viewMode = viewK > 0.5 ? 'spectate' : 'first-person';
+    api.viewpoint = viewMode === 'spectate' ? 'spectate' : 'first-person';
+    const ke = spReady ? smoothstep(clamp(viewK, 0, 1)) : 0;
+
+    camera.position.copy(fpPos);
+    if (ke > 0) camera.position.lerp(spPos, ke);
+    lookNow.copy(fpLook);
+    if (ke > 0) lookNow.lerp(spLook, ke);
+
+    // 머리를 기울이는 롤 (휘두를 때 · 옆으로 걸을 때) — 관전으로 갈수록 곧게
     camRoll = damp(camRoll, strike * 0.05 * clamp(sw.sx, -1, 1) + sway * 0.004, dt, 110);
-    camera.up.set(Math.sin(camRoll), Math.cos(camRoll), 0);
+    const rollNow = camRoll * (1 - ke);
+    camera.up.set(Math.sin(rollNow), Math.cos(rollNow), 0);
     camera.lookAt(lookNow);
 
-    const sh = (S.shake || 0) * 0.2;
+    const sh = (S.shake || 0) * 0.2 * (1 - ke * 0.5);
     if (sh > 0.05) {
       camera.position.x += (Math.random() - 0.5) * sh;
       camera.position.y += (Math.random() - 0.5) * sh;
@@ -2211,26 +2360,30 @@ function create(opts) {
      키 사이는 C1 연속 에르미트 곡선으로 이어 검끝이 부드러운 호를 그린다.
      =========================================================================== */
   const VM_SWING_KEYS = {
-    // 오른쪽 → 왼쪽 횡베기 (1타·3타)
+    // 오른쪽 → 왼쪽 횡베기 (1타·3타) — 깊게 감아 올린 뒤 가로로 찢고 낮게 빠진다
     left: [
-      { p: 0.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] },      // 기본 자세
-      { p: 0.16, w: [1.10, -0.78, -2.48], b: [0.18, 0.84, -0.51], n: [0, 0, 1] },      // 예비동작 (오른쪽 위로)
-      { p: 0.30, w: [0.85, -0.85, -2.75], b: [-0.15, 0.75, -0.64], n: [0.1, 0, 1] },   // 가속 (칼날이 앞으로 돈다)
-      { p: 0.45, w: [0.42, -1.00, -2.85], b: [-0.80, 0.42, -0.43], n: [0, 0.2, 1] },   // 적을 통과 (가로)
-      { p: 0.58, w: [0.20, -1.02, -2.72], b: [-0.95, 0.10, -0.28], n: [0, 0.35, 1] },  // 팔로우스루
-      { p: 0.70, w: [0.16, -1.08, -2.62], b: [-0.88, -0.26, -0.40], n: [0, 0.5, 0.87] },// 왼쪽 끝까지 지나감
-      { p: 0.84, w: [0.72, -1.12, -2.60], b: [-0.55, 0.35, -0.76], n: [0, 0, 1] },      // 회수 (몸 앞으로 당긴다)
-      { p: 1.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] }       // 기본 자세
+      { p: 0.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] },       // 기본 자세
+      { p: 0.10, w: [0.92, -0.86, -2.50], b: [0.12, 0.84, -0.36], n: [0, 0.15, 0.99] },  // 힘을 모은다 (몸을 오른쪽으로 감는다)
+      { p: 0.20, w: [1.12, -0.68, -2.36], b: [0.54, 0.72, -0.44], n: [0, 0.26, 0.97] },  // 예비동작 꼭대기 (오른쪽 위로 치켜듦)
+      { p: 0.30, w: [0.96, -0.80, -2.60], b: [-0.05, 0.74, -0.66], n: [0.05, 0.22, 0.97] }, // 손목이 돌기 시작 (가속)
+      { p: 0.42, w: [0.52, -0.93, -2.92], b: [-0.74, 0.48, -0.46], n: [0, 0.35, 0.94] },  // 적을 가로지른다
+      { p: 0.50, w: [0.30, -0.98, -2.98], b: [-0.95, 0.20, -0.24], n: [0, 0.45, 0.89] },  // 팔로우스루 (왼쪽으로 빠진다)
+      { p: 0.62, w: [0.14, -1.06, -2.80], b: [-0.90, -0.12, -0.42], n: [0, 0.55, 0.84] }, // 칼끝이 낮게 떨어지며 빠진다
+      { p: 0.74, w: [0.24, -1.18, -2.58], b: [-0.68, -0.36, -0.62], n: [0.05, 0.40, 0.90] },// 왼쪽 아래 끝
+      { p: 0.88, w: [0.64, -1.10, -2.60], b: [-0.52, 0.28, -0.78], n: [0, 0.15, 0.99] },  // 회수 (몸 앞으로 당긴다)
+      { p: 1.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] }        // 기본 자세
     ],
-    // 왼쪽 → 오른쪽 횡베기 (2타)
+    // 왼쪽 → 오른쪽 횡베기 (2타) — 반대쪽으로 감아 올려 반대로 찢는다
     right: [
       { p: 0.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] },
-      { p: 0.16, w: [0.22, -1.04, -2.66], b: [-0.85, -0.25, -0.46], n: [0, 0.3, 0.9] },   // 왼쪽으로 감아 쥔다
-      { p: 0.30, w: [0.34, -0.92, -2.86], b: [-0.30, 0.72, -0.62], n: [0, 0.1, 1] },     // 훑고 올라온다
-      { p: 0.45, w: [0.62, -0.96, -2.94], b: [0.74, 0.40, -0.52], n: [0, 0.2, 1] },      // 적을 통과 (오른쪽)
-      { p: 0.58, w: [0.94, -1.00, -2.78], b: [0.93, 0.12, -0.30], n: [0, 0.35, 1] },
-      { p: 0.70, w: [1.10, -1.08, -2.62], b: [0.88, -0.26, -0.40], n: [0, 0.5, 0.87] },   // 오른쪽 끝
-      { p: 0.84, w: [0.82, -1.10, -2.62], b: [-0.10, 0.55, -0.83], n: [0, 0, 1] },        // 회수
+      { p: 0.10, w: [0.40, -1.02, -2.62], b: [-0.80, -0.10, -0.44], n: [0, 0.30, 0.92] },  // 왼쪽으로 감아 쥔다
+      { p: 0.20, w: [0.22, -1.12, -2.46], b: [-0.92, -0.30, -0.28], n: [0, 0.35, 0.90] },  // 낮게 감긴 예비동작
+      { p: 0.30, w: [0.34, -0.95, -2.84], b: [-0.28, 0.58, -0.70], n: [0, 0.14, 0.99] },  // 훑고 올라온다
+      { p: 0.42, w: [0.58, -0.92, -2.98], b: [0.62, 0.46, -0.50], n: [0, 0.30, 0.95] },   // 적을 가로지른다 (오른쪽)
+      { p: 0.50, w: [0.80, -0.96, -2.98], b: [0.93, 0.18, -0.26], n: [0, 0.42, 0.90] },
+      { p: 0.62, w: [1.04, -1.04, -2.80], b: [0.90, -0.12, -0.42], n: [0, 0.52, 0.85] },
+      { p: 0.74, w: [1.14, -1.14, -2.60], b: [0.68, -0.36, -0.60], n: [0.05, 0.40, 0.90] }, // 오른쪽 아래 끝
+      { p: 0.88, w: [0.82, -1.10, -2.60], b: [-0.10, 0.52, -0.80], n: [0, 0.15, 0.99] },   // 회수
       { p: 1.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] }
     ]
   };
@@ -2309,10 +2462,10 @@ function create(opts) {
   /** 시간 → 자세 파라미터 (예비동작 → 가속 횡베기 → 팔로우스루 → 회수) */
   function swingPhase(u) {
     const t = clamp(u, 0, 1);
-    if (t < 0.26) { const k = t / 0.26; return 0.16 * (k * k * (3 - 2 * k)); }
-    if (t < 0.66) { const k = (t - 0.26) / 0.40; return 0.16 + 0.56 * (k * k * (3 - 2 * k)); }
-    const k = (t - 0.66) / 0.34;
-    return 0.72 + 0.28 * (k * k * (3 - 2 * k));
+    if (t < 0.24) { const k = t / 0.24; return 0.20 * (k * k * (3 - 2 * k)); }
+    if (t < 0.64) { const k = (t - 0.24) / 0.40; return 0.20 + 0.56 * (k * k * (3 - 2 * k)); }
+    const k = (t - 0.64) / 0.36;
+    return 0.76 + 0.24 * (k * k * (3 - 2 * k));
   }
 
   /** 2뼈 IK — 손목 위치 · 칼날 방향 · 칼날 면 법선 → 어깨/팔꿈치/손목 쿼터니언 */
@@ -2408,8 +2561,10 @@ function create(opts) {
       trailPos[i * 6 + 0] = p.tip.x; trailPos[i * 6 + 1] = p.tip.y; trailPos[i * 6 + 2] = p.tip.z;
       trailPos[i * 6 + 3] = p.mid.x; trailPos[i * 6 + 4] = p.mid.y; trailPos[i * 6 + 5] = p.mid.z;
       const k = i < n ? Math.pow(1 - i / Math.max(1, TRAIL_N - 1), 1.7) : 0;
-      trailColA[i * 6 + 0] = 0.20 * k; trailColA[i * 6 + 1] = 0.34 * k; trailColA[i * 6 + 2] = 0.50 * k;
-      trailColA[i * 6 + 3] = 0.06 * k; trailColA[i * 6 + 4] = 0.14 * k; trailColA[i * 6 + 5] = 0.26 * k;
+      // 끝은 하얀 심, 뒤로 갈수록 푸른 잔광 (가산 혼합이라 겹쳐도 뭉개지지 않게 낮게)
+      const kk = Math.pow(k, 0.85);
+      trailColA[i * 6 + 0] = 0.52 * kk; trailColA[i * 6 + 1] = 0.80 * kk; trailColA[i * 6 + 2] = 1.0 * kk;
+      trailColA[i * 6 + 3] = 0.10 * kk; trailColA[i * 6 + 4] = 0.30 * kk; trailColA[i * 6 + 5] = 0.58 * kk;
     }
     trailGeo.attributes.position.needsUpdate = true;
     trailGeo.attributes.color.needsUpdate = true;
@@ -2435,6 +2590,8 @@ function create(opts) {
 
     vm.position.set(sway * 0.7, bob - 0.008, dashK * 0.6);
     vm.rotation.set(-run * 0.02 - dashK * 0.1 + hitK * 0.03, 0, Math.sin(vmBob * 0.5) * 0.018 * run);
+    // 🎬 관전으로 넘어가면 1인칭 팔·검은 사라진다 (전장을 가리지 않게)
+    vm.visible = viewK < 0.55;
 
     /* --- 막기 자세 가중치 --- */
     const gTarget = pl.guard ? 1 : 0;
@@ -2590,6 +2747,7 @@ function create(opts) {
   let lastTs = 0;
   let frames = 0;
   let timeSec = 0;
+  let lastS = null;
   let fpsAcc = 0, fpsN = 0;
   let pixelScale = 1;
   const stats = { lum: 0, sky: 0, ground: 0, at: 0 };
@@ -2638,6 +2796,7 @@ function create(opts) {
     let dt = lastTs ? Math.min(60, ts - lastTs) : 16;
     if (!(dt > 0)) dt = 16;
     lastTs = ts;
+    lastS = S;
     timeSec += dt / 1000;
 
     buildCrowd(S, dt);
@@ -2656,8 +2815,10 @@ function create(opts) {
     renderer.info.reset();
     if (!window.__TW_VM_ONLY__) renderer.render(scene, camera);
     renderer.autoClear = false;
-    renderer.clearDepth();
-    renderer.render(vmScene, vmCam);
+    if (vm.visible) {
+      renderer.clearDepth();
+      renderer.render(vmScene, vmCam);
+    }
     renderer.autoClear = true;
     frames++;
 
@@ -2708,7 +2869,11 @@ function create(opts) {
   }
 
   function dispose() {
-    for (const [, v] of slashViews) { camera.remove(v.group); v.mat.dispose(); v.glowMat.dispose(); }
+    for (const [, v] of slashViews) {
+      camera.remove(v.group);
+      for (const m of v.mats) m.dispose();
+      for (const g of v.geos) g.dispose();
+    }
     slashViews.clear();
     for (const [, v] of trailViews) { v.mesh.geometry.dispose(); v.mesh.material.dispose(); }
     trailViews.clear();
@@ -2788,6 +2953,24 @@ function create(opts) {
         unitsTotal: units.size,
         pieces: pieces.size,
         slashes: slashViews.size,
+        slashFx: (function () {
+          const it = slashViews.values().next();
+          if (it.done || !it.value) return null;
+          const v = it.value;
+          return {
+            layers: v.mats.length,
+            body: v.body.material.opacity,
+            core: v.core.material.opacity,
+            halo: v.halo.material.opacity,
+            echo: Math.max(v.echo1.material.opacity, v.echo2.material.opacity),
+            wave: v.wave.material.opacity,
+            waveZ: v.wave.position.z,
+            coreTex: !!TEX.slashCore,
+            glowTex: !!TEX.slashGlow,
+            trail: trailPts.length,
+            trailGeo: trailMesh.visible
+          };
+        })(),
         trails: trailViews.size,
         cuts: cutViews.size,
         arcs: arcCountNow,
@@ -2840,6 +3023,17 @@ function create(opts) {
             wr: [wristPivot.quaternion.x, wristPivot.quaternion.y, wristPivot.quaternion.z, wristPivot.quaternion.w]
           },
           guardSpark: guardSpark.material.opacity
+        },
+        view: {
+          mode: viewMode,
+          blend: +viewK.toFixed(3),
+          camera: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+          spectate: lastS && lastS.spectate ? {
+            x: lastS.spectate.x, y: lastS.spectate.y, h: lastS.spectate.h,
+            yaw: lastS.spectate.yaw, pitch: lastS.spectate.pitch
+          } : null,
+          simView: lastS ? lastS.view : 'none',
+          fov: camera.fov
         },
         crowd: { parts: parts.length, max: MAX_SOLDIERS },
         graphics: {

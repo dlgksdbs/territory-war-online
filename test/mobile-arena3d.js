@@ -6,6 +6,8 @@
    - 2부: 결정적 1인칭 검증 — 방패 없는 오른손 검 뷰모델, 오른쪽→왼쪽 / 왼쪽→오른쪽 가로 횡베기,
            칼이 지나가는 순간 절단·스파크(히트스톱)와 '한 번에 적 1명만', 수평에 가까운 3D 두 동강,
            아군·적군 완전 동일 스펙(체력·공격력·속도) 미러 대결, 검기 겹(코어·엣지·빛무리·잔상·파동),
+           베기가 끝나면 검기·칼날 궤적 리본이 0으로 사라짐, 오른쪽 화면은 드래그/스와이프/탭 모두 시점 전용
+           (공격은 오직 ⚔️ 베기 버튼), 병사 분리·산개(최소 간격 r*2.2)와 스폰 간격,
            🎬 관전 모드(전장 위 자유 비행 카메라 · 전투 버튼/뷰모델 숨김 · 피격 없음 · ⚔️ 참전 복귀),
            🔁 다시 싸우기
    - 3부: 홈 화면 적군/아군 병사 수(각 최대 1000) → 그 수 그대로 대형 전장 시작
@@ -463,26 +465,43 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     second.kills - k0 === 1 && second.enemies === 1 && second.pieces === 2, second);
   await waitNoPieces();
 
-  // 오른쪽 화면 짧은 탭 = 베기 (드래그는 시점)
+  // 오른쪽 화면 짧은 탭 = 시점만 (베기 없음 — 공격은 ⚔️ 베기 버튼으로만)
   const tapSetup = await page.evaluate(() => {
     const st = window.TWArena.state();
     st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
     st.enemySpawned = 0; st.spawnTimer = 9e9; st.winAt = 0;
     st.player.x = 150; st.player.y = 340; st.player.face = Math.PI / 2; st.player.pitch = 0;
-    st.player.atkCd = 0; st.player.dash = 0; st.player.hp = st.player.maxHp; st.down = 0;
+    st.player.atkCd = 0; st.player.dash = 0; st.player.atkAnim = 0; st.player.hp = st.player.maxHp; st.down = 0;
     document.getElementById('arDown').classList.add('hidden');
     st.enemies.push({
       team: 'enemy', x: 150, y: 340 + 40, r: 8.4, hp: 10, maxHp: 76, speed: 0.0001,
-      face: -Math.PI / 2, cd: 99999, wind: 0, swing: 0, hit: 0, stun: 0, dead: false, dashHit: false, wob: 0
+      face: -Math.PI / 2, cd: 99999, wind: 0, swing: 0, hit: 0, stun: 9e9, dead: false, dashHit: false, wob: 0
     });
-    return { kills: st.kills, face: st.player.face };
+    return { kills: st.kills, face: st.player.face, pitch: st.player.pitch, slashes: st.slashes.length };
   });
   const tapPos = await page.evaluate(() => ({ x: 258, y: 540 }));
   await page.mouse.move(tapPos.x, tapPos.y);
   await page.mouse.down();
   await sleep(60);
   await page.mouse.up();
-  // 손을 떼자마자: 베기는 시작했지만 칼날이 아직 닿기 전 — 적은 그대로
+  await more(3);
+  const tapped = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return {
+      kills: st.kills, enemies: st.enemies.length, pending: !!st.pending,
+      atk: Math.round(st.player.atkAnim), face: st.player.face, pitch: st.player.pitch,
+      slashes: st.slashes.length, views: st.r3d.info().slashes
+    };
+  });
+  ok('오른쪽 화면 짧은 탭 → 베지 않는다 (시점도 그대로 · 공격은 ⚔️ 베기 버튼뿐)',
+    tapped.kills === tapSetup.kills && tapped.enemies === 1 && tapped.slashes === 0 &&
+    tapped.views === 0 && tapped.atk === 0 && tapped.pending === false &&
+    Math.abs(tapped.face - tapSetup.face) < 0.02 && Math.abs(tapped.pitch - tapSetup.pitch) < 0.02,
+    tapped);
+
+  // ⚔️ 베기 버튼 = 유일한 공격 수단 · 칼이 적을 지나가는 순간에 판정
+  await page.click('#arSlash');
+  // 누르자마자: 베기는 시작했지만 칼날이 아직 닿기 전 — 적은 그대로
   const justAfter = await page.evaluate(() => {
     const st = window.TWArena.state();
     return {
@@ -490,16 +509,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       atk: Math.round(st.player.atkAnim), face: st.player.face, swing: st.player.swipe
     };
   });
-  ok('칼이 닿기 전에는 적이 아직 서 있다 (판정이 칼날 통과 순간으로 미뤄진다)',
+  ok('⚔️ 베기 버튼 — 칼이 닿기 전에는 적이 아직 서 있다 (판정이 칼날 통과 순간으로 미뤄진다)',
     justAfter.kills === tapSetup.kills && justAfter.enemies === 1 && justAfter.pending === true && justAfter.atk > 300,
     justAfter);
   await waitPieces(2);
-  const tapped = await page.evaluate(() => {
+  const slashed = await page.evaluate(() => {
     const st = window.TWArena.state();
     return { kills: st.kills, slashes: st.slashes.length, face: st.player.face };
   });
-  ok('오른쪽 화면 짧은 탭 → 칼이 지나가며 적이 베인다 (시점은 그대로)',
-    tapped.kills > tapSetup.kills && Math.abs(tapped.face - tapSetup.face) < 0.02, tapped);
+  ok('⚔️ 베기 버튼 → 칼이 지나가며 적이 베인다 (시점은 그대로)',
+    slashed.kills > tapSetup.kills && Math.abs(slashed.face - tapSetup.face) < 0.02, slashed);
 
   /* --- 1인칭 검 궤적: 오른쪽으로 치켜들기 → 가로 횡베기(적을 관통) → 왼쪽 끝 → 회수 --- */
   await page.evaluate(() => {
@@ -612,7 +631,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     comboHits.map((h) => ({ n: h.n, sign: h.sign, sx: +h.swing.sx.toFixed(2) })));
   await waitNoPieces();
 
-  /* --- 오른쪽 화면 빠른 스와이프(↘) = 그 방향으로 베기 --- */
+  /* --- 오른쪽 화면 빠른 스와이프(↘) = 베기 없이 시점만 회전 --- */
   const swipeSetup = await page.evaluate(() => {
     const st = window.TWArena.state();
     st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
@@ -626,9 +645,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       face: -Math.PI / 2, cd: 99999, wind: 0, swing: 0, hit: 0, stun: 9e9,
       dead: false, lastHitBy: null, dashHit: false, wob: 0
     });
-    return { kills: st.kills, face: st.player.face };
+    return { kills: st.kills, face: st.player.face, pitch: st.player.pitch, slashes: st.slashes.length };
   });
-  // 실제 손가락처럼 빠른 스와이프 (포인터 이벤트를 한 번에 — 렌더가 느린 테스트 환경에서도 속도 조건을 지킨다)
+  // 실제 손가락처럼 빠른 스와이프 ↘ (포인터 이벤트를 한 번에 — 베기가 아니라 시점만 돌아야 한다)
   const swipeDispatch = await page.evaluate(() => {
     const root = document.getElementById('arena');
     const mk = (type, x, y) => new PointerEvent(type, {
@@ -640,32 +659,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     window.dispatchEvent(mk('pointerup', 355, 555));
     return true;
   });
-  await waitPieces(2);
-  await more(1);
+  await more(3);
   const swiped = await page.evaluate(() => {
     const st = window.TWArena.state();
     return {
-      kills: st.kills, face: st.player.face, lastSwipe: st.lastSwipe, lastSlice: st.lastSlice,
-      pieces: st.r3d.piecesInfo(), slashDir: st.r3d.info().fp.slashDir, viewPhase: st.r3d.info().fp.swordPhase
+      kills: st.kills, enemies: st.enemies.length, face: st.player.face, pitch: st.player.pitch,
+      lastSwipe: st.lastSwipe, pieces: st.r3d.piecesInfo(),
+      slashes: st.slashes.length, views: st.r3d.info().slashes, atk: Math.round(st.player.atkAnim)
     };
   });
-  const sw = swiped.lastSwipe || { sx: 0, sy: 0 };
-  ok('오른쪽 빠른 스와이프(↘ 약 55px)로 적이 베인다',
-    swipeDispatch && swiped.kills > swipeSetup.kills && swiped.pieces.length === 2,
-    { kills: swiped.kills - swipeSetup.kills, pieces: swiped.pieces.length });
-  ok('스와이프 방향을 그대로 따라간다 (오른쪽 아래 대각선 · 검 궤적도 같음)',
-    sw.sx > 0.5 && sw.sy > 0.5 && Math.abs(swiped.slashDir.x - sw.sx) < 0.001 &&
-    Math.abs(swiped.slashDir.y - sw.sy) < 0.001,
-    { swipe: [sw.sx, sw.sy], view: swiped.slashDir });
-  ok('스와이프 각도 그대로 3D 두 조각 — 절단면 기울기 = 횡베기 각도',
-    swiped.pieces.every((p) => Math.abs(p.cut - swiped.lastSlice.cut) < 0.001) &&
-    swiped.pieces.every((p) => Math.abs(p.tilt - swiped.lastSlice.tilt) < 0.001) &&
-    swiped.pieces.every((p) => p.tilt > 0.95 && p.tilt < 1.45),
-    {
-      cut: swiped.pieces.map((p) => +p.cut.toFixed(3)), sliceCut: +swiped.lastSlice.cut.toFixed(3),
-      tilt: swiped.pieces.map((p) => +p.tilt.toFixed(3))
-    });
-  await shot('27-fp-swipe-slash.png');
+  ok('오른쪽 빠른 스와이프(↘ 약 55px) → 베지 않는다 (적 그대로 · 검기 0)',
+    swipeDispatch && swiped.kills === swipeSetup.kills && swiped.enemies === 1 &&
+    swiped.pieces.length === 0 && swiped.slashes === 0 && swiped.views === 0 && swiped.atk === 0,
+    { kills: swiped.kills - swipeSetup.kills, pieces: swiped.pieces.length, slashes: swiped.slashes });
+  ok('오른쪽 빠른 스와이프 → 그 방향으로 시점이 돌아간다 (스와이프 = 시점 회전 전용)',
+    Math.abs(swiped.face - swipeSetup.face) > 0.25 && swiped.pitch < swipeSetup.pitch - 0.15,
+    { face: +(swiped.face - swipeSetup.face).toFixed(2), pitch: +(swiped.pitch - swipeSetup.pitch).toFixed(2) });
+  await shot('27-fp-swipe-look.png');
   await waitNoPieces();
 
   /* --- 오른쪽 천천히 드래그 = 베기 없이 시점만 회전 --- */
@@ -696,6 +706,132 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('오른쪽 천천히 드래그(80px · 0.7초) → 베기 없이 시점만 돌아간다',
     slow.kills === slowSetup.kills && slow.slashes === 0 &&
     Math.abs(slow.face - slowSetup.face) > 0.3 && slow.atkAnim === 0, slow);
+
+  /* --- 검기 · 칼날 궤적 리본은 베기가 끝나면 화면에서 완전히 사라진다 --- */
+  const fadeSetup = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
+    st.trails.length = 0; st.particles.length = 0; st.floats.length = 0;
+    st.enemySpawned = 0; st.spawnTimer = 9e9; st.winAt = 0;
+    st.player.x = 150; st.player.y = 330; st.player.face = Math.PI / 2; st.player.pitch = 0;
+    st.player.atkCd = 0; st.player.dash = 0; st.player.atkAnim = 0; st.player.hp = st.player.maxHp; st.down = 0;
+    document.getElementById('arDown').classList.add('hidden');
+    st.enemies.push({
+      team: 'enemy', x: 150, y: 330 + 44, r: 9, hp: 99999, maxHp: 99999, speed: 0.0001,
+      face: -Math.PI / 2, cd: 99999, wind: 0, swing: 0, hit: 0, stun: 9e9,
+      dead: false, lastHitBy: null, dashHit: false, wob: 0, slot: 0
+    });
+    return { slashes: st.slashes.length, views: st.r3d.info().slashes, trail: st.r3d.info().trail };
+  });
+  await page.click('#arSlash');
+  const fxDuring = await page.evaluate(async () => {
+    const st = window.TWArena.state();
+    const t0 = performance.now();
+    while (performance.now() - t0 < 20000) {
+      const i = st.r3d.info();
+      if (st.slashes.length > 0 && i.slashes > 0 && i.trail.pts >= 2 && i.trail.visible) {
+        return { slashes: st.slashes.length, views: i.slashes, trail: i.trail, atk: Math.round(st.player.atkAnim) };
+      }
+      await new Promise((r) => requestAnimationFrame(() => r()));
+    }
+    return null;
+  });
+  ok('베는 동안에는 검기와 칼날 궤적 리본이 그려진다',
+    !!fxDuring && fxDuring.views > 0 && fxDuring.trail.pts >= 2 && fxDuring.trail.visible === true, fxDuring);
+  await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    return st.player.atkAnim <= 0 && st.slashes.length === 0;
+  }, { timeout: 30000 }).catch(() => {});
+  // 페이드 수명(150ms)이 지나도록 잠깐 두고 본다
+  await sleep(300);
+  await more(4);
+  const fxAfter = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const i = st.r3d.info();
+    return {
+      slashes: st.slashes.length, views: i.slashes, trail: i.trail, atk: Math.round(st.player.atkAnim),
+      cuts: st.cuts.length, trails: st.trails.length, frames: i.frames
+    };
+  });
+  ok('베기가 끝나면 검기가 0개로 사라진다 (시뮬레이션 · 3D 메시 모두)',
+    fxAfter.slashes === 0 && fxAfter.views === 0 && fxAfter.atk === 0, fxAfter);
+  ok('베기가 끝나면 칼날 궤적 리본도 화면에 남지 않는다 (점 0 · 메시 숨김)',
+    fxAfter.trail.pts === 0 && fxAfter.trail.visible === false, fxAfter.trail);
+
+  /* --- 병사가 한 곳에 뭉치지 않는다 (분리 · 산개) --- */
+  const sepSetup = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
+    st.enemySpawned = 0; st.spawnTimer = 9e9; st.winAt = 0;
+    st.player.x = st.cfg.w / 2; st.player.y = st.cfg.h * 0.75; st.player.face = Math.PI / 2; st.player.pitch = 0;
+    st.player.atkAnim = 0; st.player.atkCd = 0; st.player.dash = 0; st.player.hp = st.player.maxHp; st.down = 0;
+    const px = st.player.x, py = st.player.y - 120;
+    // 한 점에 20명을 거의 겹친 채로 놓는다 — 분리가 없으면 그대로 한 덩어리로 선다
+    for (let i = 0; i < 20; i++) {
+      st.enemies.push({
+        team: 'enemy', x: px + (i % 4) * 0.4, y: py + Math.floor(i / 4) * 0.4, r: 9,
+        hp: 99999, maxHp: 99999, speed: 40, face: Math.PI / 2, cd: 99999,
+        wind: 0, swing: 0, hit: 0, stun: 0, dead: false, lastHitBy: null, dashHit: false,
+        wob: i * 0.7, slot: i * 0.157
+      });
+    }
+    document.getElementById('arDown').classList.add('hidden');
+    return { n: st.enemies.length, spec: window.TWArena.spec() };
+  });
+  await more(24);
+  const sepSpread = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const all = st.enemies.filter((u) => !u.dead);
+    const minD = 9 * 2.2;
+    let min = 1e9, packed = 0;
+    const near = all.map(() => 0);
+    for (let i = 0; i < all.length; i++) {
+      for (let j = i + 1; j < all.length; j++) {
+        const d = Math.hypot(all[i].x - all[j].x, all[i].y - all[j].y);
+        if (d < min) min = d;
+        if (d < minD * 0.8) { packed++; near[i]++; near[j]++; }
+      }
+    }
+    const xs = all.map((u) => u.x), ys = all.map((u) => u.y);
+    return {
+      n: all.length, min: +min.toFixed(2), minD: +minD.toFixed(1), packed,
+      worstNbr: near.length ? Math.max.apply(null, near) : 0,
+      spreadX: Math.round(Math.max.apply(null, xs) - Math.min.apply(null, xs)),
+      spreadY: Math.round(Math.max.apply(null, ys) - Math.min.apply(null, ys))
+    };
+  });
+  ok('한 점에 몰아넣은 병사들이 서로 밀어내며 최소 간격(r*2.2)을 지킨다',
+    sepSetup.spec.sep >= 19.7 && sepSpread.n >= 18 && sepSpread.min >= sepSpread.minD * 0.95 && sepSpread.packed === 0,
+    sepSpread);
+  ok('병사들이 한 덩어리가 아니라 넓게 산개한다 (한 명에 여러 명이 겹치지 않음)',
+    sepSpread.worstNbr <= 4 && sepSpread.spreadX > 80 && sepSpread.spreadY > 50, sepSpread);
+
+  // 증원도 겹치지 않고 간격을 두고 등장한다
+  const spawnSpread = await page.evaluate(async () => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.corpses.length = 0;
+    st.enemySpawned = 0; st.spawnTimer = 0;
+    st.player.x = st.cfg.w / 2; st.player.y = st.cfg.h * 0.6;
+    const t0 = performance.now();
+    while (st.enemies.length < 4 && performance.now() - t0 < 20000) {
+      st.spawnTimer = 0;
+      await new Promise((r) => setTimeout(r, 70));
+    }
+    const all = st.enemies.filter((u) => !u.dead);
+    let min = 1e9;
+    for (let i = 0; i < all.length; i++) {
+      for (let j = i + 1; j < all.length; j++) {
+        min = Math.min(min, Math.hypot(all[i].x - all[j].x, all[i].y - all[j].y));
+      }
+    }
+    return { n: all.length, min: +min.toFixed(2) };
+  });
+  ok('증원은 겹치지 않고 간격을 두고 등장한다 (스폰 시 r*2.2 이상)',
+    spawnSpread.n >= 4 && spawnSpread.min >= 9 * 2.2 * 0.95, spawnSpread);
+  await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.enemies.length = 0; st.enemySpawned = 0; st.spawnTimer = 9e9; st.winAt = 0;
+  });
 
   // 적 칼 휘두름 — 예고(붉은 검기) · 팔 애니메이션
   const windNow = await page.evaluate(() => {
@@ -851,10 +987,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     document.getElementById('arDown').classList.add('hidden');
     return { hp: st.player.hp, maxHp: st.player.maxHp };
   });
-  const didBlock = await page.waitForFunction(() => {
+  // 두 번째 공격까지 기다린다 — 헤드리스 소프트웨어 렌더링은 시뮬레이션이 느리게 도므로
+  // (프레임당 50ms 상한) 적의 공격 쿨다운만 앞당겨 검증 자체(두 번 다 100% 막힘)에 집중한다
+  const didBlock = await page.evaluate(async () => {
     const st = window.TWArena.state();
-    return st && (st.blocks || 0) >= 2;
-  }, { timeout: 20000 }).then(() => true).catch(() => false);
+    const t0 = performance.now();
+    while (performance.now() - t0 < 25000) {
+      if ((st.blocks || 0) >= 2) return true;
+      for (const e of st.enemies) if (!e.dead && !(e.wind > 0) && !(e.stun > 0)) e.cd = Math.min(e.cd, 0);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  });
   const blockState = await page.evaluate(() => {
     const st = window.TWArena.state();
     return { hp: st.player.hp, maxHp: st.player.maxHp, blocks: st.blocks || 0, guard: st.player.guard };

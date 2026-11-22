@@ -2542,25 +2542,56 @@ function create(opts) {
   const trailMesh = new THREE.Mesh(trailGeo, trailMat);
   trailMesh.frustumCulled = false;
   trailMesh.visible = false;
+  trailMesh.renderOrder = 6;
   vmScene.add(trailMesh);
-  const trailPts = [];
+  const TRAIL_LIFE = 150;      // ms — 베기가 끝난 뒤 칼날 궤적이 흐려져 사라지는 시간
+  const trailPts = [];         // { tip, mid } — 마지막 점이 가장 오래된 점
+  let trailFade = 0;           // 1 = 베는 중(선명) → 0 = 완전히 사라짐
   const _trailTip = new THREE.Vector3();
   const _trailMid = new THREE.Vector3();
   const _bladeBaseV = new THREE.Vector3();
   const _bladeMidV = new THREE.Vector3();
   const _bladePt = new THREE.Vector3();
 
-  function pushTrail(tip, mid, on) {
-    if (on) { trailPts.unshift({ tip: tip.clone(), mid: mid.clone() }); }
-    while (trailPts.length > TRAIL_N) trailPts.pop();
+  function clearTrail() {
+    trailPts.length = 0;
+    trailFade = 0;
+    trailMesh.visible = false;
+  }
+
+  /* 칼날 궤적 리본 — 베는 동안 칼이 지나간 자리에 점이 쌓이고,
+     베기가 끝나면 새 점 없이 150ms 동안 흐려지다 완전히 사라진다 (화면에 얼어붙지 않는다).
+     프레임률이 낮아도 베는 동안은 보이도록, 점 수명이 아니라 페이드로 정리한다. */
+  function pushTrail(tip, mid, on, dt) {
+    const step = dt > 0 ? dt : 16;
+    if (on) {
+      trailFade = 1;
+      const head = trailPts[0];
+      // 같은 자리에 머무는 프레임은 쌓지 않는다 (멈춘 칼날이 두꺼운 띠를 만들지 않게)
+      if (!head || Math.abs(head.tip.x - tip.x) + Math.abs(head.tip.y - tip.y) + Math.abs(head.tip.z - tip.z) > 0.006) {
+        trailPts.unshift({ tip: tip.clone(), mid: mid.clone() });
+      }
+      while (trailPts.length > TRAIL_N) trailPts.pop();
+    } else {
+      // 베기가 끝났다 — 더 쌓지 않고 빠르게 흐려져 사라진다
+      trailFade = Math.max(0, trailFade - step / TRAIL_LIFE);
+      if (trailFade <= 0) {
+        if (trailPts.length) trailPts.length = 0;
+        trailMesh.visible = false;
+        return;
+      }
+    }
     const n = trailPts.length;
-    trailMesh.visible = n > 2;
-    if (n < 2) return;
+    if (n < 2) {
+      trailMesh.visible = false;
+      return;
+    }
+    trailMesh.visible = true;
     for (let i = 0; i < TRAIL_N; i++) {
       const p = trailPts[Math.min(n - 1, i)];
       trailPos[i * 6 + 0] = p.tip.x; trailPos[i * 6 + 1] = p.tip.y; trailPos[i * 6 + 2] = p.tip.z;
       trailPos[i * 6 + 3] = p.mid.x; trailPos[i * 6 + 4] = p.mid.y; trailPos[i * 6 + 5] = p.mid.z;
-      const k = i < n ? Math.pow(1 - i / Math.max(1, TRAIL_N - 1), 1.7) : 0;
+      const k = Math.pow(1 - i / Math.max(1, TRAIL_N - 1), 1.7) * trailFade;
       // 끝은 하얀 심, 뒤로 갈수록 푸른 잔광 (가산 혼합이라 겹쳐도 뭉개지지 않게 낮게)
       const kk = Math.pow(k, 0.85);
       trailColA[i * 6 + 0] = 0.52 * kk; trailColA[i * 6 + 1] = 0.80 * kk; trailColA[i * 6 + 2] = 1.0 * kk;
@@ -2676,9 +2707,10 @@ function create(opts) {
       bp[1] = -_bladePt.y * 0.5 + 0.5;
     }
 
-    // 칼날 궤적 리본 — 베는 동안 칼이 지나간 자리를 따라 그린다
-    const swinging = pl.atkAnim > 0;
-    pushTrail(_tipV, _bladeMidV, swinging && p > 0.19 && p < 0.80);
+    // 칼날 궤적 리본 — 베는 동안 칼이 지나간 자리를 따라 그리고, 다 베면 흔적 없이 사라진다
+    const swinging = pl.atkAnim > 0 && vm.visible;
+    if (vm.visible) pushTrail(_tipV, _bladeMidV, swinging && p > 0.19 && p < 0.80, dt);
+    else clearTrail();
   }
 
   const vmState = {
@@ -2875,6 +2907,7 @@ function create(opts) {
       for (const g of v.geos) g.dispose();
     }
     slashViews.clear();
+    clearTrail();
     for (const [, v] of trailViews) { v.mesh.geometry.dispose(); v.mesh.material.dispose(); }
     trailViews.clear();
     for (const [, v] of cutViews) { v.mesh.geometry.dispose(); v.mesh.material.dispose(); }
@@ -2953,6 +2986,8 @@ function create(opts) {
         unitsTotal: units.size,
         pieces: pieces.size,
         slashes: slashViews.size,
+        // 칼날 궤적 리본 상태 — 베기가 끝나면 점이 0개, 메시도 사라져야 한다 (잔상 검증용)
+        trail: { pts: trailPts.length, visible: !!trailMesh.visible, life: TRAIL_LIFE },
         slashFx: (function () {
           const it = slashViews.values().next();
           if (it.done || !it.value) return null;

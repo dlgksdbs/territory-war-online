@@ -29,9 +29,6 @@
   var SLASH_ANIM = 480;     // 1인칭 검 궤적 ms (예비동작 → 가로 횡베기 → 팔로우스루 → 복귀)
   var SLASH_HIT_P = 0.44;    // 검끝이 적 몸통을 지나가는 지점 (궤적 44%) — 이 순간에 절단
   var SLASH_HIT_AT = SLASH_ANIM * SLASH_HIT_P;  // 베기 시작 후 절단·스파크가 터지는 시각(ms)
-  var SWIPE_MS = 250;       // 오른쪽 화면 빠른 스와이프 판정 시간
-  var SWIPE_MIN = 36;       // 스와이프 최소 거리(px)
-  var SWIPE_VEL = 0.22;     // 스와이프 최소 속도(px/ms)
   var SWIPE_DEFAULT = { sx: -0.985, sy: 0.16 };  // 버튼 베기의 기본: 오른쪽 → 왼쪽 가로 횡베기
   var COMBO_MS = 780;       // 이 안에 이어서 베면 좌↔우를 번갈아 가로지른다 (1타 우→좌 · 2타 좌→우)
   var GUARD_MUL = 0;          // 꾹 누르고 있는 동안은 100% 막는다 (데미지 0)
@@ -48,6 +45,9 @@
   var UNIT_CD_VAR = 320;
   var UNIT_REACH = 17;        // 칼이 닿는 거리 = r + r + 17
   var UNIT_HIT_PAD = 24;      // 휘두름 판정 여유
+  var UNIT_SEP_K = 1.1;       // 병사끼리 최소 중심 간격 = (r+r) * 1.1 = r * 2.2 — 이보다 가까우면 서로 밀어낸다
+  var UNIT_SEP_BUF = 1.08;    // 밀어낼 때의 여유 — 밀려나는 중에도 r*2.2 아래로 내려가지 않게
+  var UNIT_SLOT = 2;          // 적을 둘러쌀 때 목표에서 조금 물러서는 거리 (제자리에서 칼을 휘두를 수 있게)
   var SPECTATE_SPEED = 320;   // 🎬 관전 카메라 비행 속도(초당 월드 단위)
 
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
@@ -400,8 +400,10 @@
         ? face + Math.PI + (r() - 0.5) * 2.4                    // 대규모: 내 뒤·옆에서 따라온다
         : rndRange(r, 0, Math.PI * 2);
       var d = S.big ? 70 + r() * 130 : rndRange(r, 78, 120);
-      S.allies.push(makeUnit('ally', clamp(S.player.x + Math.cos(a) * d, W * 0.08, W * 0.92),
-        clamp(S.player.y + Math.sin(a) * d * 0.85, H * 0.1, H * 0.9)));
+      var ally = makeUnit('ally', clamp(S.player.x + Math.cos(a) * d, W * 0.08, W * 0.92),
+        clamp(S.player.y + Math.sin(a) * d * 0.85, H * 0.1, H * 0.9));
+      spreadSpawn(ally);          // 처음부터 겹치지 않고 퍼져서 선다
+      S.allies.push(ally);
       S.allySpawned++;
     }
   }
@@ -426,7 +428,8 @@
       dead: false,
       lastHitBy: null,
       dashHit: false,
-      wob: Math.random() * 6.28
+      wob: Math.random() * 6.28,
+      slot: Math.random() * 6.283       // 목표를 둘러쌀 때 맡는 자기 자리(각도)
     };
   }
 
@@ -434,6 +437,7 @@
   function unitSpec() {
     return {
       hp: UNIT_HP, dmg: UNIT_DMG, speed: UNIT_SPEED, radius: UNIT_R,
+      sep: UNIT_R * UNIT_SEP_K * 2,      // 병사끼리 지키는 최소 중심 간격 (= r * 2.2)
       wind: UNIT_WIND, cd: UNIT_CD, cdVar: UNIT_CD_VAR,
       reach: UNIT_REACH, hitPad: UNIT_HIT_PAD
     };
@@ -736,7 +740,7 @@
       return;
     }
     if (S.r3d) {
-      // 오른쪽 화면 드래그 = 시점 회전 · 빠른 스와이프 = 그 방향으로 베기 · 짧은 탭 = 베기
+      // 오른쪽 화면 = 오직 시점 회전 (드래그·스와이프·탭 모두 공격하지 않는다 — 공격은 ⚔️ 베기 버튼뿐)
       if (S.input.lookId != null) return;
       S.input.lookId = e.pointerId;
       S.input.lookOX = p.x;
@@ -790,20 +794,7 @@
       }
       pl.face = normAngle(pl.face + mdx * LOOK_SENS);
       pl.pitch = clamp((pl.pitch || 0) - mdy * LOOK_PITCH_SENS, PITCH_MIN, PITCH_MAX);
-
-      // 빠른 스와이프(36px 이상 · 250ms 이내)면 그 방향 그대로 베기
-      var tNow = nowMs();
-      var fdx = lp.x - S.input.lookOX;
-      var fdy = lp.y - S.input.lookOY;
-      var total = Math.sqrt(fdx * fdx + fdy * fdy);
-      var dtms = tNow - S.input.lookT;
-      if (!S.input.lookSlash && !S.ended && total >= SWIPE_MIN && dtms <= SWIPE_MS) {
-        var vel = total / Math.max(1, dtms);
-        if (vel >= SWIPE_VEL) {
-          S.input.lookSlash = true;
-          doSlash({ sx: fdx, sy: fdy });
-        }
-      }
+      // 시점만 돌린다 — 스와이프로 베지 않는다 (공격은 ⚔️ 베기 버튼으로만)
     }
   }
 
@@ -817,11 +808,9 @@
       if (el.joy) el.joy.classList.add('hidden');
     }
     if (S.r3d && S.input.lookId != null && e && e.pointerId === S.input.lookId) {
-      var quick = S.input.lookDist < 12 && (nowMs() - S.input.lookT) < 360;
-      var swiped = S.input.lookSlash;
+      // 손을 떼도 공격하지 않는다 — 오른쪽 화면은 시점 회전 전용
       S.input.lookId = null;
       S.input.lookSlash = false;
-      if (!swiped && quick && !S.ended && S.view !== 'spectate') doSlash();
     }
   }
 
@@ -1474,6 +1463,125 @@
     updateHud();
   }
 
+  /* ---------------------------------------------------------------------------
+     분리(separation) — 병사들이 한 덩어리로 뭉치지 않게 서로 밀어낸다
+     공간 해시(격자)로 이웃한 칸만 보므로 1,000명 난전에서도 O(N)에 가깝게 돈다
+     --------------------------------------------------------------------------- */
+  var SEP_CELL = UNIT_R * 2.6;     // 격자 한 칸 ≈ 최소 간격보다 조금 크게 (이웃 8칸만 보면 충분)
+  var SEP_GRID = new Map();        // key -> 배열 (프레임마다 재사용)
+  var SEP_BUCKETS = [];            // 배열 풀
+  var SEP_LIST = [];               // 이번 프레임의 살아있는 병사
+
+  function separateUnits(dt) {
+    var i, u;
+    SEP_LIST.length = 0;
+    for (i = 0; i < S.allies.length; i++) {
+      u = S.allies[i];
+      if (u.dead) continue;
+      u._si = SEP_LIST.length;
+      SEP_LIST.push(u);
+    }
+    for (i = 0; i < S.enemies.length; i++) {
+      u = S.enemies[i];
+      if (u.dead) continue;
+      u._si = SEP_LIST.length;
+      SEP_LIST.push(u);
+    }
+    var n = SEP_LIST.length;
+    if (n < 2) return;
+
+    var inv = 1 / SEP_CELL;
+    var kMove = clamp(dt / 16, 0.5, 2.4) * 0.5;
+    var maxPush = UNIT_R * 1.1;
+    var used = 0;
+
+    // 두 번 훑어 한쪽이 밀려 다른 쪽과 다시 겹치는 잔여 겹침까지 정리한다
+    for (var pass = 0; pass < 2; pass++) {
+      // 1) 격자에 담기
+      SEP_GRID.clear();
+      used = 0;
+      for (i = 0; i < n; i++) {
+        u = SEP_LIST[i];
+        var key = (((u.x * inv) | 0) + 4096) * 8192 + (((u.y * inv) | 0) + 4096);
+        var cell = SEP_GRID.get(key);
+        if (!cell) {
+          cell = SEP_BUCKETS[used];
+          if (!cell) { cell = []; SEP_BUCKETS.push(cell); }
+          cell.length = 0;
+          used++;
+          SEP_GRID.set(key, cell);
+        }
+        cell.push(u);
+      }
+
+      // 2) 이웃 칸끼리 겹치면 반씩 밀어낸다 (프레임률에 맞춰 세기 조절)
+      for (i = 0; i < n; i++) {
+        var a = SEP_LIST[i];
+        var ax = (a.x * inv) | 0, ay = (a.y * inv) | 0;
+        for (var ox = -1; ox <= 1; ox++) {
+          for (var oy = -1; oy <= 1; oy++) {
+            var bucket = SEP_GRID.get((ax + ox + 4096) * 8192 + (ay + oy + 4096));
+            if (!bucket) continue;
+            for (var q = 0; q < bucket.length; q++) {
+              var b = bucket[q];
+              if (b._si <= a._si) continue;          // 쌍은 한 번만 처리 (양쪽을 함께 민다)
+              var ddx = b.x - a.x, ddy = b.y - a.y;
+              var minD = (a.r + b.r) * UNIT_SEP_K * UNIT_SEP_BUF;
+              var d2 = ddx * ddx + ddy * ddy;
+              if (d2 >= minD * minD) continue;
+              var nx, ny, dist;
+              if (d2 < 1e-6) {
+                // 완전히 같은 자리 — 서로 다른 방향으로 확실히 갈라놓는다
+                var ea = (a._si + b._si) * 2.399963;
+                nx = Math.cos(ea); ny = Math.sin(ea); dist = 0;
+              } else {
+                dist = Math.sqrt(d2);
+                nx = ddx / dist; ny = ddy / dist;
+              }
+              var push = Math.min(maxPush, (minD - dist) * kMove);
+              a.x -= nx * push; a.y -= ny * push;
+              b.x += nx * push; b.y += ny * push;
+            }
+          }
+        }
+      }
+    }
+
+    // 3) 밀려난 병사가 전장 밖으로 나가지 않게
+    var mx = W * 0.06, y0 = H * 0.13, y1 = H * 0.87;
+    for (i = 0; i < n; i++) {
+      u = SEP_LIST[i];
+      if (u.x < mx) u.x = mx; else if (u.x > W - mx) u.x = W - mx;
+      if (u.y < y0) u.y = y0; else if (u.y > y1) u.y = y1;
+    }
+  }
+
+  /** 스폰 자리 고르기 — 이미 선 병사와 최소 간격만큼 떨어진 곳으로 옮긴다 (겹쳐서 시작하지 않게) */
+  function spreadSpawn(u) {
+    var minGap = u.r * UNIT_SEP_K * 2 * UNIT_SEP_BUF;
+    for (var tries = 0; tries < 6; tries++) {
+      if (!crowdedAt(u.x, u.y, minGap, u)) return;
+      var ang = S.rand() * Math.PI * 2;
+      var dist = minGap * (1 + S.rand());
+      u.x = clamp(u.x + Math.cos(ang) * dist, W * 0.05, W * 0.95);
+      u.y = clamp(u.y + Math.sin(ang) * dist, H * 0.06, H * 0.94);
+    }
+  }
+
+  function crowdedAt(x, y, minGap, self) {
+    var g2 = minGap * minGap;
+    for (var l = 0; l < 2; l++) {
+      var arr = l === 0 ? S.allies : S.enemies;
+      for (var i = 0; i < arr.length; i++) {
+        var o = arr[i];
+        if (o === self || o.dead) continue;
+        var dx = o.x - x, dy = o.y - y;
+        if (dx * dx + dy * dy < g2) return true;
+      }
+    }
+    return false;
+  }
+
   function stepUnits(dt) {
     var pl = S.player;
     var i;
@@ -1505,6 +1613,9 @@
     for (i = S.allies.length - 1; i >= 0; i--) {
       if (S.allies[i].dead) S.allies.splice(i, 1);
     }
+
+    // 뭉침 방지 — 이동·교전이 끝난 뒤 서로 밀어내 최소 간격(r*2.2)을 지킨다
+    separateUnits(dt);
   }
 
   /** 적이 노릴 대상 — 가장 가까운 플레이어 또는 아군 */
@@ -1551,21 +1662,41 @@
       tx = pl.x + Math.cos(u.wob + S.time / 900) * (S.big ? 120 : 62);
       ty = pl.y + Math.sin(u.wob + S.time / 900) * (S.big ? 96 : 48) + 10;
     } else if (target) {
-      tx = target.x; ty = target.y;
+      // 병사마다 목표 주위의 제자리(slot)를 하나씩 맡는다 — 모두 한 점으로 파고들지 않고 둘러싼다
+      var slot = isFinite(u.slot) ? u.slot : u.wob;
+      var slotR = (u.r + target.r) + UNIT_REACH - UNIT_SLOT;
+      var sa = slot + Math.sin(S.time / 1700 + u.wob) * 0.28;   // 자리를 지키며 살짝 흔들린다
+      tx = target.x + Math.cos(sa) * slotR;
+      ty = target.y + Math.sin(sa) * slotR;
     } else {
       tx = W / 2; ty = H / 2;
     }
     var dx = tx - u.x, dy = ty - u.y;
     var d = Math.sqrt(dx * dx + dy * dy) || 1;
-    u.face = Math.atan2(dy, dx);
+    // 칼끝은 자기 자리가 아니라 상대를 향한다
+    u.face = target ? Math.atan2(target.y - u.y, target.x - u.x) : Math.atan2(dy, dx);
 
     var reach = (u.r + (target ? target.r : 0)) + UNIT_REACH;
-    if (target && d > reach) {
+    if (target) {
+      var tdx = target.x - u.x, tdy = target.y - u.y;
+      var tdist = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+      if (tdist > reach + 2) {
+        // 가까이 왔으면 상대에게 바로 파고든다 — 멀리서는 자기 자리(slot)로 돌아 들어가 둘러싼다
+        var step = u.speed * (dt / 1000);
+        if (tdist < reach * 1.7 || d < 1.5) {
+          u.x += (tdx / tdist) * step;
+          u.y += (tdy / tdist) * step;
+        } else {
+          u.x += (dx / d) * step;
+          u.y += (dy / d) * step;
+        }
+      } else if (u.cd <= 0 && u.wind <= 0) {
+        u.wind = UNIT_WIND;
+        u.swing = 0;
+      }
+    } else if (d > 6) {
       u.x += (dx / d) * u.speed * (dt / 1000);
       u.y += (dy / d) * u.speed * (dt / 1000);
-    } else if (target && u.cd <= 0 && u.wind <= 0) {
-      u.wind = 320;
-      u.swing = 0;
     }
 
     if (u.wind > 0) {
@@ -1621,6 +1752,7 @@
               H * 0.84 - Math.random() * H * 0.07);
           }
           en.wind = 0;
+          spreadSpawn(en);            // 이미 선 병사와 겹치지 않는 자리로
           S.enemies.push(en);
           S.enemySpawned++;
         }
@@ -1636,8 +1768,10 @@
         for (var j = 0; j < m; j++) {
           var ang = (S.player ? S.player.face : Math.PI / 2) + Math.PI + (S.rand() - 0.5) * 1.8;
           var dd = 70 + S.rand() * 90;
-          S.allies.push(makeUnit('ally', clamp(S.player.x + Math.cos(ang) * dd, W * 0.06, W * 0.94),
-            clamp(S.player.y + Math.sin(ang) * dd, H * 0.08, H * 0.92)));
+          var ally = makeUnit('ally', clamp(S.player.x + Math.cos(ang) * dd, W * 0.06, W * 0.94),
+            clamp(S.player.y + Math.sin(ang) * dd, H * 0.08, H * 0.92));
+          spreadSpawn(ally);
+          S.allies.push(ally);
           S.allySpawned++;
         }
       }
@@ -2319,7 +2453,7 @@
       if (S.view === 'spectate') el.hint.textContent = '🎬 관전 — 왼쪽 드래그 비행 · 오른쪽 드래그 시점 · ⚔️ 참전으로 복귀';
       else if (pl.guard) el.hint.textContent = '🛡️ 꾹 누르고 있는 동안은 모두 막는다 · 누른 직후에 받으면 패링';
       else if (pl.dashCd > 0) el.hint.textContent = '돌진 준비 ' + (pl.dashCd / 1000).toFixed(1) + '초';
-      else if (S.r3d) el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 빠른 스와이프로 그 방향 베기 · 천천히 드래그하면 시점';
+      else if (S.r3d) el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 드래그 시점 · ⚔️ 베기로 공격';
       else el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 탭/⚔️ 베기 · 🛡️로 막고 패링';
     }
     if (el.btnSlash) el.btnSlash.setAttribute('aria-disabled', S.view === 'spectate' ? 'true' : 'false');
@@ -2388,10 +2522,20 @@
     open(next, hooks);
   }
 
+  /** 남은 검기·잔상 효과를 즉시 걷는다 — 끝난 순간의 효과가 화면에 얼어붙지 않게 */
+  function clearSlashFx() {
+    if (!S) return;
+    S.slashes.length = 0;
+    S.trails.length = 0;
+    S.cuts.length = 0;
+    S.pending = null;
+  }
+
   function finish(reason) {
     if (!S || S.ended) return;
     var kills = S.kills;
     S.ended = true;
+    clearSlashFx();
     S.endReason = reason || 'return';
     report(true);
     if (S.hooks.onEnd) {
@@ -2413,6 +2557,7 @@
     if (!S || S.ended) return;
     var kills = S.kills;
     S.ended = true;
+    clearSlashFx();
     if (S.hooks.onServerEnd) {
       try { S.hooks.onServerEnd(summary); } catch (e) { /* noop */ }
     }

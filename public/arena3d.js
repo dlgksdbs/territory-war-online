@@ -78,7 +78,7 @@ function hexA(hex, a) {
 
 const EYE = 20.5;               // 병사 눈높이 (월드 단위)
 const MAX_SOLDIERS = 260;       // 동시에 그리는 병사 상한 (인스턴스 버퍼 크기 · 최대 1000명 난전용)
-const ATK_DUR = 460;            // 1인칭 검 궤적 길이(ms)
+const ATK_DUR = 480;            // 1인칭 검 궤적 길이(ms)
 const MAX_ARCS = 160;           // 검기/예고/검끝 발광 인스턴스 상한
 const MAX_PIECES = 26;          // 동시에 굴리는 3D 두 동강 조각 상한
 
@@ -1338,7 +1338,7 @@ function create(opts) {
       armLx: -0.1, armLz: -0.12, elbowL: 0.35,
       armRx: 0.24, armRz: 0.16, elbowR: 0.5, wristR: 0,
       torsoYaw: 0, lean: 0, roll: 0, headYaw: 0,
-      windK: 0, swingK: 0,
+      windK: 0, swingK: 0, atkK: 0,
       scale: 0.93 + rand() * 0.14
     };
     units.set(u, v);
@@ -1353,7 +1353,7 @@ function create(opts) {
     v.speed = lerp(v.speed, spd, 0.22);
     const run = clamp(v.speed / 105, 0, 1);
     // 보폭 주기 — 걸을 때는 느긋하게, 달릴 때는 빠르게 (발이 미끄러지지 않게 속도에 비례)
-    v.phase += (dt / 1000) * (2.6 + run * 7.4);
+    v.phase += (dt / 1000) * (0.9 + run * 9.2);
     v.run = run;
   }
 
@@ -1428,58 +1428,73 @@ function create(opts) {
       const sL = Math.sin(ph), sR = Math.sin(ph + Math.PI);
 
       /* ---- 목표 자세 (관절이 부드럽게 따라간다) ---- */
-      const amp = 0.2 + run * 0.62;
+      const walk = clamp(run * 1.8, 0, 1);            // 0 = 서 있음, 1 = 달리기
+      const breath = Math.sin(S.time / 900 + v.phase * 0.37);
+      const amp = 0.03 + walk * 0.62;
       let legLT = sL * amp;
       let legRT = sR * amp;
-      let kneeLT = Math.max(0, sL) * (0.18 + run * 0.95) + 0.06;
-      let kneeRT = Math.max(0, sR) * (0.18 + run * 0.95) + 0.06;
-      let armLxT = sR * (0.16 + run * 0.5) - 0.06;
-      let armLzT = -0.1 - run * 0.05;
-      let elbowLT = 0.34 + run * 0.45 + Math.max(0, -sR) * 0.28;
-      let armRxT = 0.24 + sL * (0.1 + run * 0.3);
-      let armRzT = 0.16 + run * 0.05;
-      let elbowRT = 0.5 - run * 0.1;
+      let kneeLT = Math.max(0, sL) * (0.08 + walk * 0.95) + 0.05;
+      let kneeRT = Math.max(0, sR) * (0.08 + walk * 0.95) + 0.05;
+      let armLxT = sR * (0.10 + walk * 0.5) - 0.05;
+      let armLzT = -0.1 - walk * 0.05;
+      let elbowLT = 0.34 + walk * 0.45 + Math.max(0, -sR) * 0.28;
+      let armRxT = 0.24 + sL * (0.06 + walk * 0.3);
+      let armRzT = 0.16 + walk * 0.05;
+      let elbowRT = 0.5 - walk * 0.1;
       let wristT = 0;
-      let torsoYawT = Math.sin(ph) * (0.012 + run * 0.05);
-      let leanT = run * 0.17;                       // 달릴 때 앞으로 기운다
-      let rollT = Math.sin(ph) * (0.008 + run * 0.03);
-      let headYawT = Math.sin(ph * 0.5) * 0.05;
-      let bobY = Math.abs(Math.sin(ph)) * (0.3 + run * 1.35);
+      let torsoYawT = Math.sin(ph) * (0.010 + walk * 0.05) + breath * 0.012;
+      let leanT = walk * 0.17 + breath * 0.010;       // 달릴 때 앞으로 기운다
+      let rollT = Math.sin(ph) * (0.008 + walk * 0.03);
+      let headYawT = Math.sin(ph * 0.5 + v.phase) * 0.06 * (1 - walk * 0.7);
+      let bobY = Math.abs(Math.sin(ph)) * (0.2 + walk * 1.35) + breath * 0.12;
+      let lunge = 0;                                   // 베기 때 앞으로 파고드는 발
 
+      // 공격 — 예비동작은 빠르게 들고 잠깐 멈추며, 내려치기는 가속 후 끝까지 지나간다
+      let sw = 0;                                      // 음수 = 치켜듬, 양수 = 내려침
       if (u.wind > 0) {
-        // 예고 — 검을 머리 위로 천천히 치켜들며 상체를 비튼다
         windCount++;
-        const k = smoothstep(clamp(1 - u.wind / 320, 0, 1));
+        const t = clamp((320 - u.wind) / 185, 0, 1);
+        sw = -smoothstep(t);
         v.windK = damp(v.windK, 1, dt, 55);
         v.swingK = damp(v.swingK, 0, dt, 60);
-        const kk = k;
-        armRxT = lerp(armRxT, -2.35, kk);
-        armRzT = lerp(armRzT, 0.42, kk);
-        elbowRT = lerp(elbowRT, 0.86, kk);
-        wristT = lerp(wristT, -0.55, kk);
-        torsoYawT = lerp(torsoYawT, -0.3, kk);
-        leanT = lerp(leanT, -0.1, kk);
-        armLxT = lerp(armLxT, -0.75, kk);
-        elbowLT = lerp(elbowLT, 0.7, kk);
-        headYawT = lerp(headYawT, -0.1, kk);
       } else if (u.swing > 0) {
-        // 내려치기 — 팔이 빠르게 내려오고 상체가 앞으로 실린다
         swingCount++;
-        const s = 1 - clamp(u.swing / 180, 0, 1);
-        const k = s < 0.55 ? easeInCubic(s / 0.55) : 1 - smoothstep((s - 0.55) / 0.45) * 0.35;
-        v.swingK = damp(v.swingK, 1, dt, 45);
+        const s = clamp(1 - u.swing / 180, 0, 1);
+        sw = s < 0.62 ? easeInQuad(s / 0.62) : 1 + 0.10 * smoothstep((s - 0.62) / 0.38);
         v.windK = damp(v.windK, 0, dt, 45);
-        armRxT = lerp(-2.35, 0.72, k);
-        armRzT = lerp(0.42, -0.2, k);
-        elbowRT = lerp(0.86, 0.12, k);
-        wristT = lerp(-0.55, 0.4, k);
-        torsoYawT = lerp(-0.3, 0.34, k);
-        leanT = lerp(-0.1, 0.22, k);
-        armLxT = lerp(-0.75, 0.4, k);
-        headYawT = lerp(-0.1, 0.06, k);
-      } else {
-        v.windK = damp(v.windK, 0, dt, 90);
-        v.swingK = damp(v.swingK, 0, dt, 90);
+        v.swingK = damp(v.swingK, 1, dt, 45);
+      }
+      // 공격이 끝나면 여운을 두고 기본 자세로 돌아간다 (뚝 끊기지 않게)
+      if (sw === 0) v.atkK = damp(v.atkK || 0, 0, dt, 190);
+      else v.atkK = sw;
+      const atk = v.atkK || 0;
+
+      if (atk < 0) {
+        // 예비동작 — 검을 머리 위로 치켜들며 상체를 비튼다
+        const k = -atk;
+        armRxT = lerp(armRxT, -2.30, k);
+        armRzT = lerp(armRzT, 0.42, k);
+        elbowRT = lerp(elbowRT, 0.90, k);
+        wristT = lerp(wristT, -0.55, k);
+        torsoYawT = lerp(torsoYawT, -0.34, k);
+        leanT = lerp(leanT, -0.10, k);
+        armLxT = lerp(armLxT, -0.78, k);
+        elbowLT = lerp(elbowLT, 0.72, k);
+        headYawT = lerp(headYawT, -0.12, k);
+      } else if (atk > 0) {
+        // 내려치기 — 칼이 앞아래까지 끝까지 지나가고 상체가 실린다
+        const k = Math.min(1.1, atk);
+        armRxT = lerp(-2.30, 0.86, k);
+        armRzT = lerp(0.42, -0.26, k);
+        elbowRT = lerp(0.90, 0.10, k);
+        wristT = lerp(-0.55, 0.45, k);
+        torsoYawT = lerp(-0.34, 0.38, k);
+        leanT = lerp(-0.10, 0.26, k);
+        armLxT = lerp(-0.78, 0.46, k);
+        elbowLT = lerp(elbowLT, 0.50, k);
+        headYawT = lerp(-0.12, 0.08, k);
+        lunge = clamp(atk, 0, 1);
+        kneeLT = lerp(kneeLT, 0.42, lunge * 0.6);
       }
       if (u.stun > 0) {
         // 맞으면 뒤로 젖혀진다
@@ -1495,9 +1510,9 @@ function create(opts) {
       v.armLx = damp(v.armLx, armLxT, dt, 70);
       v.armLz = damp(v.armLz, armLzT, dt, 80);
       v.elbowL = damp(v.elbowL, elbowLT, dt, 80);
-      v.armRx = damp(v.armRx, armRxT, dt, u.swing > 0 ? 26 : 60);
+      v.armRx = damp(v.armRx, armRxT, dt, u.swing > 0 ? 34 : 60);
       v.armRz = damp(v.armRz, armRzT, dt, 60);
-      v.elbowR = damp(v.elbowR, elbowRT, dt, u.swing > 0 ? 30 : 70);
+      v.elbowR = damp(v.elbowR, elbowRT, dt, u.swing > 0 ? 40 : 70);
       v.wristR = damp(v.wristR, wristT, dt, 60);
       v.torsoYaw = damp(v.torsoYaw, torsoYawT, dt, 80);
       v.lean = damp(v.lean, leanT, dt, 90);
@@ -1505,7 +1520,8 @@ function create(opts) {
       v.headYaw = damp(v.headYaw, headYawT, dt, 120);
 
       /* ---- 월드 행렬 ---- */
-      _pos.set(u.x - W / 2, bobY, u.y - H / 2);
+      const lfx = Math.cos(u.face || 0), lfz = Math.sin(u.face || 0);
+      _pos.set(u.x - W / 2 + lfx * lunge * 2.4, bobY, u.y - H / 2 + lfz * lunge * 2.4);
       _eul.set(v.lean, Math.PI / 2 - (u.face || 0), v.roll, 'YXZ');
       _quat.setFromEuler(_eul);
       const vs = v.scale || 1;
@@ -1655,14 +1671,14 @@ function create(opts) {
           map: TEX.slash, transparent: true, opacity: 1, side: THREE.DoubleSide,
           blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
         });
-        const arc = new THREE.Mesh(new THREE.PlaneGeometry(34, 19), mat);
+        const arc = new THREE.Mesh(new THREE.PlaneGeometry(13, 5.2), mat);
         arc.position.set(0, 0, -26);
         group.add(arc);
         const glowMat = new THREE.MeshBasicMaterial({
-          color: 0xd6f0ff, transparent: true, opacity: 0.34, side: THREE.DoubleSide,
+          color: 0xd6f0ff, transparent: true, opacity: 0.22, side: THREE.DoubleSide,
           blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
         });
-        const glow = new THREE.Mesh(new THREE.PlaneGeometry(46, 8), glowMat);
+        const glow = new THREE.Mesh(new THREE.PlaneGeometry(15, 2.0), glowMat);
         glow.position.set(0, 0, -26.4);
         group.add(glow);
         v = { group: group, arc: arc, glow: glow, mat: mat, glowMat: glowMat };
@@ -1670,11 +1686,13 @@ function create(opts) {
       }
       const p = clamp(sl.t / sl.dur, 0, 1);
       const e = 1 - Math.pow(1 - p, 1.7);
-      v.group.position.set(0, -2.0 + e * 0.6, 0);
-      v.group.rotation.z = 1.15 - e * 2.3;
-      v.mat.opacity = (1 - p) * 0.95;
-      v.glowMat.opacity = (1 - p) * 0.34;
-      v.arc.scale.set(0.9 + p * 0.35, 0.9 + p * 0.25, 1);
+      // 가로 횡베기 — 오른쪽에서 왼쪽(또는 반대)으로 화면을 가로지르는 호
+      const sgn = sl.sx >= 0 ? 1 : -1;
+      v.group.position.set(-sgn * (0.38 - 0.76 * e), -1.05 + e * 0.2, 0);
+      v.group.rotation.z = sgn * (0.30 - 0.60 * e);
+      v.mat.opacity = (1 - p) * 0.2;
+      v.glowMat.opacity = (1 - p) * 0.07;
+      v.arc.scale.set(0.85 + p * 0.5, 0.75 + p * 0.3, 1);
     }
   }
 
@@ -1714,15 +1732,17 @@ function create(opts) {
     for (const c of S.cuts) {
       let v = cutViews.get(c);
       if (!v) {
-        const geo = new THREE.PlaneGeometry(Math.max(40, c.len * 2.2), 1.6);
+        const geo = new THREE.PlaneGeometry(Math.max(18, c.len * 1.5), 0.7);
         const mat = new THREE.MeshBasicMaterial({
           color: 0xfff6f2, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
           depthWrite: false, side: THREE.DoubleSide
         });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.y = 15;
+        mesh.rotation.order = 'YXZ';
         mesh.rotation.y = -c.ang;
-        mesh.rotation.z = 0.12;
+        mesh.rotation.x = -(c.tilt || 0);      // 절단면 기울기 그대로 — 가로 횡베기면 수평으로 누운 섬광
+        mesh.rotation.z = 0.05;
         scene.add(mesh);
         v = { mesh: mesh };
         cutViews.set(c, v);
@@ -1730,8 +1750,8 @@ function create(opts) {
       const p = clamp(c.t / c.dur, 0, 1);
       v.mesh.position.x = c.x - W / 2;
       v.mesh.position.z = c.y - H / 2;
-      v.mesh.material.opacity = (1 - p) * 0.9;
-      v.mesh.scale.set(0.75 + p * 0.45, 1 + p * 0.9, 1);
+      v.mesh.material.opacity = (1 - p) * 0.55;
+      v.mesh.scale.set(0.75 + p * 0.35, 1 + p * 0.45, 1);
     }
   }
 
@@ -1786,7 +1806,7 @@ function create(opts) {
       color: 0xdff3ff, transparent: true, opacity: 0.7, side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending, depthWrite: false
     });
-    const flash = new THREE.Mesh(new THREE.PlaneGeometry(26, 1.4), flashMat);
+    const flash = new THREE.Mesh(new THREE.PlaneGeometry(15, 0.8), flashMat);
     flash.position.set(0, 16.2, 0);
     flash.rotation.x = -tilt;
     group.add(flash);
@@ -1841,7 +1861,7 @@ function create(opts) {
       for (const m of p.mats) m.opacity = fade;
       p.core.material.opacity = fade * 0.95;
       const flashP = clamp(1 - (950 - c.life) / 170, 0, 1);
-      p.flashMat.opacity = flashP * 0.9;
+      p.flashMat.opacity = flashP * 0.6;
       p.flash.visible = flashP > 0.01;
     }
   }
@@ -1962,7 +1982,7 @@ function create(opts) {
     // 베기 반동 — 팔과 몸이 함께 실린다
     const ap = pl.atkAnim > 0 ? 1 - clamp(pl.atkAnim / ATK_DUR, 0, 1) : 0;
     const strike = ap > 0.16 && ap < 0.66 ? Math.sin(((ap - 0.16) / 0.5) * Math.PI) : 0;
-    const sw = pl.swipe || { sx: 0.7, sy: 0.72 };
+    const sw = pl.swipe || { sx: -1, sy: 0.16 };
     const brace = vmGuard * 0.5;
     const breath = Math.sin(timeSec * 1.25) * 0.03;
 
@@ -2041,7 +2061,7 @@ function create(opts) {
   /* --- 계층: armRoot → shoulderPivot → (upperArm) → elbowPivot → (foreArm) → wristPivot → sword ---
      자세는 '손목 위치 + 칼날 방향'으로 저작하고, 2뼈 IK 로 어깨·팔꿈치·손목을 역산한다.
      쿼터니언 기반이라 짐벌락·축 뒤집힘 없이 자세 사이가 매끄럽게 이어진다. */
-  const ARM = { root: new THREE.Vector3(1.62, -2.3, -3.2), l1: 1.0, l2: 0.86, blade: 2.2 };
+  const ARM = { root: new THREE.Vector3(1.25, -1.95, -2.85), l1: 1.0, l2: 0.86, blade: 2.2 };
 
   const armRoot = new THREE.Group();
   armRoot.position.copy(ARM.root);
@@ -2186,29 +2206,49 @@ function create(opts) {
   sword.add(guardSpark);
 
   /* ===========================================================================
-     1인칭 검 자세 키프레임 — 손목 위치 + 칼날 방향 (vm 로컬 = 카메라 공간)
+     1인칭 검 자세 — 가로 횡베기 아크 (오른쪽 → 왼쪽 / 왼쪽 → 오른쪽)
+     자세는 '손목 위치(w) + 칼날 방향(b) + 칼날 면 법선(n)'으로 저작하고,
+     키 사이는 C1 연속 에르미트 곡선으로 이어 검끝이 부드러운 호를 그린다.
      =========================================================================== */
-  const VM_KEYS = [
-    { p: 0.00, w: [0.38, -0.86, -2.85], b: [-0.37, 0.93, 0.04], ease: 'out' },   // 기본 자세
-    { p: 0.17, w: [0.68, -0.44, -2.74], b: [-0.03, 0.99, 0.03], ease: 'in' },    // 예비동작 (오른쪽 위로 치켜든다)
-    { p: 0.28, w: [0.50, -0.74, -2.80], b: [-0.60, 0.80, 0.03], ease: 'in' },    // 내려치기 시작 (시야 가운데로)
-    { p: 0.40, w: [0.26, -0.98, -2.86], b: [-0.90, 0.44, 0.05], ease: 'in' },    // 가속 (화면 왼쪽)
-    { p: 0.50, w: [0.08, -1.12, -2.90], b: [-0.97, -0.12, 0.06], ease: 'out' },  // 내려치기 끝 (왼쪽 아래)
-    { p: 0.62, w: [-0.02, -1.20, -2.88], b: [-0.82, -0.55, 0.06], ease: 'out' },  // 팔로우스루
-    { p: 1.00, w: [0.38, -0.86, -2.85], b: [-0.37, 0.93, 0.04], ease: 'out' }    // 위로 매끄러운 복귀
-  ];
-  const GUARD_POSE = { w: [0.20, -0.92, -2.90], b: [-0.05, 0.99, 0.08] };
+  const VM_SWING_KEYS = {
+    // 오른쪽 → 왼쪽 횡베기 (1타·3타)
+    left: [
+      { p: 0.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] },      // 기본 자세
+      { p: 0.16, w: [1.10, -0.78, -2.48], b: [0.18, 0.84, -0.51], n: [0, 0, 1] },      // 예비동작 (오른쪽 위로)
+      { p: 0.30, w: [0.85, -0.85, -2.75], b: [-0.15, 0.75, -0.64], n: [0.1, 0, 1] },   // 가속 (칼날이 앞으로 돈다)
+      { p: 0.45, w: [0.42, -1.00, -2.85], b: [-0.80, 0.42, -0.43], n: [0, 0.2, 1] },   // 적을 통과 (가로)
+      { p: 0.58, w: [0.20, -1.02, -2.72], b: [-0.95, 0.10, -0.28], n: [0, 0.35, 1] },  // 팔로우스루
+      { p: 0.70, w: [0.16, -1.08, -2.62], b: [-0.88, -0.26, -0.40], n: [0, 0.5, 0.87] },// 왼쪽 끝까지 지나감
+      { p: 0.84, w: [0.72, -1.12, -2.60], b: [-0.55, 0.35, -0.76], n: [0, 0, 1] },      // 회수 (몸 앞으로 당긴다)
+      { p: 1.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] }       // 기본 자세
+    ],
+    // 왼쪽 → 오른쪽 횡베기 (2타)
+    right: [
+      { p: 0.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] },
+      { p: 0.16, w: [0.22, -1.04, -2.66], b: [-0.85, -0.25, -0.46], n: [0, 0.3, 0.9] },   // 왼쪽으로 감아 쥔다
+      { p: 0.30, w: [0.34, -0.92, -2.86], b: [-0.30, 0.72, -0.62], n: [0, 0.1, 1] },     // 훑고 올라온다
+      { p: 0.45, w: [0.62, -0.96, -2.94], b: [0.74, 0.40, -0.52], n: [0, 0.2, 1] },      // 적을 통과 (오른쪽)
+      { p: 0.58, w: [0.94, -1.00, -2.78], b: [0.93, 0.12, -0.30], n: [0, 0.35, 1] },
+      { p: 0.70, w: [1.10, -1.08, -2.62], b: [0.88, -0.26, -0.40], n: [0, 0.5, 0.87] },   // 오른쪽 끝
+      { p: 0.84, w: [0.82, -1.10, -2.62], b: [-0.10, 0.55, -0.83], n: [0, 0, 1] },        // 회수
+      { p: 1.00, w: [0.70, -1.05, -2.65], b: [-0.45, 0.89, 0.05], n: [0, 0, 1] }
+    ]
+  };
+  const GUARD_POSE = { w: [0.34, -0.96, -2.86], b: [-0.20, 0.94, 0.16], n: [0, 0, 1] };
 
   const _kW = new THREE.Vector3();
   const _kB = new THREE.Vector3();
+  const _kN = new THREE.Vector3();
   const _gW = new THREE.Vector3();
   const _gB = new THREE.Vector3();
+  const _gN = new THREE.Vector3();
   const _tipV = new THREE.Vector3();
   const _tipP = new THREE.Vector3();
   const _bladeLocal = new THREE.Vector3(0, 1, 0).applyEuler(new THREE.Euler(-0.34, 0.1, 0.78, 'XYZ')).normalize();
+  const _flatLocal = new THREE.Vector3(0, 0, 1).applyEuler(new THREE.Euler(-0.34, 0.1, 0.78, 'XYZ')).normalize();
   const _ikU = new THREE.Vector3();
   const _ikAxis = new THREE.Vector3();
-  const _ikPole = new THREE.Vector3(0.55, -0.55, 0.6).normalize();
+  const _ikPole = new THREE.Vector3(0.62, -0.62, 0.48).normalize();
   const _ikE = new THREE.Vector3();
   const _ikF = new THREE.Vector3();
   const _ikX = new THREE.Vector3();
@@ -2220,31 +2260,63 @@ function create(opts) {
   const _qElbow = new THREE.Quaternion();
   const _qSolvedSh = new THREE.Quaternion();
   const _qSolvedWr = new THREE.Quaternion();
+  const _mHand = new THREE.Matrix4();
+  const _mHandT = new THREE.Matrix4();
+  const _tmpV3 = new THREE.Vector3();
 
-  /** p(0..1) 위치의 키프레임 보간 → _kW(손목) · _kB(칼날 방향) */
-  function sampleKeys(p) {
-    let a = VM_KEYS[0], b = VM_KEYS[VM_KEYS.length - 1];
-    for (let i = 0; i < VM_KEYS.length - 1; i++) {
-      if (p >= VM_KEYS[i].p && p <= VM_KEYS[i + 1].p) { a = VM_KEYS[i]; b = VM_KEYS[i + 1]; break; }
+  /** 에르미트 보간 (키 p 간격이 달라도 C1 연속 · 키에서 속도가 끊기지 않는다) */
+  function hermite(keys, idx, p, ch, out) {
+    const n = keys.length;
+    let i = 0;
+    while (i < n - 2 && p > keys[i + 1].p) i++;
+    const a = keys[i], b = keys[Math.min(n - 1, i + 1)];
+    const pa = a.p, pb = b.p;
+    const dt = Math.max(1e-5, pb - pa);
+    const t = clamp((p - pa) / dt, 0, 1);
+    const am = keys[Math.max(0, i - 1)], bm = keys[Math.min(n - 1, i + 2)];
+    const dp = Math.max(1e-5, bm.p - am.p);
+    // 탄젠트(기울기) — 양옆 키를 잇는 방향
+    const m0 = [0, 0, 0], m1 = [0, 0, 0];
+    for (let k = 0; k < 3; k++) {
+      m0[k] = (b[ch][k] - am[ch][k]) / dp;
+      m1[k] = (bm[ch][k] - a[ch][k]) / dp;
     }
-    const span = Math.max(0.0001, b.p - a.p);
-    let t = clamp((p - a.p) / span, 0, 1);
-    const mode = b.ease || 'out';
-    t = mode === 'in' ? easeInCubic(t) : mode === 'linear' ? t : smoothstep(t);
-    _kW.set(
-      a.w[0] + (b.w[0] - a.w[0]) * t,
-      a.w[1] + (b.w[1] - a.w[1]) * t,
-      a.w[2] + (b.w[2] - a.w[2]) * t
+    const t2 = t * t, t3 = t2 * t;
+    const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t;
+    const h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+    out.set(
+      h00 * a[ch][0] + h10 * dt * m0[0] + h01 * b[ch][0] + h11 * dt * m1[0],
+      h00 * a[ch][1] + h10 * dt * m0[1] + h01 * b[ch][1] + h11 * dt * m1[1],
+      h00 * a[ch][2] + h10 * dt * m0[2] + h01 * b[ch][2] + h11 * dt * m1[2]
     );
-    _kB.set(
-      a.b[0] + (b.b[0] - a.b[0]) * t,
-      a.b[1] + (b.b[1] - a.b[1]) * t,
-      a.b[2] + (b.b[2] - a.b[2]) * t
-    ).normalize();
+    return out;
   }
 
-  /** 2뼈 IK — 손목 위치 · 칼날 방향 → 어깨/팔꿈치/손목 쿼터니언 */
-  function solveArm(Wc, Bc) {
+  /** 자세(손목·칼날·칼날면) 샘플 */
+  function samplePose(keys, p) {
+    hermite(keys, 0, p, 'w', _kW);
+    hermite(keys, 0, p, 'b', _kB);
+    hermite(keys, 0, p, 'n', _kN);
+    _kB.normalize();
+    _kN.addScaledVector(_kB, -_kN.dot(_kB));
+    if (_kN.lengthSq() < 1e-5) {
+      _kN.set(0, 0, 1).addScaledVector(_kB, -_kB.z);
+      if (_kN.lengthSq() < 1e-5) _kN.set(1, 0, 0);
+    }
+    _kN.normalize();
+  }
+
+  /** 시간 → 자세 파라미터 (예비동작 → 가속 횡베기 → 팔로우스루 → 회수) */
+  function swingPhase(u) {
+    const t = clamp(u, 0, 1);
+    if (t < 0.26) { const k = t / 0.26; return 0.16 * (k * k * (3 - 2 * k)); }
+    if (t < 0.66) { const k = (t - 0.26) / 0.40; return 0.16 + 0.56 * (k * k * (3 - 2 * k)); }
+    const k = (t - 0.66) / 0.34;
+    return 0.72 + 0.28 * (k * k * (3 - 2 * k));
+  }
+
+  /** 2뼈 IK — 손목 위치 · 칼날 방향 · 칼날 면 법선 → 어깨/팔꿈치/손목 쿼터니언 */
+  function solveArm(Wc, Bc, Nc) {
     const W = _ikU.copy(Wc).sub(ARM.root);
     let d = W.length();
     const maxD = ARM.l1 + ARM.l2 - 0.02;
@@ -2272,15 +2344,80 @@ function create(opts) {
     const theta = Math.atan2(-fZ, -fY);
 
     _qElbow.copy(_qSolvedSh).multiply(new THREE.Quaternion().setFromAxisAngle(_ikX.set(1, 0, 0), theta));
-    const targetLocal = Bc.clone().normalize().applyQuaternion(_qElbow.clone().invert()).normalize();
-    _qSolvedWr.setFromUnitVectors(_bladeLocal, targetLocal);
+
+    // 손목 — 칼날 방향만 맞추면 칼이 축 둘레로 뒤틀린다. 칼날 면 법선까지 맞춰 축을 고정한다.
+    const qElInv = _qElbow.clone().invert();
+    const dLocal = _tmpV3.copy(Bc).normalize().applyQuaternion(qElInv).normalize();
+    const nLocal = _ikZ.copy(Nc).normalize().applyQuaternion(qElInv);
+    nLocal.addScaledVector(dLocal, -nLocal.dot(dLocal));
+    if (nLocal.lengthSq() < 1e-6) nLocal.set(1, 0, 0).addScaledVector(dLocal, -dLocal.x);
+    nLocal.normalize();
+    const tY = dLocal, tZ = nLocal, tX = new THREE.Vector3().crossVectors(tY, tZ).normalize();
+    tZ.crossVectors(tX, tY).normalize();
+    _mHand.makeBasis(tX, tY, tZ);
+    // 손(칼자루) 프레임: 칼날 = _bladeLocal, 날면 법선 = _flatLocal
+    const sY = _bladeLocal, sZ = _flatLocal.clone().addScaledVector(sY, -_flatLocal.dot(sY)).normalize();
+    const sX = new THREE.Vector3().crossVectors(sY, sZ).normalize();
+    sZ.crossVectors(sX, sY).normalize();
+    _mHandT.makeBasis(sX, sY, sZ).transpose();
+    _mHand.multiply(_mHandT);
+    _qSolvedWr.setFromRotationMatrix(_mHand);
     return { sh: _qSolvedSh, wr: _qSolvedWr, elbow: theta };
+  }
+
+  /* ===========================================================================
+     칼날 궤적 리본 — 칼이 실제로 지나간 자리를 따라 그리는 가로 호
+     =========================================================================== */
+  const TRAIL_N = 11;
+  const trailGeo = new THREE.BufferGeometry();
+  const trailPos = new Float32Array(TRAIL_N * 2 * 3);
+  const trailColA = new Float32Array(TRAIL_N * 2 * 3);
+  trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+  trailGeo.setAttribute('color', new THREE.BufferAttribute(trailColA, 3));
+  {
+    const idx = [];
+    for (let i = 0; i < TRAIL_N - 1; i++) {
+      const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+      idx.push(a, b, c, b, d, c);
+    }
+    trailGeo.setIndex(idx);
+  }
+  const trailMat = new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, opacity: 0.95,
+    blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false, side: THREE.DoubleSide
+  });
+  const trailMesh = new THREE.Mesh(trailGeo, trailMat);
+  trailMesh.frustumCulled = false;
+  trailMesh.visible = false;
+  vmScene.add(trailMesh);
+  const trailPts = [];
+  const _trailTip = new THREE.Vector3();
+  const _trailMid = new THREE.Vector3();
+  const _bladeBaseV = new THREE.Vector3();
+  const _bladeMidV = new THREE.Vector3();
+  const _bladePt = new THREE.Vector3();
+
+  function pushTrail(tip, mid, on) {
+    if (on) { trailPts.unshift({ tip: tip.clone(), mid: mid.clone() }); }
+    while (trailPts.length > TRAIL_N) trailPts.pop();
+    const n = trailPts.length;
+    trailMesh.visible = n > 2;
+    if (n < 2) return;
+    for (let i = 0; i < TRAIL_N; i++) {
+      const p = trailPts[Math.min(n - 1, i)];
+      trailPos[i * 6 + 0] = p.tip.x; trailPos[i * 6 + 1] = p.tip.y; trailPos[i * 6 + 2] = p.tip.z;
+      trailPos[i * 6 + 3] = p.mid.x; trailPos[i * 6 + 4] = p.mid.y; trailPos[i * 6 + 5] = p.mid.z;
+      const k = i < n ? Math.pow(1 - i / Math.max(1, TRAIL_N - 1), 1.7) : 0;
+      trailColA[i * 6 + 0] = 0.20 * k; trailColA[i * 6 + 1] = 0.34 * k; trailColA[i * 6 + 2] = 0.50 * k;
+      trailColA[i * 6 + 3] = 0.06 * k; trailColA[i * 6 + 4] = 0.14 * k; trailColA[i * 6 + 5] = 0.26 * k;
+    }
+    trailGeo.attributes.position.needsUpdate = true;
+    trailGeo.attributes.color.needsUpdate = true;
   }
 
   let vmEb = 0.5;
   let vmGuard = 0;
-  let vmMeshes = 0;
-  vm.traverse((o) => { if (o.isMesh) { vmMeshes++; o.name = 'vm-' + (o.geometry ? o.geometry.type : 'mesh'); } });
+  let vmMeshes = 0;  vm.traverse((o) => { if (o.isMesh) { vmMeshes++; o.name = 'vm-' + (o.geometry ? o.geometry.type : 'mesh'); } });
   const _eSh = new THREE.Euler(0, 0, 0, 'YXZ');
   const _eWr = new THREE.Euler(0, 0, 0, 'YXZ');
   let vmRootX = ARM.root.x, vmRootY = ARM.root.y, vmRootZ = ARM.root.z;
@@ -2303,34 +2440,35 @@ function create(opts) {
     const gTarget = pl.guard ? 1 : 0;
     vmGuard = damp(vmGuard, gTarget, dt, 60);
 
-    /* --- 검 궤적: 예비 → 내려치기 → 팔로우스루 → 복귀 --- */
-    const sw = pl.swipe || { sx: 0.7, sy: 0.72 };
+    /* --- 검 궤적: 예비동작 → 가로 횡베기(적을 관통) → 팔로우스루 → 회수 --- */
+    const sw = pl.swipe || { sx: -1, sy: 0.16 };
     const dx = clamp(sw.sx, -1, 1), dy = clamp(sw.sy, -1, 1);
-    const p = pl.atkAnim > 0 ? 1 - clamp(pl.atkAnim / ATK_DUR, 0, 1) : 0;
-    sampleKeys(p);
-
-    // 스와이프 방향을 살짝 반영 (수평으로 그으면 더 옆으로, 수직이면 더 아래로)
-    _kW.x += dx * 0.16 * Math.sin(Math.PI * clamp(p, 0, 1));
-    _kW.y -= dy * 0.06 * Math.sin(Math.PI * clamp(p, 0, 1));
-    _kB.x -= dx * 0.16;
-    _kB.y -= dy * 0.1;
-    _kB.normalize();
+    const u = pl.atkAnim > 0 ? 1 - clamp(pl.atkAnim / ATK_DUR, 0, 1) : 0;
+    const keys = dx >= 0 ? VM_SWING_KEYS.right : VM_SWING_KEYS.left;
+    const p = swingPhase(u);
+    samplePose(keys, p);
+    // 스와이프의 세로 성분은 살짝만 — 아래로 그으면 검끝이 조금 더 내려간다
+    const swayK = Math.sin(Math.PI * clamp(u, 0, 1));
+    _kW.y -= dy * 0.07 * swayK;
+    _kW.x -= dx * 0.03 * swayK * (u < 0.3 ? 1 : -0.5);
 
     // 막기 자세로 부드럽게 섞는다 (같은 IK 로 풀어서 어색한 각이 없다)
     _gW.set(GUARD_POSE.w[0], GUARD_POSE.w[1], GUARD_POSE.w[2]);
     _gB.set(GUARD_POSE.b[0], GUARD_POSE.b[1], GUARD_POSE.b[2]).normalize();
+    _gN.set(GUARD_POSE.n[0], GUARD_POSE.n[1], GUARD_POSE.n[2]);
     if (vmGuard > 0.001) {
       _kW.lerp(_gW, vmGuard);
       _kB.lerp(_gB, vmGuard).normalize();
+      _kN.lerp(_gN, vmGuard).normalize();
     }
 
     // IK 풀이 → 관절 쿼터니언 (관성 있게 따라가도록 slerp)
-    const sol = solveArm(_kW, _kB);
-    _qShoulder.slerp(sol.sh, 1 - Math.exp(-Math.max(1, dt) / 32));
-    _qWrist.slerp(sol.wr, 1 - Math.exp(-Math.max(1, dt) / 26));
+    const sol = solveArm(_kW, _kB, _kN);
+    _qShoulder.slerp(sol.sh, 1 - Math.exp(-Math.max(1, dt) / 24));
+    _qWrist.slerp(sol.wr, 1 - Math.exp(-Math.max(1, dt) / 20));
     shoulderPivot.quaternion.copy(_qShoulder);
     wristPivot.quaternion.copy(_qWrist);
-    vmEb = damp(vmEb, sol.elbow, dt, 26);
+    vmEb = damp(vmEb, sol.elbow, dt, 22);
     elbowPivot.rotation.set(vmEb, 0, 0);
 
     // 막기 충격 — 검을 받아내면 팔이 뒤로 밀리고 섬광이 터진다
@@ -2350,7 +2488,7 @@ function create(opts) {
     lastIkGuard = vmGuard;
 
     // 자세 기록 (검증용)
-    vmState.phase = p; vmState.dx = dx; vmState.dy = dy;
+    vmState.phase = u; vmState.poseP = p; vmState.dx = dx; vmState.dy = dy;
     _eSh.setFromQuaternion(shoulderPivot.quaternion, 'YXZ');
     _eWr.setFromQuaternion(wristPivot.quaternion, 'YXZ');
     vmState.sx = _eSh.x; vmState.sy = _eSh.y; vmState.sz = _eSh.z;
@@ -2369,13 +2507,29 @@ function create(opts) {
     vmState.targetB = { x: _kB.x, y: _kB.y, z: _kB.z };
     wristPivot.getWorldPosition(_tipP);
     vmState.wristWorld = { x: _tipP.x, y: _tipP.y, z: _tipP.z };
+
+    // 칼날의 세 지점(밑동·중간·끝) 화면 좌표 — 검끝이 적 몸통을 지나는지 검증용
+    sword.localToWorld(_bladeBaseV.set(0, 0.22, 0));
+    sword.localToWorld(_bladeMidV.set(0, 2.16, 0));  // 검끝 바로 안쪽 — 궤적 리본의 폭
+    vmState.bladeBase = { x: _bladeBaseV.x, y: _bladeBaseV.y, z: _bladeBaseV.z };
+    for (let i = 0; i < 3; i++) {
+      _bladePt.copy(_bladeBaseV).lerp(_tipV, i * 0.5).project(vmCam);
+      const bp = vmState.bladeScreen[i];
+      bp[0] = _bladePt.x * 0.5 + 0.5;
+      bp[1] = -_bladePt.y * 0.5 + 0.5;
+    }
+
+    // 칼날 궤적 리본 — 베는 동안 칼이 지나간 자리를 따라 그린다
+    const swinging = pl.atkAnim > 0;
+    pushTrail(_tipV, _bladeMidV, swinging && p > 0.19 && p < 0.80);
   }
 
   const vmState = {
-    phase: 0, dx: 0, dy: 0,
+    phase: 0, poseP: 0, dx: 0, dy: 0,
     px: 0.98, py: -1.34, pz: -4.8,
     sx: 0, sy: 0, sz: 0, wx: 0, wy: 0, wz: 0, eb: 0.5,
-    tipX: 0.5, tipY: 0.5, tipZ: 0, tipWorld: { x: 0, y: 0, z: 0 }
+    tipX: 0.5, tipY: 0.5, tipZ: 0, tipWorld: { x: 0, y: 0, z: 0 }, guardBase: { x: 0, y: 0, z: 0 },
+    bladeBase: { x: 0, y: 0, z: 0 }, bladeScreen: [[0.5, 0.5], [0.5, 0.5], [0.5, 0.5]]
   };
   let vmBob = 0;
 
@@ -2656,6 +2810,11 @@ function create(opts) {
           viewmodelGuard: vmGuard,
           shield: false,
           swordPhase: vmState.phase,
+          poseP: vmState.poseP,
+          swingSign: vmState.dx >= 0 ? 1 : -1,
+          trail: trailPts.length,
+          bladeBase: vmState.bladeBase,
+          bladeScreen: vmState.bladeScreen.map((p) => ({ x: p[0], y: p[1] })),
           slashDir: { x: vmState.dx, y: vmState.dy },
           atkDur: ATK_DUR,
           sword: {

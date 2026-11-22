@@ -20,17 +20,20 @@
   var PLAYER_R = 11;
   var SLASH_RANGE = 66;
   var SLASH_ARC = 1.3;      // 좌우 ±1.3rad
-  var SLASH_CD = 330;
+  var SLASH_CD = 360;
   var SLASH_DMG = 9999;     // 한 방에 죽는다 (적 체력바·피 없음)
   var DASH_MS = 190;
   var DASH_SPEED = 470;
   var DASH_CD = 1500;
   var DASH_DMG = 9999;
-  var SLASH_ANIM = 460;     // 1인칭 검 궤적 ms (예비동작 → 대각선 내려치기 → 매끈한 복귀)
+  var SLASH_ANIM = 480;     // 1인칭 검 궤적 ms (예비동작 → 가로 횡베기 → 팔로우스루 → 복귀)
+  var SLASH_HIT_P = 0.489;   // 검끝이 적 몸통을 지나가는 지점 (궤적의 45%) — 이 순간에 절단
+  var SLASH_HIT_AT = SLASH_ANIM * SLASH_HIT_P;  // 베기 시작 후 절단·스파크가 터지는 시각(ms)
   var SWIPE_MS = 250;       // 오른쪽 화면 빠른 스와이프 판정 시간
   var SWIPE_MIN = 36;       // 스와이프 최소 거리(px)
   var SWIPE_VEL = 0.22;     // 스와이프 최소 속도(px/ms)
-  var SWIPE_DEFAULT = { sx: 0.7, sy: 0.72 };   // 버튼 베기의 기본 대각선(오른쪽 아래)
+  var SWIPE_DEFAULT = { sx: -0.985, sy: 0.16 };  // 버튼 베기의 기본: 오른쪽 → 왼쪽 가로 횡베기
+  var COMBO_MS = 780;       // 이 안에 이어서 베면 좌↔우를 번갈아 가로지른다 (1타 우→좌 · 2타 좌→우)
   var GUARD_MUL = 0;          // 꾹 누르고 있는 동안은 100% 막는다 (데미지 0)
   var PARRY_MS = 260;
 
@@ -207,6 +210,9 @@
       comboT: 0,
       hitstop: 0,
       shake: 0,
+      pending: null,          // 칼날이 적을 지나가는 순간 터질 베기 판정
+      nextSweep: -1,          // 다음 타의 횡베기 방향 (1: 좌→우, -1: 우→좌)
+      lastSlashAt: -9e9,
       spawnTimer: 900,
       enemySpawned: 0,
       enemyTotal: Math.max(1, cfg.enemyCount || 8),
@@ -882,22 +888,59 @@
     if (!S || S.ended || S.down > 0) return;
     var pl = S.player;
     if (!pl || pl.atkCd > 0 || pl.dash > 0) return;
-    var dir = normSwipe(swipe);
+    var dir = slashDir(swipe);
     var slice = sliceAngles(dir, pl.face);
     pl.atkCd = SLASH_CD;
     pl.atkAnim = SLASH_ANIM;
     pl.swipe = dir;
+    pl.hitDone = false;
     S.lastSwipe = dir;
     S.lastSlice = slice;
+    // 칼날이 적 몸통을 지나가는 순간(궤적 45%)에 베는 판정 — 미리 죽지 않는다
+    S.pending = { dir: dir, slice: slice, face: pl.face, at: SLASH_HIT_AT };
 
     S.slashes.push({
-      x: pl.x, y: pl.y, face: pl.face, t: 0, dur: 240, r: SLASH_RANGE,
-      cut: slice.cut, tilt: slice.tilt, sx: dir.sx, sy: dir.sy
+      x: pl.x, y: pl.y, face: pl.face, t: 0, dur: 400, r: SLASH_RANGE,
+      cut: slice.cut, tilt: slice.tilt, sx: dir.sx, sy: dir.sy,
+      hitAt: SLASH_HIT_AT / SLASH_ANIM
     });
     sfx('swing');
+  }
 
-    var hits = 0;
-    // 뒤에서부터 — 죽은 적을 지우면서 순회한다 (한 번에 여러 명을 베어도 빠지지 않게)
+  /**
+   * 이번 베기가 어느 쪽으로 가로지를지 정한다.
+   *  - 버튼 베기: 오른쪽→왼쪽, 왼쪽→오른쪽, 오른쪽→왼쪽 … 번갈아 (3연타 횡베기)
+   *  - 스와이프 베기: 그은 방향 그대로 (가로 성분이 주인공, 세로 성분은 살짝 기울기)
+   */
+  function slashDir(swipe) {
+    var explicit = !!(swipe && isFinite(swipe.sx) && isFinite(swipe.sy));
+    var chainLive = S.time - (S.lastSlashAt || -9e9) <= COMBO_MS;
+    var next = chainLive && S.nextSweep ? S.nextSweep : -1;   // 기본 1타는 오른쪽 → 왼쪽
+    var dir = null;
+    if (explicit) {
+      var n = normSwipe(swipe);
+      if (Math.abs(n.sx) >= 0.3) {
+        dir = { sx: n.sx >= 0 ? 0.985 : -0.985, sy: clamp(n.sy, -0.6, 0.6) };
+      } else {
+        // 세로로 그은 스와이프도 검이 가로로 지나간다 — 다음 차례 방향 + 그은 세로 기울기
+        dir = { sx: next * 0.93, sy: clamp(n.sy, -0.6, 0.6) };
+      }
+    } else {
+      dir = { sx: next * 0.985, sy: SWIPE_DEFAULT.sy };
+    }
+    S.nextSweep = dir.sx > 0 ? -1 : 1;      // 다음 타는 반대쪽으로
+    S.lastSlashAt = S.time;
+    return dir;
+  }
+
+  /** 칼이 실제로 적을 지나가는 순간에 판정 — 스파크·절단·히트스톱이 한 박자로 터진다 */
+  function resolveSlashHit(pd) {
+    var pl = S.player;
+    if (!pl) return;
+    var slice = pd.slice, dir = pd.dir;
+    // 가로 횡베기: 몸이 칼이 지나간 쪽(화면 기준 좌/우)으로 밀린다
+    var pushAng = normAngle(pd.face + (dir.sx < 0 ? -Math.PI / 2 : Math.PI / 2));
+    var hits = 0, hx = 0, hy = 0;
     for (var i = S.enemies.length - 1; i >= 0; i--) {
       var en = S.enemies[i];
       if (en.dead) continue;
@@ -905,16 +948,34 @@
       var dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > SLASH_RANGE + en.r) continue;
       var a = Math.atan2(dy, dx);
-      if (Math.abs(angDiff(a, pl.face)) > SLASH_ARC) continue;
-      hurtEnemy(en, SLASH_DMG, a, 30, slice.cut, slice.tilt);
-      hits++;
+      if (Math.abs(angDiff(a, pd.face)) > SLASH_ARC) continue;
+      hx += en.x; hy += en.y; hits++;
+      hurtEnemy(en, SLASH_DMG, pushAng, 34, slice.cut, slice.tilt);
     }
     if (hits > 0) {
-      S.hitstop = Math.max(S.hitstop, 55);
+      S.hitstop = Math.max(S.hitstop, 62);
       S.lastImpactAt = S.time;
-      S.shake = Math.max(S.shake, 3.2);
-      spawnSparks(pl.x + Math.cos(pl.face) * 30, pl.y + Math.sin(pl.face) * 30, 8);
+      S.shake = Math.max(S.shake, 4.2);
+      hx /= hits; hy /= hits;
+      spawnSparks(hx, hy, 9);
       sfx('hit');
+    }
+  }
+
+  /** 검 궤적이 적을 지나가는 순간에 맞춘다 (히트스톱 중에도 진행) */
+  function stepSlashHit() {
+    var pl = S.player;
+    if (!S.pending || !pl) return;
+    if (pl.atkAnim <= 0 || pl.hitDone) {
+      // 궤적이 끝났는데 아직이면 마지막에 처리 (놓치지 않는다)
+      if (!pl.hitDone) { pl.hitDone = true; resolveSlashHit(S.pending); }
+      S.pending = null;
+      return;
+    }
+    if (SLASH_ANIM - pl.atkAnim >= S.pending.at) {
+      pl.hitDone = true;
+      resolveSlashHit(S.pending);
+      S.pending = null;
     }
   }
 
@@ -929,14 +990,15 @@
 
   /**
    * 스와이프 방향 → 3D 절단면 (cut 수평 방위각 + tilt 기울기)
-   *  - 수직(↓) 스와이프: tilt 0 → 세로로 두 동강
-   *  - 대각선(↘): tilt ±45° → 대각선으로 두 동강
-   *  - 수평(→): tilt ±90° → 허리 높이로 수평 두 동강
+   *  - 가로 횡베기: 절단면이 수평에 가까운 얕은 대각선 → 몸이 위·아래 두 동강
+   *  - 오른쪽→왼쪽(tilt 음)/왼쪽→오른쪽(tilt 양)으로 칼날이 지나간 쪽을 그대로 따른다
+   *  - 세로로 그은 스와이프는 그 만큼 절단면이 더 기운다
    */
   function sliceAngles(dir, face) {
     var sx = clamp(dir.sx, -1, 1), sy = clamp(dir.sy, -1, 1);
     var cut = sy >= 0 ? face : normAngle(face + Math.PI);
-    var tilt = Math.asin(sx);
+    var mag = 1.34 - 0.30 * Math.abs(sy);          // 1.04~1.34rad (60~77°) — 수평~얕은 대각선
+    var tilt = (sx >= 0 ? 1 : -1) * mag;
     return { cut: cut, tilt: tilt, sx: sx, sy: sy };
   }
 
@@ -947,6 +1009,8 @@
     pl.dash = DASH_MS;
     pl.dashCd = DASH_CD;
     pl.atkAnim = 0;
+    pl.hitDone = true;
+    S.pending = null;
     resetDashHits();
     S.trails.push({ x: pl.x, y: pl.y, t: 0, dur: 240, face: pl.dashDir });
     sfx('dash');
@@ -1005,8 +1069,11 @@
     var col = hexA((S.cfg.enemy && S.cfg.enemy.color) || '#ef4444', 0.95);
     var nx = Math.cos(cut), ny = Math.sin(cut);
     var px = -ny, py = nx;                     // 칼날에 수직인 방향
+    // 가로 횡베기(수평에 가까울수록)는 두 조각이 위·아래로 갈라져 떨어지고,
+    // 좌우로는 칼이 지나간 만큼만 살짝 밀린다 (세로 베기일 때가 가장 크게 벌어진다)
+    var flat = Math.abs(Math.cos(tilt));
     for (var side = -1; side <= 1; side += 2) {
-      var push = 42 + Math.random() * 54;
+      var push = (8 + Math.random() * 16) + flat * (36 + Math.random() * 46);
       S.corpses.push({
         x: en.x + px * side * 2.6,
         y: en.y + py * side * 2.6,
@@ -1184,6 +1251,7 @@
     if (pl.atkCd > 0) pl.atkCd -= dt;
     if (pl.atkAnim > 0) pl.atkAnim -= dt;
     if (pl.atkAnim < 0) pl.atkAnim = 0;
+    stepSlashHit();
     if (pl.dashCd > 0) pl.dashCd -= dt;
     if (pl.hit > 0) pl.hit -= dt;
     if (pl.guard) pl.guardT += dt;
@@ -1220,6 +1288,7 @@
       pl.y = H * 0.2;
     }
     pl.atkCd = 0; pl.dash = 0; pl.dashCd = 0; pl.guard = false;
+    pl.hitDone = true; S.pending = null;
     S.respawns++;
     S.invuln = 1400;
     if (el.down) el.down.classList.add('hidden');

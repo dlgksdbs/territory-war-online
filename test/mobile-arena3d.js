@@ -4,8 +4,8 @@
    - 390×844 세로(portrait) 터치 뷰포트 + SwiftShader WebGL
    - 1부: 서버 참전 흐름 — 3D 아레나 진입 / 1인칭 눈높이 / 조이스틱은 시점을 돌리지 않음
    - 2부: 결정적 1인칭 검증 — 방패 없는 오른손 검 뷰모델, 검을 옆으로 가로지른 막기,
-           대각선 내려치기 → 위로 복귀 모션, 한 방에 죽고 체력바·피 없음,
-           대각선 3D 두 동강(절단면 기울기), 오른쪽 빠른 스와이프 베기
+           오른쪽→왼쪽 / 왼쪽→오른쪽 가로 횡베기(칼날이 적을 관통한 뒤 팔로우스루),
+           칼이 지나가는 순간에 절단·스파크(히트스톱), 수평에 가까운 3D 두 동강, 빠른 스와이프 베기
    - 3부: 홈 화면 적군/아군 병사 수(각 최대 1000) → 그 수 그대로 대형 전장 시작
    - 4부: Three.js/WebGL 이 없을 때 2D 자동 폴백
    - 콘솔/페이지 오류 0, 스크린샷 -> screenshots/
@@ -184,6 +184,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     region: { name: '송천' }, target: { name: '바람', troops: 4 }
   }, {}));
   await frames(4);
+  await page.evaluate(() => { const st = window.TWArena.state(); if (st) st.timeLimit = 9e9; });
   await sleep(200);
   ok('3D 아레나 직접 개시 (결정적 검증용)', opened === true && await page.evaluate(() => !!window.TWArena.state()));
 
@@ -365,8 +366,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     { hpBars: slash.hpBars, dmgNums: slash.playerDmgFloat, colors: slash.particles.slice(0, 6) });
   ok('조각의 절단각이 플레이어 시점(0rad)과 같다',
     slash.pieces.every((p) => Math.abs(p.cut) < 0.001), slash.pieces.map((p) => p.cut));
-  ok('기본 베기는 대각선(≈0.77rad)으로 잘린다 (수직一刀가 아님)',
-    slash.pieces.every((p) => Math.abs(p.tilt - 0.77) < 0.06),
+  ok('기본 베기는 가로 횡베기 — 절단면이 수평에 가까운 얕은 대각선(±1.1~1.4rad)',
+    slash.pieces.every((p) => p.tilt < -1.05 && p.tilt > -1.45),
     { tilt: slash.pieces.map((p) => +p.tilt.toFixed(3)), slice: slash.lastSlice && +slash.lastSlice.tilt.toFixed(3) });
   ok('3D 절단면이 칼날을 포함하고 · 법선이 위아래로 기운다 (대각선 절단면)',
     slash.pieces.every((p) => Math.abs(p.localN.nx) < 0.001) &&
@@ -430,20 +431,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.mouse.down();
   await sleep(60);
   await page.mouse.up();
-  await more(2);
+  // 손을 떼자마자: 베기는 시작했지만 칼날이 아직 닿기 전 — 적은 그대로
+  const justAfter = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return {
+      kills: st.kills, enemies: st.enemies.length, pending: !!st.pending,
+      atk: Math.round(st.player.atkAnim), face: st.player.face, swing: st.player.swipe
+    };
+  });
+  ok('칼이 닿기 전에는 적이 아직 서 있다 (판정이 칼날 통과 순간으로 미뤄진다)',
+    justAfter.kills === tapSetup.kills && justAfter.enemies === 1 && justAfter.pending === true && justAfter.atk > 300,
+    justAfter);
+  await waitPieces(2);
   const tapped = await page.evaluate(() => {
     const st = window.TWArena.state();
     return { kills: st.kills, slashes: st.slashes.length, face: st.player.face };
   });
-  ok('오른쪽 화면 짧은 탭 → 베기 (시점은 그대로)',
+  ok('오른쪽 화면 짧은 탭 → 칼이 지나가며 적이 베인다 (시점은 그대로)',
     tapped.kills > tapSetup.kills && Math.abs(tapped.face - tapSetup.face) < 0.02, tapped);
 
-  /* --- 1인칭 검 궤적: 위로 치켜들기 → 대각선 내려치기 → 위로 매끄러운 복귀 --- */
+  /* --- 1인칭 검 궤적: 오른쪽으로 치켜들기 → 가로 횡베기(적을 관통) → 왼쪽 끝 → 회수 --- */
   await page.evaluate(() => {
     const st = window.TWArena.state();
     st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
     st.player.atkAnim = 0; st.player.atkCd = 0; st.player.dash = 0;
-    st.player.swipe = { sx: 0.7, sy: 0.72 };
+    st.player.swipe = { sx: -0.985, sy: 0.16 };
     document.getElementById('arDown').classList.add('hidden');
   });
   await more(2);
@@ -452,17 +464,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const sweep = await page.evaluate(async () => {
     const st = window.TWArena.state();
     const out = [];
+    const dur = st.r3d.info().fp.atkDur;
     for (let i = 0; i <= 16; i++) {
       const pv = i / 16;
-      const v = 460 * (1 - pv);
+      const v = dur * (1 - pv);
       Object.defineProperty(st.player, 'atkAnim', { configurable: true, get() { return v; }, set() {} });
-      st.player.atkCd = 9e9; st.player.swipe = { sx: 0.7, sy: 0.72 };
+      st.player.atkCd = 9e9; st.player.swipe = { sx: -0.985, sy: 0.16 };
       for (let k = 0; k < 4; k++) await new Promise((r) => requestAnimationFrame(() => r()));
       const i2 = st.r3d.info().fp;
-      out.push({ p: +pv.toFixed(3), x: +i2.tip.nx.toFixed(3), y: +i2.tip.ny.toFixed(3), q: i2.quat, eb: +i2.elbow.toFixed(3), z: +i2.tip.nz.toFixed(3) });
+      out.push({ p: +pv.toFixed(3), x: +i2.tip.nx.toFixed(3), y: +i2.tip.ny.toFixed(3), q: i2.quat, eb: +i2.elbow.toFixed(3), z: +i2.tip.nz.toFixed(3), bs: i2.bladeScreen });
     }
     delete st.player.atkAnim;
     st.player.atkAnim = 0;
+    st.player.swipe = { sx: -0.985, sy: 0.16 };
     return out;
   });
   const qAng = (a, b) => {
@@ -476,12 +490,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const maxStep = Math.max.apply(null, steps);
   const xs = sweep.map((r2) => r2.x);
   const spread = Math.max.apply(null, xs) - Math.min.apply(null, xs);
+  const iMaxX = xs.indexOf(Math.max.apply(null, xs));
+  const iMinX = xs.indexOf(Math.min.apply(null, xs));
   const shMax = Math.max.apply(null, sweep.slice(1).map((r2, i) => qAng(r2.q.sh, sweep[i].q.sh)));
   const wrMax = Math.max.apply(null, sweep.slice(1).map((r2, i) => qAng(r2.q.wr, sweep[i].q.wr)));
-  ok('검 모션 1 — 검끝이 화면 오른쪽에서 왼쪽으로 크게 가로지른다 (폭 0.45 이상)',
-    spread > 0.45, { spread: +spread.toFixed(2), xs: xs.map((v) => +v.toFixed(2)) });
-  ok('검 모션 2 — 매 프레임 이동이 매끄럽다 (화면 폭의 40% 이내 · 순간이동 없음)',
-    maxStep < 0.4, { maxStep: +maxStep.toFixed(3) });
+  ok('검 모션 1 — 1타는 오른쪽으로 치켜든 뒤 왼쪽 끝까지 가로지른다 (폭 0.45 이상)',
+    spread > 0.45 && iMaxX < iMinX && Math.max.apply(null, xs) > 0.75 && Math.min.apply(null, xs) < 0.15,
+    { spread: +spread.toFixed(2), rightAt: iMaxX, leftAt: iMinX, xs: xs.map((v) => +v.toFixed(2)) });
+  ok('검 모션 2 — 매 프레임 이동이 매끄럽다 (화면 폭의 42% 이내 · 순간이동 없음)',
+    maxStep < 0.42, { maxStep: +maxStep.toFixed(3) });
   ok('검 모션 3 — 어깨·손목 회전이 한 번에 45° 넘게 튀지 않는다 (짐벌락/축 뒤집힘 없음)',
     shMax < 45 && wrMax < 45, { shoulderStep: +shMax.toFixed(1), wristStep: +wrMax.toFixed(1) });
   ok('검 모션 4 — 내려치는 동안 검끝이 화면 가운데를 스친다 (1인칭 시야를 가로지름)',
@@ -491,6 +508,58 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     Math.abs(sweep[sweep.length - 1].x - sweep[0].x) < 0.02 &&
     Math.abs(sweep[sweep.length - 1].y - sweep[0].y) < 0.02,
     { start: [sweep[0].x, sweep[0].y], end: [sweep[sweep.length - 1].x, sweep[sweep.length - 1].y] });
+  ok('칼이 적을 썰고 지나간다 — 칼날 중간이 적 몸통(화면 가운데)을 지나간다',
+    sweep.some((r2) => r2.bs.some((b) => b.x > 0.42 && b.x < 0.58 && b.y > 0.38 && b.y < 0.86)),
+    sweep.filter((r2) => r2.bs.some((b) => b.x > 0.42 && b.x < 0.58)).map((r2) => r2.bs.map((b) => [+b.x.toFixed(2), +b.y.toFixed(2)])));
+  ok('칼이 적을 썰고 지나간다 — 적을 지난 뒤에도 멈추지 않고 왼쪽 끝까지 팔로우스루',
+    sweep.some((r2) => r2.bs.some((b) => b.x < 0.15 && b.y > 0.45 && b.y < 0.95)),
+    sweep.filter((r2) => r2.bs.some((b) => b.x < 0.15)).length);
+
+  /* --- 2타·3타: 누를 때마다 왼쪽 ↔ 오른쪽으로 번갈아 가로지른다 --- */
+  const comboHits = [];
+  for (const n of [2, 3]) {
+    const before = await page.evaluate(() => {
+      const st = window.TWArena.state();
+      if (!st || !st.r3d) return { closed: true, open: window.TWArena.isOpen() };
+      const was = { ended: st.ended, endReason: st.endReason, elapsed: Math.round(st.elapsed), limit: st.timeLimit, time: Math.round(st.time) };
+      st.enemies.length = 0; st.corpses.length = 0; st.cuts.length = 0; st.slashes.length = 0;
+      st.enemySpawned = 0; st.spawnTimer = 9e9; st.winAt = 0;
+      st.player.x = 150; st.player.y = 340; st.player.face = Math.PI / 2; st.player.pitch = 0;
+      st.player.atkCd = 0; st.player.dash = 0; st.player.atkAnim = 0;
+      st.lastSlashAt = st.time;                 // 연속 베기 중
+      document.getElementById('arDown').classList.add('hidden');
+      st.enemies.push({
+        team: 'enemy', x: 150, y: 340 + 40, r: 8.4, hp: 76, maxHp: 76, speed: 0.0001,
+        face: -Math.PI / 2, cd: 99999, wind: 0, swing: 0, hit: 0, stun: 9e9, dead: false, dashHit: false, wob: 0
+      });
+      return { kills: st.kills, nextSweep: st.nextSweep, was: was };
+    });
+    if (before.closed) { ok('아레나가 계속 열려 있다 (연속 베기 검증)', false, before); break; }
+    await page.click('#arSlash');
+    await waitPieces(2);
+    const hit = await page.evaluate(() => {
+      const st = window.TWArena.state();
+      const i = st.r3d.info().fp;
+      return {
+        kills: st.kills, swing: st.player.swipe, slice: st.lastSlice, sign: i.swingSign,
+        pieces: st.r3d.piecesInfo()
+      };
+    });
+    hit.n = n; hit.before = before;
+    comboHits.push(hit);
+  }
+  ok('2타는 왼쪽 → 오른쪽 역횡베기로 나간다 (절단면도 반대쪽으로 기운다)',
+    comboHits[0].swing.sx > 0.9 && comboHits[0].slice.tilt > 1.05 &&
+    comboHits[0].pieces.length === 2 && comboHits[0].pieces.every((p) => p.tilt > 1.05),
+    { swipe: comboHits[0].swing, tilt: comboHits[0].pieces.map((p) => +p.tilt.toFixed(2)) });
+  ok('3타는 다시 오른쪽 → 왼쪽 횡베기로 돌아온다',
+    comboHits[1].swing.sx < -0.9 && comboHits[1].slice.tilt < -1.05 &&
+    comboHits[1].pieces.every((p) => p.tilt < -1.05),
+    { swipe: comboHits[1].swing, tilt: comboHits[1].pieces.map((p) => +p.tilt.toFixed(2)) });
+  ok('연속 베기는 누를 때마다 좌↔우가 번갈아 나간다 (궤적 방향도 바뀐다)',
+    comboHits[0].sign === 1 && comboHits[1].sign === -1,
+    comboHits.map((h) => ({ n: h.n, sign: h.sign, sx: +h.swing.sx.toFixed(2) })));
+  await waitNoPieces();
 
   /* --- 오른쪽 화면 빠른 스와이프(↘) = 그 방향으로 베기 --- */
   const swipeSetup = await page.evaluate(() => {
@@ -537,12 +606,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     sw.sx > 0.5 && sw.sy > 0.5 && Math.abs(swiped.slashDir.x - sw.sx) < 0.001 &&
     Math.abs(swiped.slashDir.y - sw.sy) < 0.001,
     { swipe: [sw.sx, sw.sy], view: swiped.slashDir });
-  ok('스와이프 각도 그대로 3D 두 조각 — 절단면 기울기 = asin(스와이프 x)',
+  ok('스와이프 각도 그대로 3D 두 조각 — 절단면 기울기 = 횡베기 각도',
     swiped.pieces.every((p) => Math.abs(p.cut - swiped.lastSlice.cut) < 0.001) &&
-    swiped.pieces.every((p) => Math.abs(p.tilt - Math.asin(sw.sx)) < 0.02),
+    swiped.pieces.every((p) => Math.abs(p.tilt - swiped.lastSlice.tilt) < 0.001) &&
+    swiped.pieces.every((p) => p.tilt > 0.95 && p.tilt < 1.45),
     {
       cut: swiped.pieces.map((p) => +p.cut.toFixed(3)), sliceCut: +swiped.lastSlice.cut.toFixed(3),
-      tilt: swiped.pieces.map((p) => +p.tilt.toFixed(3)), want: +Math.asin(sw.sx).toFixed(3)
+      tilt: swiped.pieces.map((p) => +p.tilt.toFixed(3))
     });
   await shot('27-fp-swipe-slash.png');
   await waitNoPieces();
@@ -842,6 +912,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const bigOpen = await page.waitForFunction(() => window.TWArena && window.TWArena.isOpen(), { timeout: 25000 })
     .then(() => true).catch(() => false);
   ok('버튼 한 번으로 지도 없이 대규모 3D 전장이 바로 열린다', bigOpen);
+  await page.evaluate(() => { const st = window.TWArena.state(); if (st) st.timeLimit = 9e9; });
   if (!bigOpen) {
     ok('대형 전장 크기 · 병사 수', false, 'arena open 실패');
   } else {

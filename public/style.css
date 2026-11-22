@@ -944,7 +944,7 @@ body {
 .lobby-card .ghost { margin-top: 9px; }
 
 /* ---------- 턴 표시 · 연결 ---------- */
-#turnBanner {
+#liveBanner {
   position: absolute;
   left: 50%;
   top: 8px;
@@ -971,28 +971,28 @@ body {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
-#turnBanner.show { opacity: 1; transform: translate(-50%, 0); }
-#turnBanner.mine {
+#liveBanner.show { opacity: 1; transform: translate(-50%, 0); }
+#liveBanner.mine {
   border-color: rgba(96, 165, 250, 0.65);
   background: linear-gradient(180deg, rgba(37, 99, 235, 0.35), rgba(8, 13, 23, 0.92));
   color: #eaf3ff;
   box-shadow: 0 0 24px -6px rgba(37, 99, 235, 0.55);
 }
-#turnBanner b { color: #fff; }
-#turnBanner .sp {
+#liveBanner b { color: #fff; }
+#liveBanner .sp {
   display: inline-flex;
   gap: 2.5px;
   align-items: center;
 }
-#turnBanner .sp i {
+#liveBanner .sp i {
   width: 3.5px;
   height: 3.5px;
   border-radius: 50%;
   background: currentColor;
   animation: spdot 1.1s ease-in-out infinite;
 }
-#turnBanner .sp i:nth-child(2) { animation-delay: 0.15s; }
-#turnBanner .sp i:nth-child(3) { animation-delay: 0.3s; }
+#liveBanner .sp i:nth-child(2) { animation-delay: 0.15s; }
+#liveBanner .sp i:nth-child(3) { animation-delay: 0.3s; }
 @keyframes spdot { 0%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
 
 #netBar {
@@ -1040,6 +1040,19 @@ body {
   cursor: pointer;
 }
 #btnLog:active { background: rgba(255, 255, 255, 0.1); }
+#btnMenu2 {
+  flex: 0 0 72px;
+  padding: 12px 2px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.035);
+  color: #9fb2ce;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+#btnMenu2:active { background: rgba(255, 255, 255, 0.1); }
 #btnDiplo { flex: 1 1 0; }
 #btnEnd { flex: 1.25 1 0; }
 
@@ -1339,3 +1352,182 @@ body {
   width: 1px;
   background: rgba(226, 236, 255, 0.22);
 }
+
+/* ==========================================================================
+   실시간 · AI 시뮬레이션 UI
+   ========================================================================== */
+#bar #ratioRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ratio-k {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #8fa3c2;
+  white-space: nowrap;
+}
+.ratio-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 2px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.035);
+  color: #9fb2ce;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.ratio-btn.on {
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.85), rgba(30, 58, 138, 0.85));
+  border-color: #60a5fa;
+  color: #fff;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+}
+.speed-btn { font-size: 11px; letter-spacing: -0.02em; }
+.speed-btn.hidden { display: none; }
+
+.delegate-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: 10px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.38);
+  color: #fde68a;
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+.delegate-bar span { flex: 1 1 auto; min-width: 0; }
+.delegate-bar button {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.2);
+  color: #fff3cf;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.delegate-bar.hidden { display: none; }
+
+.spectate-bar {
+  position: static;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border-radius: 14px;
+  background: rgba(8, 13, 23, 0.94);
+  border: 1px solid rgba(140, 180, 255, 0.28);
+  box-shadow: 0 10px 22px -18px #000;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+.spectate-bar.hidden { display: none; }
+.sp-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: #9fb2ce;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-title b { color: #eaf2ff; }
+.sp-nations {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+.sp-nation {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 8px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cfe0ff;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+  min-width: 0;
+}
+.sp-nation .sp-nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-nation .sp-n { color: #93a3bd; font-variant-numeric: tabular-nums; font-size: 10.5px; }
+.sp-nation.on {
+  border-color: #93c5fd;
+  background: rgba(59, 130, 246, 0.28);
+  color: #fff;
+}
+.spectate-bar .primary { padding: 10px; font-size: 13px; }
+.spectate-bar .primary:disabled { opacity: 0.4; }
+
+.primary.sim {
+  margin-top: 8px;
+  background: linear-gradient(180deg, #7c3aed, #4c1d95);
+  box-shadow: 0 10px 24px -16px #6d28d9;
+}
+
+.speed-row { margin: 10px 0 2px; }
+.speed-row .pick-label { margin-bottom: 6px; }
+.speed-row .seg-row { display: flex; gap: 6px; }
+.speed-row .seg-btn { flex: 1 1 0; }
+.speed-row.hidden { display: none; }
+
+#menuModal .ghost.hidden, #menuModal .speed-row.hidden { display: none; }
+
+.leg .crown-ico { color: #fbbf24; font-size: 9px; margin-right: 1px; }
+#ratioRow.hidden { display: none; }
+
+/* 긴 모달: 닫기 버튼을 항상 손 닿는 곳에 */
+#rulesModal .primary,
+#diploModal .primary {
+  position: sticky;
+  bottom: -18px;
+  margin-top: 12px;
+  box-shadow: 0 -16px 18px -12px rgba(6, 10, 18, 0.95);
+}
+
+/* 외교 제안은 플레이를 막지 않는 카드로 (실시간) */
+#propModal.peek {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 10px calc(env(safe-area-inset-bottom, 0px) + 128px);
+  pointer-events: none;
+  z-index: 25;
+}
+#propModal.peek .card {
+  pointer-events: auto;
+  max-width: 360px;
+  padding: 14px;
+  border-color: rgba(147, 197, 253, 0.4);
+  box-shadow: 0 18px 40px -18px #000, 0 0 0 1px rgba(59, 130, 246, 0.2);
+}
+#propModal.peek .prop-head { display: none; }
+#propModal.peek .prop-title { font-size: 13.5px; margin: 0 0 3px; }
+#propModal.peek .prop-body {
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0 0 8px;
+  max-height: 31px;
+  overflow: hidden;
+}
+#propModal.peek .prop-row { gap: 7px; }
+#propModal.peek .prop-row button { padding: 9px; font-size: 12.5px; }

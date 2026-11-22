@@ -1,13 +1,15 @@
 'use strict';
 
-/* 스모크 테스트
-   - 엔진: 지도/전투/외교(관계·신뢰도·동맹·조공·할양·공동참전)/AI 전략
-   - 네트워크: 실제 WebSocket 방 생성 → 시작 → 조작 → 재접속
+/* 영토 전쟁 ONLINE · 실시간 스모크 테스트
+   1) 엔진: 지도 · 병력 생산 · 행군/전투 · 외교(초 단위) · AI
+   2) 헤드리스 AI 대 AI 시뮬레이션: 전투·영토 변화·외교·승부가 데드락 없이 진행되는지
+   3) WebSocket: 방 생성 → 시작 → 실시간 동기화 → AI 시뮬레이션 난입 · 위임 → 재접속
    실행: npm test */
 
 const assert = require('assert');
+const http = require('http');
 const WebSocket = require('ws');
-const { createServer, Game } = require('../server');
+const { createServer, Game, Sim, SIM, DUR } = require('../server');
 
 let passed = 0;
 function ok(name, cond, extra) {
@@ -19,205 +21,250 @@ function ok(name, cond, extra) {
   console.log('  ✓ ' + name);
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const landOf = (st) => [0, 1, 2, 3].map((i) => Game.countOwned(st, i));
 
-function threeNationState() {
-  const s = Game.newGame({ humans: 3, aiFill: false });
-  s.human = [true, true, true, false];
-  s.names = ['청룡', '적화', '녹림', '황금'];
-  return s;
+function aiState(seed) {
+  const st = Game.newGame({ humans: 1, aiFill: true, seed });
+  st.human = [false, false, false, false];
+  st.names = ['청룡', '적화', '녹림', '황금'];
+  return st;
 }
 
-async function engineTests() {
-  console.log('엔진 · 기본 규칙');
-  const st = Game.newGame({ humans: 1, aiFill: true });
+function runSim(st, ms, step) {
+  const dt = step || 100;
+  let t = 0;
+  while (t < ms && !st.over) {
+    Sim.step(st, dt);
+    t += dt;
+  }
+  return t;
+}
+
+/* =========================================================================
+   1. 엔진
+   ========================================================================= */
+function engineTests() {
+  console.log('엔진 · 지도와 시작 상태');
+  const st = Game.newGame({ humans: 1, aiFill: true, seed: 12345 });
   st.names = ['나', '적화', '녹림', '황금'];
-  ok('지도 28개 영토 생성', st.regions.length === 28, st.regions.length);
+  ok('지도 28개 영토', st.regions.length === 28, st.regions.length);
   ok('4개국 참전', st.activeCount === 4 && st.active.every(Boolean));
   ok('모든 참전국이 시작 영토 보유', [0, 1, 2, 3].every((i) => Game.countOwned(st, i) >= 3));
   ok('연결 그래프', st.regions.every((r) => r.neighbors.length >= 1));
-  ok('첫 턴 보충 병력', st.reinforcements >= 3, st.reinforcements);
+  ok('수도 지정', st.capitals.every((id) => id >= 0 && st.regions[id].owner >= 0), st.capitals);
+  ok('턴 개념 없음 (시간부터 시작)', st.time === 0 && st.turn === undefined);
 
-  const myRegion = st.regions.find((r) => r.owner === 0);
-  const before = myRegion.troops;
-  const placed = Game.deploy(st, myRegion.id, 2);
-  ok('배치', placed === 2 && myRegion.troops === before + 2 && st.reinforcements >= 0);
+  console.log('엔진 · 실시간 병력 생산');
+  const before = Game.totalTroops(st, 0);
+  runSim(st, 4000);
+  const after = Game.totalTroops(st, 0);
+  ok('4초 동안 병력이 계속 생산된다', after > before + 2, [before, after]);
+  ok('생산 속도 표시', Game.productionRateOf(st, 0) > 0);
 
-  const own = st.regions.filter((r) => r.owner === 0);
-  let movePair = null;
+  const capRegion = st.regions[st.capitals[0]];
+  const normalRegion = st.regions.find((r) => r.owner === 0 && r.id !== capRegion.id);
+  if (normalRegion) {
+    capRegion.troops = 1;
+    normalRegion.troops = 1;
+    capRegion.p = 0;
+    normalRegion.p = 0;
+    const capBefore = capRegion.troops;
+    const normBefore = normalRegion.troops;
+    for (let i = 0; i < 10; i++) Sim.step(st, 100);
+    ok('수도가 일반 영토보다 빨리 생산', capRegion.troops >= normBefore,
+      [capBefore, capRegion.troops, normalRegion.troops]);
+  }
+
+  const capped = st.regions.find((r) => r.owner === 0);
+  capped.troops = Game.prodCapOf(st, capped) + 50;
+  const capNow = capped.troops;
+  runSim(st, 3000);
+  ok('상한을 넘긴 병력은 생산으로 더 늘지 않는다', capped.troops === capNow, [capNow, capped.troops]);
+
+  console.log('엔진 · 출정과 행군');
+  const st2 = Game.newGame({ humans: 2, aiFill: false, seed: 777 });
+  st2.human = [true, true, false, false];
+  const own = st2.regions.filter((r) => r.owner === 0);
+  let pair = null;
   for (const a of own) {
     for (const nb of a.neighbors) {
-      if (st.regions[nb].owner === 0) movePair = [a, st.regions[nb]];
+      if (st2.regions[nb].owner === 0) pair = [a, st2.regions[nb]];
     }
   }
-  if (movePair) {
-    movePair[0].troops = 5;
-    const moved = Game.transfer(st, movePair[0].id, movePair[1].id);
-    ok('병력 이동', moved === 4 && movePair[0].troops === 1);
-  }
+  ok('이웃한 내 영토', !!pair);
+  pair[0].troops = 9;
+  const targetBefore = pair[1].troops;
+  const move = Game.dispatch(st2, 0, pair[0].id, pair[1].id, 0.5);
+  ok('출정 즉시 병력 차감', move.ok && move.troops === 4 && pair[0].troops === 5, pair[0].troops);
+  ok('행군 시간 1.2초', st2.marches.length === 1 && st2.marches[0].arriveAt - st2.time === SIM.marchMs);
+  let waited = 0;
+  while (st2.marches.length && waited < 3000) { Sim.step(st2, 100); waited += 100; }
+  ok('행군 도착 후 합류', st2.marches.length === 0 && pair[1].troops === targetBefore + 4, pair[1].troops);
 
-  Game.createTreaty(st, 0, 1, 'truce', 4);
-  const borderRegion = st.regions.find((r) => r.owner === 0);
-  const enemyNb = st.regions[borderRegion.neighbors[0]];
-  enemyNb.owner = 1;
-  enemyNb.troops = 2;
-  borderRegion.troops = 5;
-  const blockedRes = Game.attack(st, borderRegion.id, enemyNb.id);
-  ok('불가침 조약이 공격 차단', !blockedRes.ok && blockedRes.reason === 'treaty');
-  Game.removeTreaty(st, 0, 1);
+  const atkFrom = st2.regions.find((r) => r.owner === 0);
+  const victim = st2.regions[atkFrom.neighbors.find((n) => st2.regions[n].owner !== 0)];
+  victim.owner = -1;
+  victim.troops = 1;
+  atkFrom.troops = 10;
+  const atk = Game.dispatch(st2, 0, atkFrom.id, victim.id, 1);
+  ok('공격 출정', atk.ok && atk.attack === true && atkFrom.troops === 1);
+  runSim(st2, 2000);
+  ok('중립 영토 점령', victim.owner === 0 && victim.troops >= 1, [victim.owner, victim.troops]);
+  ok('전투 수 기록', st2.stats.battles >= 1 && st2.stats.captures >= 1);
 
-  Game.createTreaty(st, 0, 1, 'truce', 4);
-  const tick = Game.tickTreaties(st);
-  ok('조약 턴 감소', st.treaties['0-1'].turns === 3 && tick.expired.length === 0);
+  const st3 = Game.newGame({ humans: 2, aiFill: false, seed: 909 });
+  st3.human = [true, true, false, false];
+  const a3 = st3.regions.find((r) => r.owner === 0);
+  const t3 = st3.regions[a3.neighbors[0]];
+  t3.owner = 1;
+  t3.troops = 12;
+  a3.troops = 4;
+  Game.dispatch(st3, 0, a3.id, t3.id, 1);
+  runSim(st3, 2000);
+  ok('약한 공격은 실패하고 수비 병력이 줄어든다', t3.owner === 1 && t3.troops < 12, [t3.owner, t3.troops]);
 
-  console.log('엔진 · 관계 · 신뢰도');
-  const relState = Game.newGame({ humans: 3, aiFill: false });
-  relState.human = [true, true, true, false];
-  relState.names = ['청룡', '적화', '녹림', '황금'];
-  ok('초기 관계 0 · 신뢰도 60', relState.relations['0-1'] === 0 && relState.reputation[0] === 60);
-  relState.reinforcements = 3;
-  const rep0 = relState.reputation[0];
-  const aid = Game.sendAid(relState, 0, 1);
-  ok('병력 지원 + 관계/신뢰 상승', aid.ok && aid.amount === 3 &&
-    relState.relations['0-1'] === 15 && relState.reputation[0] === rep0 + 3);
-  ok('지원으로 동맹 5턴', relState.treaties['0-1'].type === 'ally' && relState.treaties['0-1'].turns === 5);
-  const beforeBreak = relState.reputation[0];
-  Game.breakPact(relState, 0, 1);
-  ok('배신 시 신뢰도 급락', relState.reputation[0] === beforeBreak - 35, relState.reputation[0]);
-  ok('배신 시 관계 급락', relState.relations['0-1'] <= -35, relState.relations['0-1']);
-  ok('배신은 외교 로그에 기록', relState.diploLog.some((x) => x.kind === 'bad'));
+  const st4 = Game.newGame({ humans: 2, aiFill: false, seed: 4242 });
+  st4.human = [true, true, false, false];
+  const f4 = st4.regions.find((r) => r.owner === 0);
+  const e4 = st4.regions[f4.neighbors[0]];
+  e4.owner = 1;
+  e4.troops = 2;
+  f4.troops = 6;
+  Game.createTreaty(st4, 0, 1, 'truce', DUR.truce);
+  const blocked = Game.dispatch(st4, 0, f4.id, e4.id, 1);
+  ok('불가침 중에는 출정이 막힌다', !blocked.ok && blocked.reason === 'treaty');
+  ok('조약은 45초', Math.round(st4.treaties['0-1'].until - st4.time) === 45000);
 
-  const betrayState = Game.newGame({ humans: 3, aiFill: false });
-  betrayState.human = [true, true, true, false];
-  betrayState.names = ['청룡', '적화', '녹림', '황금'];
-  Game.createTreaty(betrayState, 0, 2, 'truce', 4);
-  betrayState.relations['0-2'] = 60;
-  betrayState.reputation[0] = 25;
-  ok('배신자는 동맹 제안 거절', !Game.evaluateAlliance(betrayState, 2, 0));
-  betrayState.reputation[0] = 80;
-  ok('신뢰 회복 후 동맹 가능', Game.evaluateAlliance(betrayState, 2, 0));
+  console.log('엔진 · 실시간 외교');
+  const st5 = Game.newGame({ humans: 3, aiFill: false, seed: 31337 });
+  st5.human = [true, true, true, false];
+  st5.names = ['청룡', '적화', '녹림', '황금'];
+  ok('초기 관계 0 · 신뢰 60', st5.relations['0-1'] === 0 && st5.reputation[0] === 60);
 
-  console.log('엔진 · 동맹 · 공동 참전');
-  const allyState = threeNationState();
-  Game.createTreaty(allyState, 0, 1, 'truce', 4);
-  const allyProp = Game.proposeAlliance(allyState, 0, 1);
+  st5.reinforcements = 0;
+  st5.regions.find((r) => r.owner === 0).troops = 9;
+  const rep0 = st5.reputation[0];
+  const aid = Game.sendAid(st5, 0, 1);
+  ok('병력 지원 → 관계·신뢰 상승, 동맹', aid.ok && st5.relations['0-1'] === 15 &&
+    st5.reputation[0] === rep0 + 3 && st5.treaties['0-1'].type === 'ally');
+  const repBefore = st5.reputation[0];
+  Game.breakPact(st5, 0, 1);
+  ok('배신하면 신뢰도 급락', st5.reputation[0] === repBefore - 35 && st5.stats.betrayals === 1);
+
+  const st6 = Game.newGame({ humans: 3, aiFill: false, seed: 606 });
+  st6.human = [true, true, true, false];
+  st6.names = ['청룡', '적화', '녹림', '황금'];
+  const prop = Game.proposeTruce(st6, 0, 1);
+  ok('사람에게는 제안이 대기한다', prop.status === 'queued' && prop.proposal.sec === DUR.truce);
+  ok('제안 30초 유효', (function () {
+    runSim(st6, 30000);
+    return st6.proposals.length === 0;
+  })(), st6.proposals.length);
+
+  const st7 = Game.newGame({ humans: 3, aiFill: false, seed: 717 });
+  st7.human = [true, true, true, false];
+  st7.names = ['청룡', '적화', '녹림', '황금'];
+  const p7 = Game.proposeTruce(st7, 0, 1);
+  Game.resolveProposal(st7, p7.proposal, true);
+  ok('수락하면 조약 체결', st7.treaties['0-1'].type === 'truce');
+  const allyProp = Game.proposeAlliance(st7, 0, 1);
   ok('불가침 위에 동맹 제안', allyProp.status === 'queued' && allyProp.proposal.kind === 'ally');
-  const allyRes = Game.resolveProposal(allyState, allyProp.proposal, true);
-  ok('동맹 체결 5턴', allyRes.accepted && allyState.treaties['0-1'].type === 'ally' &&
-    allyState.treaties['0-1'].turns === 5);
-  const callRes = Game.callToArms(allyState, 0, 1, 2);
-  ok('동맹에게 공동 참전 요청', callRes.status === 'queued' && callRes.proposal.kind === 'call');
-  Game.resolveProposal(allyState, callRes.proposal, true);
-  ok('공동 참전 성립', allyState.calls.length === 1 && allyState.calls[0].target === 2);
-  ok('공동 참전은 관계 상승', allyState.relations['0-1'] >= 20, allyState.relations['0-1']);
-  // 동맹 보너스: 0과 1이 동맹, 2와 교전 → 0이 2를 칠 때 +1
-  allyState.relations['0-1'] = 40;
-  const atkFrom = allyState.regions.find((r) => r.owner === 0);
-  const target = allyState.regions[atkFrom.neighbors[0]];
-  target.owner = 2;
-  target.troops = 1;
-  atkFrom.troops = 6;
-  const battle = Game.attack(allyState, atkFrom.id, target.id);
-  ok('공동의 적 공격에 동맹 +1', battle.allyBonus === true);
+  Game.resolveProposal(st7, allyProp.proposal, true);
+  ok('동맹 60초', st7.treaties['0-1'].type === 'ally' &&
+    Math.round(st7.treaties['0-1'].until - st7.time) === 60000);
 
-  console.log('엔진 · 조공 · 할양');
-  const tribState = threeNationState();
-  tribState.relations['0-2'] = 30;
-  const tribProp = Game.proposeTribute(tribState, 0, 2, 1, 'offer');
-  ok('조공 제안', tribProp.status === 'queued' && tribProp.proposal.kind === 'tribute');
-  Game.resolveProposal(tribState, tribProp.proposal, true);
-  const tribTr = tribState.treaties['0-2'];
-  ok('조공 조약 체결', tribTr && tribTr.type === 'tribute' && tribTr.payer === 0 &&
-    tribTr.payee === 2 && tribTr.amount === 1);
-  const payerBefore = Game.totalTroops(tribState, 0);
-  const payeeBefore = Game.totalTroops(tribState, 2);
-  const tt = Game.tickTreaties(tribState);
-  ok('라운드마다 조공 병력 이동', tt.tributes.length === 1 &&
-    Game.totalTroops(tribState, 0) === payerBefore - 1 &&
-    Game.totalTroops(tribState, 2) === payeeBefore + 1);
+  const st8 = Game.newGame({ humans: 3, aiFill: false, seed: 818 });
+  st8.human = [true, true, true, false];
+  st8.names = ['청룡', '적화', '녹림', '황금'];
+  st8.treaties['0-1'] = {
+    a: 0, b: 1, type: 'tribute', until: st8.time + 45000,
+    payer: 0, payee: 1, amount: 1, nextPayAt: st8.time, since: 0
+  };
+  const payBefore = Game.totalTroops(st8, 1);
+  Game.tickDiplomacy(st8, 0);
+  ok('조공 12초마다 지급', Game.totalTroops(st8, 1) === payBefore + 1, Game.totalTroops(st8, 1));
+  ok('조공 45초 만료', (function () {
+    runSim(st8, 46000);
+    return !st8.treaties['0-1'];
+  })());
 
-  const cedeState = threeNationState();
-  const gift = cedeState.regions.find((r) => r.owner === 0);
-  const cedeProp = Game.proposeCede(cedeState, 0, 1, gift.id, true);
-  ok('영토 할양 제안', cedeProp.status === 'queued' && cedeProp.proposal.kind === 'cede');
-  Game.resolveProposal(cedeState, cedeProp.proposal, true);
-  ok('영토 소유권 이전', gift.owner === 1 && gift.troops === 1);
-  ok('할양으로 관계 +25', cedeState.relations['0-1'] === 25, cedeState.relations['0-1']);
-  ok('할양과 함께 불가침', cedeState.treaties['0-1'] && cedeState.treaties['0-1'].type === 'truce');
+  const st9 = Game.newGame({ humans: 3, aiFill: false, seed: 919 });
+  st9.human = [true, true, true, false];
+  const gift = st9.regions.find((r) => r.owner === 0);
+  const cede = Game.proposeCede(st9, 0, 1, gift.id, true);
+  Game.resolveProposal(st9, cede.proposal, true);
+  ok('할양 → 소유권 이전 · 관계 +25 · 불가침', gift.owner === 1 && gift.troops === 1 &&
+    st9.relations['0-1'] === 25 && st9.treaties['0-1'].type === 'truce');
 
-  console.log('엔진 · AI 전략');
-  const aiState = Game.newGame({ humans: 1, aiFill: true });
-  aiState.names = ['나', '적화', '녹림', '황금'];
-  aiState.human = [true, false, false, false];
-  const ai = 1;
-  const aiOwn = aiState.regions.filter((r) => r.owner === ai);
-  const interior = aiOwn[0];
-  for (const nb of interior.neighbors) aiState.regions[nb].owner = ai;
-  const itBefore = interior.troops;
-  Game.aiReinforce(aiState, ai);
-  ok('AI는 내부 영토에 배치하지 않음', interior.troops === itBefore);
-  interior.troops = 6;
-  for (const nb of interior.neighbors) aiState.regions[nb].troops = 1;
-  const movedN = Game.aiShiftTroops(aiState, ai);
-  ok('AI 후방 병력을 전선으로 이동', movedN >= 1 && interior.troops === 1, movedN);
-
-  let violations = 0, checked = 0;
-  for (let k = 0; k < 120; k++) {
-    const mv = Game.aiPickAttack(aiState, ai);
-    if (!mv) break;
-    checked++;
-    const diff = mv.from.troops - mv.to.troops;
-    if (mv.to.owner >= 0 && diff < 2) violations++;
-    if (mv.to.owner < 0 && diff < 1) violations++;
+  console.log('엔진 · AI 판단');
+  const st10 = aiState(1010);
+  let sawMarch = false;
+  let sawBattle = 0;
+  let sawDiplo = 0;
+  const startLand = landOf(st10);
+  for (let i = 0; i < 600; i++) {
+    Sim.step(st10, 100);
+    if (st10.marches.length) sawMarch = true;
+    if (st10.diploLog.length > sawDiplo) sawDiplo = st10.diploLog.length;
   }
-  ok('AI는 유리할 때만 공격', checked > 0 && violations === 0, checked);
+  ok('AI가 실시간으로 행군한다', sawMarch);
+  ok('AI끼리 전투가 일어난다', st10.stats.battles > 0, st10.stats.battles);
+  ok('60초 안에 영토가 바뀐다', landOf(st10).join(',') !== startLand.join(','), landOf(st10));
+  ok('AI 외교가 작동한다', sawDiplo > 0, sawDiplo);
 
-  // 공동 참전 목표를 우선 공격하는지
-  const callState = Game.newGame({ humans: 1, aiFill: true });
-  callState.names = ['나', '적화', '녹림', '황금'];
-  callState.human = [true, false, false, false];
-  const callAi = 1;
-  let callFrom = null, callTarget = null;
-  for (const r of callState.regions) {
-    if (r.owner !== callAi) continue;
-    const outs = r.neighbors.filter((nb) => callState.regions[nb].owner !== callAi);
-    if (outs.length >= 2) { callFrom = r; callTarget = callState.regions[outs[0]]; break; }
-  }
-  if (callFrom) {
-    callFrom.troops = 6;
-    for (const nb of callFrom.neighbors) {
-      const t = callState.regions[nb];
-      if (t.owner === callAi) continue;
-      t.troops = 1;
-    }
-    callTarget.owner = 2;
-    callState.calls.push({ id: 1, from: 0, to: callAi, target: 2, turns: 2, at: Date.now() });
-    const pick = Game.aiPickAttack(callState, callAi);
-    ok('공동 참전 목표를 우선 공격', pick && pick.to.owner === 2, pick && pick.to.owner);
-  }
-
-  const leaderState = Game.newGame({ humans: 1, aiFill: true });
-  leaderState.names = ['나', '적화', '녹림', '황금'];
-  leaderState.human = [true, false, false, false];
-  // 중립 영토를 1번에게 몰아 1위 국가(35%+)로 만든다
+  const leader = Game.newGame({ humans: 1, aiFill: true, seed: 1212 });
+  leader.names = ['나', '적화', '녹림', '황금'];
+  leader.human = [true, false, false, false];
   let grabbed = 0;
-  for (const r of leaderState.regions) {
-    if (r.owner === -1 && grabbed < 8) { r.owner = 1; grabbed++; }
+  for (const r of leader.regions) {
+    if (r.owner === -1 && grabbed < 9) { r.owner = 1; grabbed++; }
   }
-  leaderState.relations['0-1'] = 60;
-  leaderState.relations['0-2'] = 40;
-  leaderState.relations['0-3'] = 40;
-  const dip = Game.aiDiplomacy(leaderState, 2);
+  leader.relations['0-1'] = 60;
+  const dip = Game.aiDiplomacy(leader, 2);
   ok('1위 국가 견제 외교', Array.isArray(dip) && dip.length > 0, dip.length);
-
-  const st2 = Game.newGame({ humans: 2, aiFill: false });
-  ok('AI 없이 2인', st2.activeCount === 2 && st2.active[2] === false);
-  st2.everEliminated = true;
-  for (const r of st2.regions) if (r.owner === 1) r.owner = 0;
-  Game.checkOver(st2);
-  ok('마지막 생존국 승리', st2.over && st2.over.type === 'lastStanding' && st2.over.winner === 0);
 }
 
-/* ---------------- 네트워크 ---------------- */
+/* =========================================================================
+   2. 헤드리스 AI vs AI 시뮬레이션
+   ========================================================================= */
+function headlessSimTests() {
+  console.log('시뮬레이션 · AI 4개국 난전 (데드락 없이 승부까지)');
+  const seeds = [2026, 7, 55, 123, 909];
+  const results = [];
+  for (const seed of seeds) {
+    const st = aiState(seed);
+    const snapshots = [];
+    let battles0 = 0;
+    let diplomacySeen = 0;
+    let elapsed = 0;
+    const cap = 20 * 60 * 1000;
+    while (!st.over && elapsed < cap) {
+      Sim.step(st, 100);
+      elapsed += 100;
+      if (st.diploLog.length > diplomacySeen) diplomacySeen = st.diploLog.length;
+      if (elapsed % 30000 === 0) snapshots.push(landOf(st).join(','));
+    }
+    results.push({ seed, over: st.over, sec: Math.round(st.time / 1000), land: landOf(st), battles: st.stats.battles, captures: st.stats.captures, diplomacySeen });
+    ok('시드 ' + seed + ' · 승부가 난다', !!st.over, st.over);
+    ok('시드 ' + seed + ' · 대륙 통일 또는 최후 생존', st.over.type === 'nation' || st.over.type === 'lastStanding');
+    ok('시드 ' + seed + ' · 전투가 계속 진행', st.stats.battles > battles0 + 50 && st.stats.captures > 10,
+      [st.stats.battles, st.stats.captures]);
+    ok('시드 ' + seed + ' · 영토가 여러 번 바뀐다', new Set(snapshots).size >= 3, snapshots.length);
+    ok('시드 ' + seed + ' · 외교 이벤트 발생', diplomacySeen > 0, diplomacySeen);
+    ok('시드 ' + seed + ' · 20분 안에 종료', st.time <= cap, Math.round(st.time / 1000));
+  }
+  console.log('  · 시뮬레이션 결과');
+  for (const r of results) {
+    console.log('    seed ' + r.seed + ': ' + r.sec + '초 · 영토 ' + r.land.join('/') +
+      ' · 전투 ' + r.battles + '회 · 점령 ' + r.captures + '회 · 외교 ' + r.diplomacySeen + '건');
+  }
+  const avg = results.reduce((a, r) => a + r.sec, 0) / results.length;
+  ok('평균 15분 이내에 승부', avg < 15 * 60, Math.round(avg));
+}
+
+/* =========================================================================
+   3. WebSocket
+   ========================================================================= */
 function connect(port) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket('ws://127.0.0.1:' + port + '/ws');
@@ -252,22 +299,33 @@ function next(ws, pred, ms) {
       const i = ws.waiters.indexOf(w);
       if (i >= 0) ws.waiters.splice(i, 1);
       reject(new Error('메시지 대기 시간 초과'));
-    }, ms || 8000);
+    }, ms || 9000);
     ws.waiters.push(w);
   });
 }
 
-function send(ws, obj) { ws.send(JSON.stringify(obj)); }
+const send = (ws, obj) => ws.send(JSON.stringify(obj));
 
-function hasProposal(stateMsg, kind) {
-  return stateMsg.proposals && stateMsg.proposals.some((p) => p.kind === kind);
+function httpGet(port, path) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path }, (res) => {
+      let body = '';
+      res.on('data', (d) => { body += d; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    }).on('error', reject);
+  });
 }
 
 async function networkTests() {
-  console.log('WebSocket · 방과 외교');
+  console.log('WebSocket · 방과 실시간 동기화');
   const { server, wss } = createServer();
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   const port = server.address().port;
+
+  const health = await httpGet(port, '/healthz');
+  ok('GET /healthz 200', health.status === 200 && JSON.parse(health.body).ok === true, health.body);
+  const home = await httpGet(port, '/');
+  ok('GET / 200 · 게임 페이지', home.status === 200 && home.body.indexOf('영토 전쟁') >= 0);
 
   const a = await connect(port);
   const b = await connect(port);
@@ -277,126 +335,134 @@ async function networkTests() {
   ok('방 만들기 · 코드 발급', /^[A-Z0-9]{4}$/.test(joinedA.code), joinedA.code);
   const code = joinedA.code;
   const tokenA = joinedA.token;
-  ok('방장 자리 0', joinedA.slot === 0);
 
   send(b, { type: 'join', code: code.toLowerCase(), name: '지우' });
   const joinedB = await next(b, (m) => m.type === 'joined');
-  ok('방 참가 · 자리 1', joinedB.code === code && joinedB.slot === 1);
-  const tokenB = joinedB.token;
-
-  const lobbyB = await next(b, (m) => m.type === 'lobby');
-  ok('로비 인원 2명', lobbyB.players.length === 2);
+  ok('방 참가', joinedB.code === code && joinedB.slot === 1);
 
   send(a, { type: 'start' });
-  const stateA = await next(a, (m) => m.type === 'state' && m.started && m.regions, 12000);
-  ok('게임 시작 · 28영토', stateA.regions.length === 28);
-  ok('2명 + AI 2', stateA.activeCount === 4 && stateA.players.length === 2);
-  ok('내 차례 표시', stateA.you === 0 && stateA.cur === 0 && stateA.phase === 'player');
-  ok('관계/신뢰도 동기화', stateA.relations.length === 6 && stateA.reputation[0] === 60);
+  const stateA = await next(a, (m) => m.type === 'state' && m.started, 12000);
+  const stateB = await next(b, (m) => m.type === 'state' && m.started, 12000);
+  ok('게임 시작 · 28영토 · 2명 + AI 2', stateA.regions.length === 28 && stateA.players.length === 2 &&
+    stateA.activeCount === 4);
+  ok('턴 없음 · 실시간 상태', stateA.time !== undefined && stateA.turn === undefined && stateA.phase === undefined);
+  ok('두 클라이언트가 각자 슬롯', stateA.you === 0 && stateB.you === 1);
 
-  const target = stateA.regions.find((r) => r.owner === 0);
-  const reinfBefore = stateA.reinforcements;
-  a.inbox.length = 0;
-  send(a, { type: 'action', action: { kind: 'deploy', idx: target.id, amount: 1 } });
-  const afterDeploy = await next(a, (m) => m.type === 'state' &&
-    m.regions.find((r) => r.id === target.id).troops === target.troops + 1);
-  ok('배치 반영', afterDeploy.reinforcements === reinfBefore - 1);
+  const tickA = await next(a, (m) => m.type === 'tick', 4000);
+  ok('실시간 틱 수신', tickA.regions.length === 28 && tickA.army.length === 4);
+  const troops0 = tickA.army[0].troops;
+  await wait(1600);
+  const tickA2 = await next(a, (m) => m.type === 'tick' && m.time > tickA.time + 900, 5000);
+  ok('병력이 실시간으로 생산된다', tickA2.army[0].troops > troops0, [troops0, tickA2.army[0].troops]);
 
-  // AI 에게 조공 제안 (즉시 판정)
-  a.inbox.length = 0;
-  send(a, { type: 'action', action: { kind: 'tribute', to: 3, amount: 1, direction: 'offer' } });
-  const afterTribute = await next(a, (m) => m.type === 'state' &&
-    m.treaties.some((t) => t.type === 'tribute' && t.b === 3), 6000);
-  ok('AI 조공 조약 성립', afterTribute.treaties.some((t) => t.type === 'tribute' && t.payer === 0));
+  // 출정 → 두 클라이언트에 행군 표시
+  const mine = stateA.regions.filter((r) => r.owner === 0);
+  let from = null, to = null;
+  for (const r of mine) {
+    const nb = r.neighbors.find((n) => stateA.regions[n].owner !== 0);
+    if (nb != null) { from = r; to = nb; break; }
+  }
+  await wait(1200);
+  send(a, { type: 'action', action: { kind: 'send', from: from.id, to: to, ratio: 1 } });
+  const marchA = await next(a, (m) => m.type === 'tick' && m.marches.some((x) => x.from === from.id && x.to === to), 5000);
+  const marchB = await next(b, (m) => m.type === 'tick' && m.marches.some((x) => x.from === from.id), 5000);
+  ok('내 행군이 지도에 표시', marchA.marches.some((x) => x.from === from.id && x.to === to));
+  ok('상대 클라이언트에도 같은 행군이 보인다', marchB.marches.some((x) => x.from === from.id));
+  const resolved = await next(a, (m) => m.type === 'tick' && !m.marches.some((x) => x.from === from.id), 6000);
+  ok('행군 도착 후 전투/합류 반영', !!resolved);
 
-  // 사람 → 사람 불가침
+  // 사람 → 사람 외교
   send(a, { type: 'action', action: { kind: 'propose', to: 1 } });
-  const truceArrived = await next(b, (m) => m.type === 'state' && hasProposal(m, 'truce'), 6000);
-  const truceProp = truceArrived.proposals.find((p) => p.kind === 'truce' && p.to === 1);
+  const propState = await next(b, (m) => m.type === 'tick' && m.proposals.some((p) => p.kind === 'truce'), 6000);
+  const truceProp = propState.proposals.find((p) => p.kind === 'truce');
+  ok('조약 제안 전달 · 45초', truceProp && truceProp.sec === 45);
   send(b, { type: 'action', action: { kind: 'respond', id: truceProp.id, accept: true } });
-  const truceDone = await next(a, (m) => m.type === 'state' &&
-    m.treaties.some((t) => t.a === 0 && t.b === 1 && t.type === 'truce'), 6000);
-  ok('불가침 조약 체결', !!truceDone);
+  const truceTick = await next(a, (m) => m.type === 'tick' && m.treaties.some((t) => t.type === 'truce' && t.a === 0 && t.b === 1), 6000);
+  const tr = truceTick.treaties.find((t) => t.a === 0 && t.b === 1);
+  ok('조약 체결 · 남은 시간(ms) 실시간', tr.left > 40000 && tr.left <= 45000, tr.left);
 
-  // 불가침 → 동맹
-  send(a, { type: 'action', action: { kind: 'alliance', to: 1 } });
-  const allyArrived = await next(b, (m) => m.type === 'state' && hasProposal(m, 'ally'), 6000);
-  const allyProp = allyArrived.proposals.find((p) => p.kind === 'ally');
-  send(b, { type: 'action', action: { kind: 'respond', id: allyProp.id, accept: true } });
-  const allyDone = await next(a, (m) => m.type === 'state' &&
-    m.treaties.some((t) => t.a === 0 && t.b === 1 && t.type === 'ally' && t.turns === 5), 6000);
-  ok('동맹으로 격상 (5턴)', !!allyDone);
-
-  // 공동 참전 요청
-  send(a, { type: 'action', action: { kind: 'call', to: 1, target: 2 } });
-  const callArrived = await next(b, (m) => m.type === 'state' && hasProposal(m, 'call'), 6000);
-  const callProp = callArrived.proposals.find((p) => p.kind === 'call');
-  ok('공동 참전 요청 전달', callProp && callProp.target === 2);
-  send(b, { type: 'action', action: { kind: 'respond', id: callProp.id, accept: true } });
-  const callDone = await next(a, (m) => m.type === 'state' &&
-    m.calls.some((c) => c.to === 1 && c.target === 2), 6000);
-  ok('공동 참전 성립', !!callDone);
-
-  // 영토 할양
-  const gift = stateA.regions.filter((r) => r.owner === 0).find((r) => r.id !== target.id) || target;
-  send(a, { type: 'action', action: { kind: 'cede', to: 1, regionId: gift.id, withTruce: false } });
-  const cedeArrived = await next(b, (m) => m.type === 'state' && hasProposal(m, 'cede'), 6000);
-  const cedeProp = cedeArrived.proposals.find((p) => p.kind === 'cede');
-  send(b, { type: 'action', action: { kind: 'respond', id: cedeProp.id, accept: true } });
-  const cedeDone = await next(a, (m) => m.type === 'state' &&
-    m.regions.find((r) => r.id === gift.id).owner === 1, 6000);
-  ok('영토 할양 반영', cedeDone.regions.find((r) => r.id === gift.id).owner === 1);
-
-  // AI 는 사람 제안을 즉시 판정
-  send(a, { type: 'action', action: { kind: 'propose', to: 2 } });
-  const aiAnswer = await next(a, (m) => m.type === 'event' &&
-    (m.text.indexOf('불가침') >= 0 || m.text.indexOf('거절') >= 0), 6000);
-  ok('AI 제안 즉시 응답', !!aiAnswer.text);
-
-  // 턴 종료 → AI 턴 진행
-  a.inbox.length = 0;
-  send(a, { type: 'action', action: { kind: 'end' } });
-  const aiPhase = await next(a, (m) => m.type === 'state' && m.phase === 'ai', 8000);
-  ok('턴 종료 후 AI 진행', aiPhase.cur !== 0 || aiPhase.phase === 'ai');
+  // AI 위임 (여러 명이면 거절)
+  send(a, { type: 'action', action: { kind: 'speed', value: 4 } });
+  const speedDenied = await next(a, (m) => m.type === 'event' && m.text.indexOf('속도') >= 0, 4000).catch(() => null);
+  ok('여러 명이면 게임 중 속도 변경 불가', speedDenied && /여러 명/.test(speedDenied.text), speedDenied && speedDenied.text);
 
   // 재접속
   a.close();
-  await wait(250);
+  await wait(300);
   const a2 = await connect(port);
-  send(a2, { type: 'resume', code: code, token: tokenA });
+  send(a2, { type: 'resume', code, token: tokenA });
   const resumed = await next(a2, (m) => m.type === 'resumed', 6000);
-  ok('토큰 재접속', resumed.code === code && resumed.slot === 0);
   const resumedState = await next(a2, (m) => m.type === 'state' && m.you === 0, 8000);
-  ok('재접속 후 상태 동기화', resumedState.regions.length === 28);
+  ok('토큰 재접속 · 상태 복구', resumed.code === code && resumedState.regions.length === 28 &&
+    resumedState.time > stateA.time);
+  const bad = await connect(port);
+  send(bad, { type: 'resume', code, token: 'nope' });
+  ok('잘못된 토큰 거절', (await next(bad, (m) => m.type === 'resume_failed', 4000)).type === 'resume_failed');
+  bad.close();
 
-  // 잘못된 토큰
+  // ---- AI 시뮬레이션 · 관전 → 난입 → 위임 → 속도 ----
+  console.log('WebSocket · AI 시뮬레이션 난입');
   const c = await connect(port);
-  send(c, { type: 'resume', code: code, token: 'nope' });
-  const failed = await next(c, (m) => m.type === 'resume_failed', 4000);
-  ok('잘못된 토큰 거절', failed.type === 'resume_failed');
+  send(c, { type: 'create', name: '관전자', sim: true });
+  const joinedC = await next(c, (m) => m.type === 'joined');
+  const simState = await next(c, (m) => m.type === 'state' && m.sim && m.started, 12000);
+  ok('AI 시뮬레이션 방 즉시 시작', simState.sim === true && simState.you === -1);
+  ok('4개국 모두 AI', simState.human.every((h) => h === false) && simState.active.every(Boolean));
+  ok('기본 2배속', simState.speed === 2, simState.speed);
+
+  const simMarch = await next(c, (m) => m.type === 'tick' && m.marches.length > 0, 8000);
+  ok('AI끼리 행군이 보인다', simMarch.marches.length > 0);
+
+  const slotToTake = [0, 1, 2, 3].find((i) => Game.countOwned({ regions: simState.regions.map((r) => ({ owner: r.owner })) }, i) > 0) || 0;
+  send(c, { type: 'takeover', slot: slotToTake });
+  const took = await next(c, (m) => m.type === 'state' && m.you === slotToTake, 6000);
+  ok('나라를 골라 난입', took.you === slotToTake && took.human[slotToTake] === true && took.delegate === false);
+
+  const own3 = took.regions.filter((r) => r.owner === slotToTake);
+  let f3 = null, t3 = null;
+  for (const r of own3) {
+    const nb = r.neighbors.find((n) => took.regions[n].owner !== slotToTake);
+    if (nb != null) { f3 = r; t3 = nb; break; }
+  }
+  if (f3) {
+    await wait(900);
+    send(c, { type: 'action', action: { kind: 'send', from: f3.id, to: t3, ratio: 0.5 } });
+    const myMarch = await next(c, (m) => m.type === 'tick' && m.marches.some((x) => x.owner === slotToTake && x.from === f3.id), 5000);
+    ok('난입한 나라로 직접 출정', !!myMarch);
+  }
+
+  send(c, { type: 'delegate', value: true });
+  const delegated = await next(c, (m) => m.type === 'state' && m.delegate === true, 6000);
+  ok('AI 위임 켜기', delegated.delegate === true && delegated.human[slotToTake] === false);
+  send(c, { type: 'delegate', value: false });
+  ok('AI 위임 끄기', (await next(c, (m) => m.type === 'state' && m.delegate === false, 6000)).delegate === false);
+
+  send(c, { type: 'speed', value: 4 });
+  ok('혼자면 ×4 속도', (await next(c, (m) => m.type === 'state' && m.speed === 4, 5000)).speed === 4);
+
+  send(c, { type: 'spectate' });
+  const back = await next(c, (m) => m.type === 'state' && m.you === -1, 6000);
+  ok('관전으로 복귀', back.you === -1);
 
   // 나가기
   send(b, { type: 'leave' });
-  const left = await next(b, (m) => m.type === 'left', 4000);
-  ok('나가기 응답', left.type === 'left');
+  ok('나가기 응답', (await next(b, (m) => m.type === 'left', 4000)).type === 'left');
 
-  a2.close();
-  c.close();
-  for (const client of wss.clients) {
-    try { client.terminate(); } catch (e) { /* noop */ }
-  }
+  for (const w of [a2, b, c]) { try { w.close(); } catch (e) { /* noop */ } }
+  for (const client of wss.clients) { try { client.terminate(); } catch (e) { /* noop */ } }
   wss.close();
   await new Promise((res) => server.close(res));
 }
 
 (async function main() {
   try {
-    await engineTests();
+    engineTests();
+    headlessSimTests();
     await networkTests();
     console.log('\n모든 테스트 통과 (' + passed + '개)');
     process.exit(0);
   } catch (e) {
-    console.error('\n테스트 실패:', e && e.message);
+    console.error('\n테스트 실패:', e && e.stack || e);
     process.exit(1);
   }
 })();

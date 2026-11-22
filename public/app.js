@@ -1,7 +1,7 @@
 /* =============================================================================
-   영토 전쟁 ONLINE · 클라이언트
-   - 서버가 보내는 권위 상태(state)를 그리기만 한다.
-   - 모든 조작은 WebSocket 메시지로 서버에 요청하고, 결과는 state/event 로 돌아온다.
+   영토 전쟁 ONLINE · 실시간 클라이언트
+   - 서버가 보내는 권위 상태(state · tick)를 그리기만 한다.
+   - 모든 조작은 WebSocket 메시지로 서버에 요청한다.
    ============================================================================= */
 (function () {
   'use strict';
@@ -14,10 +14,11 @@
     { id: 3, name: '황금 제국', short: '황금', color: '#f59e0b', fill: '#b45309' }
   ];
   var NEUTRAL = { id: -1, name: '중립 세력', short: '중립', color: '#94a3b8', fill: '#334155' };
-  var TUNING = { treatyTurns: 4, allyTurns: 3, aidAmount: 3, aidThreshold: 5 };
+  var SPEEDS = [1, 2, 4];
 
   var SESSION_KEY = 'tw_online_session_v1';
   var NAME_KEY = 'tw_online_name';
+  var RATIO_KEY = 'tw_online_ratio';
 
   /* ---------------- 런타임 상태 ---------------- */
   var els = {};
@@ -25,29 +26,29 @@
   var connected = false;
   var reconnectAttempt = 0;
   var reconnectTimer = null;
-  var booted = false;
 
-  var me = { code: null, token: null, slot: null, name: '' };
-  var room = null;          // 로비 정보
-  var state = null;         // 게임 상태 (서버 권위)
+  var me = { code: null, token: null, slot: null, control: null, name: '' };
+  var room = null;
+  var state = null;
   var selected = null;
-  var uiMode = 'deploy';
-  var deployAll = false;
-  var confirmEnd = false;
-  var pendingDeploy = 0;
+  var ratio = 0.5;
+  var spectatePick = null;
   var toastTimer = null;
   var propShowing = null;
-  var lastTurnKey = '';
   var resultShown = false;
   var elimShown = false;
   var confirmLeaveAt = 0;
   var confirmBreak = { slot: null, at: 0 };
-  var spectating = false;
+  var lastDiploRender = 0;
+
+  var marches = {};          // id -> { id, owner, from, to, n, dur, startLocal }
+  var flashes = {};          // regionId -> { at, kind }
 
   var canvas = null, ctx = null, mapWrap = null;
   var dpr = 1, scale = 1, offX = 0, offY = 0;
   var VW = 1000, VH = 1400;
   var bgCanvas = null, lightGrad = null;
+  var mapBox = { x: 0, y: 0, w: VW, h: VH };
 
   /* =========================================================================
      공통 유틸
@@ -83,12 +84,19 @@
     c.closePath();
   }
 
+  function mmss(ms) {
+    var total = Math.max(0, Math.round(ms / 1000));
+    var m = Math.floor(total / 60);
+    var s = total % 60;
+    return m + ':' + ('0' + s).slice(-2);
+  }
+
   function toast(msg, kind) {
     if (!els.toast) return;
     els.toast.textContent = msg;
     els.toast.className = 'show' + (kind ? ' ' + kind : '');
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { els.toast.className = ''; }, 2300);
+    toastTimer = setTimeout(function () { els.toast.className = ''; }, 2200);
   }
 
   function copyText(text, okMsg) {
@@ -137,15 +145,20 @@
     me.code = null;
     me.token = null;
     me.slot = null;
+    me.control = null;
   }
 
   /* =========================================================================
      표시용 이름/색
      ========================================================================= */
+  function mySlot() { return state && state.you != null ? state.you : (me.control == null ? -1 : me.control); }
+
   function playerOf(slot) {
     if (!state || !state.players) return null;
     for (var i = 0; i < state.players.length; i++) {
-      if (state.players[i].slot === slot) return state.players[i];
+      if (state.players[i].control === slot || (state.players[i].slot === slot && state.players[i].control == null)) {
+        return state.players[i];
+      }
     }
     return null;
   }
@@ -156,43 +169,40 @@
 
   function longName(slot) {
     if (slot == null || slot < 0) return NEUTRAL.name;
-    var p = playerOf(slot);
-    if (p) return p.isAI ? p.name + ' (AI)' : p.name;
+    if (state && state.names && state.names[slot]) {
+      var base = NATIONS[slot] ? NATIONS[slot].name : '';
+      return state.names[slot] === base ? base : state.names[slot] + ' · ' + NATIONS[slot].short;
+    }
     return NATIONS[slot] ? NATIONS[slot].name : '?';
   }
 
   function shortName(slot) {
     if (slot == null || slot < 0) return NEUTRAL.short;
-    var p = playerOf(slot);
-    if (p && !p.isAI) return truncate(p.name, 4);
-    return NATIONS[slot] ? NATIONS[slot].short : '?';
-  }
-
-  function myCount() {
-    if (!state || me.slot == null) return 0;
-    var c = 0;
-    for (var i = 0; i < state.regions.length; i++) {
-      if (state.regions[i].owner === me.slot) c++;
+    if (state && state.names && state.names[slot]) {
+      var base = NATIONS[slot] ? NATIONS[slot].name : '';
+      if (state.names[slot] !== base) return truncate(state.names[slot], 4);
     }
-    return c;
+    return NATIONS[slot] ? NATIONS[slot].short : '?';
   }
 
   function countOwned(owner) {
     if (!state) return 0;
     var c = 0;
-    for (var i = 0; i < state.regions.length; i++) {
-      if (state.regions[i].owner === owner) c++;
-    }
+    for (var i = 0; i < state.regions.length; i++) if (state.regions[i].owner === owner) c++;
     return c;
   }
 
   function totalTroops(owner) {
     if (!state) return 0;
     var t = 0;
-    for (var i = 0; i < state.regions.length; i++) {
-      if (state.regions[i].owner === owner) t += state.regions[i].troops;
-    }
+    for (var i = 0; i < state.regions.length; i++) if (state.regions[i].owner === owner) t += state.regions[i].troops;
     return t;
+  }
+
+  function armyOf(slot) {
+    if (!state || !state.army) return null;
+    for (var i = 0; i < state.army.length; i++) if (state.army[i].slot === slot) return state.army[i];
+    return null;
   }
 
   function pactBetween(a, b) {
@@ -213,7 +223,7 @@
 
   function relationWith(slot) {
     if (!state || !state.relations) return 0;
-    var lo = Math.min(me.slot, slot), hi = Math.max(me.slot, slot);
+    var lo = Math.min(mySlot(), slot), hi = Math.max(mySlot(), slot);
     for (var i = 0; i < state.relations.length; i++) {
       var r = state.relations[i];
       if (r.a === lo && r.b === hi) return r.value;
@@ -234,31 +244,35 @@
     return { cls: 'trusted', label: '신뢰 +' + v };
   }
 
+  function secLeft(t) {
+    return Math.max(0, Math.ceil((t.left || 0) / 1000));
+  }
+
   function treatyLabel(t) {
     if (!t) return '교전 중';
-    if (t.type === 'ally') return '동맹 ' + t.turns + '턴';
-    if (t.type === 'tribute') return '조공 ' + t.turns + '턴';
-    return '불가침 ' + t.turns + '턴';
+    if (t.type === 'ally') return '동맹 ' + secLeft(t) + '초';
+    if (t.type === 'tribute') return '조공 ' + secLeft(t) + '초';
+    return '불가침 ' + secLeft(t) + '초';
   }
 
   function treatyPillClass(t) {
     if (!t) return 'war';
     if (t.type === 'ally') return 'ally';
-    if (t.type === 'tribute') return 'truce';
     return 'truce';
   }
 
   function callForMe() {
     if (!state || !state.calls) return null;
+    var s = mySlot();
     for (var i = 0; i < state.calls.length; i++) {
-      if (state.calls[i].to === me.slot && state.calls[i].turns > 0) return state.calls[i];
+      if (state.calls[i].to === s && state.calls[i].left > 0) return state.calls[i];
     }
     return null;
   }
 
   function isEnemyOfMe(slot) {
     if (!state) return false;
-    return slot !== me.slot && state.active[slot] && countOwned(slot) > 0 && !pactBetween(me.slot, slot);
+    return slot !== mySlot() && state.active[slot] && countOwned(slot) > 0 && !pactBetween(mySlot(), slot);
   }
 
   function hasCallTarget(allySlot) {
@@ -270,16 +284,16 @@
     return false;
   }
 
-  function isMyTurn() {
-    return !!(state && !state.over && state.phase === 'player' && state.cur === me.slot);
+  function canAct() {
+    var s = mySlot();
+    return !!(state && !state.over && s >= 0 && !state.delegate && countOwned(s) > 0);
   }
 
   function canAidNow() {
-    if (!state || me.slot == null) return false;
-    if (state.reinforcements >= TUNING.aidAmount) return true;
+    var s = mySlot();
+    if (!state || s < 0) return false;
     for (var i = 0; i < state.regions.length; i++) {
-      var r = state.regions[i];
-      if (r.owner === me.slot && r.troops >= TUNING.aidThreshold) return true;
+      if (state.regions[i].owner === s && state.regions[i].troops >= 6) return true;
     }
     return false;
   }
@@ -287,10 +301,22 @@
   function pendingForMe() {
     if (!state) return [];
     var out = [];
+    var s = mySlot();
     for (var i = 0; i < state.proposals.length; i++) {
-      if (state.proposals[i].to === me.slot) out.push(state.proposals[i]);
+      if (state.proposals[i].to === s) out.push(state.proposals[i]);
     }
     return out;
+  }
+
+  function soloGame() {
+    if (!state) return false;
+    var humans = 0;
+    for (var i = 0; i < state.players.length; i++) if (!state.players[i].isAI) humans++;
+    return humans <= 1;
+  }
+
+  function isHost() {
+    return !!(state && state.host === me.slot);
   }
 
   /* =========================================================================
@@ -364,6 +390,7 @@
       me.token = msg.token;
       me.slot = msg.slot;
       me.name = msg.name;
+      me.control = msg.slot;
       saveSession();
       if (msg.type === 'resumed') {
         hideBoot();
@@ -375,15 +402,14 @@
     if (msg.type === 'lobby') {
       room = msg;
       hideBoot();
-      if (msg.started && !state) return; // 곧 state 가 따라옴
+      if (msg.started && !state) return;
       if (state) {
-        // 다시 하기 등으로 로비로 돌아온 경우
         state = null;
         selected = null;
-        spectating = false;
+        spectatePick = null;
         resultShown = false;
         elimShown = false;
-        lastTurnKey = '';
+        marches = {};
         closeDiplo();
         hideResult();
         hideElim();
@@ -397,28 +423,31 @@
     if (msg.type === 'started') {
       hideBoot();
       showGame();
+      if (msg.sim) toast('AI 시뮬레이션 · 나라를 탭해 난입!', 'good');
       return;
     }
 
-    if (msg.type === 'state') {
-      onState(msg);
-      return;
-    }
+    if (msg.type === 'state') { onState(msg); return; }
+    if (msg.type === 'tick') { onTick(msg); return; }
 
     if (msg.type === 'event') {
-      if (msg.text) {
-        var isTurnNote = /님의 차례입니다/.test(msg.text);
-        if (!isTurnNote) toast(msg.text, msg.kind || 'info');
+      if (msg.at != null) flashes[msg.at] = { at: Date.now(), kind: msg.kind === 'good' ? 'good' : 'bad' };
+      var kind = msg.kind || 'info';
+      var sNow = mySlot();
+      var mineHere = sNow >= 0 && (msg.attacker === sNow || msg.defender === sNow);
+      if (msg.text && (!msg.battle || mineHere)) {
+        if (kind === 'move') {
+          if (els.toast && els.toast.className.indexOf('show') < 0) toast(msg.text, 'info');
+        } else {
+          toast(msg.text, kind);
+        }
       }
-      if (msg.kind === 'bad') vibrate(14);
+      if (kind === 'bad' && mineHere) vibrate(16);
       return;
     }
 
     if (msg.type === 'error') {
       toast(msg.message || '문제가 생겼어요', 'bad');
-      if (msg.code === 'ROOM_STARTED' || msg.code === 'NO_ROOM' || msg.code === 'ROOM_FULL') {
-        // 참가 실패 → 홈 유지
-      }
       return;
     }
 
@@ -438,6 +467,7 @@
       clearSession();
       state = null;
       room = null;
+      marches = {};
       hideBoot();
       hideGame();
       closeDiplo();
@@ -454,61 +484,110 @@
   /* =========================================================================
      상태 반영
      ========================================================================= */
+  function syncMarches(list, reset) {
+    var now = (window.performance && performance.now) ? performance.now() : Date.now();
+    var seen = {};
+    if (reset) marches = {};
+    for (var i = 0; i < list.length; i++) {
+      var m = list[i];
+      seen[m.id] = true;
+      var cur = marches[m.id];
+      if (!cur) {
+        cur = { id: m.id, owner: m.owner, from: m.from, to: m.to, n: m.n, dur: m.dur || 1200 };
+        cur.startLocal = now - ((m.dur || 1200) - (m.left || 0));
+        marches[m.id] = cur;
+      } else {
+        cur.owner = m.owner; cur.from = m.from; cur.to = m.to; cur.n = m.n;
+        cur.dur = m.dur || cur.dur;
+        cur.startLocal = now - ((m.dur || cur.dur) - (m.left || 0));
+      }
+    }
+    for (var id in marches) if (!seen[id]) delete marches[id];
+  }
+
   function onState(s) {
     var first = !state;
     state = s;
     hideBoot();
     hideNet();
     showGame();
-    if (s.you != null) me.slot = s.you;
+    if (s.you != null) me.control = s.you;
     if (s.code) me.code = s.code;
+    computeMapBox();
+    syncMarches(s.marches || [], true);
 
-    pendingDeploy = 0;
-
-    if (first || lastTurnKey.indexOf('over') === 0) {
+    if (first) {
+      selected = null;
       resultShown = false;
       elimShown = false;
     }
+    if (mySlot() >= 0) spectatePick = null;
 
-    var key = s.cur + '-' + s.turn + '-' + s.phase;
-    var turnChanged = key !== lastTurnKey;
-    var mine = isMyTurn();
-
-    if (first || turnChanged) {
-      selected = null;
-      deployAll = false;
-      confirmEnd = false;
-      uiMode = s.reinforcements > 0 ? 'deploy' : 'attack';
-      if (!first && mine) {
-        toast('내 차례! 병력 ' + s.reinforcements + '개를 배치하세요', 'good');
-        vibrate([12, 30, 12]);
-      }
-      lastTurnKey = key;
-    }
-
-    if (mine && s.reinforcements <= 0 && uiMode === 'deploy') uiMode = 'attack';
-
-    // 선택한 영토가 더 이상 내 것이 아니면 해제
     if (selected != null) {
       var sr = s.regions[selected];
-      if (!sr || sr.owner !== me.slot || sr.troops < 2) selected = null;
+      if (!sr || sr.owner !== mySlot()) selected = null;
     }
 
     updateHUD();
-    render();
     updateBanner();
-    updateSpecChip();
+    renderSpectate();
     renderMenuPlayers();
-    if (els.diploModal.classList.contains('show')) renderDiplo();
+    renderRatio();
+    maybeShowProposal();
+    requestAnimationFrame(function () { resizeCanvas(); });
+
+    if (s.over) showResult();
+    else if (!first) hideResult();
+    maybeShowElim();
+  }
+
+  function onTick(t) {
+    if (!state) return;
+    state.time = t.time;
+    state.over = t.over;
+    state.speed = t.speed;
+    state.sim = t.sim;
+    state.delegate = t.delegate;
+    if (t.you != null) state.you = t.you;
+    if (t.regions) {
+      for (var i = 0; i < state.regions.length && i < t.regions.length; i++) {
+        state.regions[i].owner = t.regions[i][0];
+        state.regions[i].troops = t.regions[i][1];
+      }
+    }
+    syncMarches(t.marches || [], false);
+    state.treaties = t.treaties || [];
+    state.proposals = t.proposals || [];
+    state.relations = t.relations || [];
+    state.reputation = t.reputation || {};
+    state.calls = t.calls || [];
+    state.army = t.army || [];
+    state.leader = t.leader || null;
+    state.players = t.players || state.players;
+    state.stats = t.stats || state.stats;
+    if (t.diploLog) state.diploLog = t.diploLog;
+    if (t.log) state.log = t.log;
+
+    if (selected != null) {
+      var sr = state.regions[selected];
+      if (!sr || sr.owner !== mySlot()) selected = null;
+    }
+    updateHUD();
+    updateBanner();
+    renderSpectate();
+    renderMenuPlayers();
+
+    var now = Date.now();
+    if (els.diploModal.classList.contains('show') && now - lastDiploRender > 900) {
+      lastDiploRender = now;
+      renderDiplo();
+    }
     maybeShowProposal();
 
-    if (s.over) {
-      showResult();
-    } else if (me.slot != null && countOwned(me.slot) === 0) {
+    if (t.over) showResult();
+    else {
+      if (resultShown) hideResult();
       maybeShowElim();
-    } else if (elimShown) {
-      // 다시 하기 등으로 살아났다면
-      hideElim();
     }
   }
 
@@ -518,11 +597,9 @@
   function showGame() {
     els.lobby.classList.add('hidden');
     els.app.classList.remove('hidden');
-    if (!booted) booted = true;
     requestAnimationFrame(function () {
       resizeCanvas();
       updateHUD();
-      render();
     });
   }
 
@@ -548,9 +625,7 @@
     els.bootText.textContent = text || '연결 중…';
     els.boot.classList.add('show');
   }
-  function hideBoot() {
-    if (els.boot) els.boot.classList.remove('show');
-  }
+  function hideBoot() { if (els.boot) els.boot.classList.remove('show'); }
 
   function showNet(text) {
     if (els.netText && text) els.netText.textContent = text;
@@ -561,7 +636,7 @@
   }
 
   /* =========================================================================
-     로비 렌더
+     로비
      ========================================================================= */
   function renderRoom() {
     if (!room) return;
@@ -571,8 +646,7 @@
     var host = room.host === (me.slot == null ? -1 : me.slot);
     var players = room.players || [];
     var html = '';
-    var i;
-    for (i = 0; i < 4; i++) {
+    for (var i = 0; i < 4; i++) {
       var p = null;
       for (var k = 0; k < players.length; k++) if (players[k].slot === i) p = players[k];
       var nat = NATIONS[i];
@@ -606,7 +680,13 @@
     els.aiRow.classList.toggle('disabled', !host);
     els.aiToggle.disabled = !host;
 
-    var humanCount = players.length;
+    var speedBtns = els.roomSpeed.getElementsByTagName('button');
+    for (var s = 0; s < speedBtns.length; s++) {
+      speedBtns[s].className = 'seg-btn' + (Number(speedBtns[s].getAttribute('data-speed')) === (room.speed || 1) ? ' on' : '');
+      speedBtns[s].disabled = !host;
+    }
+
+    var humanCount = players.filter(function (p) { return !p.isAI; }).length;
     var canStart = host && (humanCount >= 2 || room.aiFill);
     els.btnStart.hidden = !host;
     els.btnStart.disabled = !canStart;
@@ -617,15 +697,14 @@
       if (humanCount >= 2) {
         note = humanCount + '명이 함께합니다' + (room.aiFill && humanCount < 4 ? ' · 남는 ' + (4 - humanCount) + '자리는 AI' : '') + '.';
       } else if (room.aiFill) {
-        note = '혼자 시작하면 AI 3개국과 겨룹니다. 친구가 들어오면 그 자리는 사람이 맡아요.';
+        note = '혼자 시작하면 AI 3개국과 실시간으로 겨룹니다. 친구가 들어오면 그 자리는 사람이 맡아요.';
       } else {
         note = '친구가 최소 한 명 더 들어와야 시작할 수 있어요.';
       }
     } else {
-      note = '방장이 시작하면 게임이 열립니다.';
+      note = '방장이 시작하면 게임이 열립니다. (지금 ' + humanCount + '명 대기 중)';
     }
     els.roomNote.textContent = note;
-    if (!host) els.roomNote.textContent = note + ' (지금 ' + humanCount + '명 대기 중)';
   }
 
   /* =========================================================================
@@ -633,100 +712,151 @@
      ========================================================================= */
   function updateHUD() {
     if (!state) return;
-    var mine = isMyTurn();
-    var owned = countOwned(state.cur);
+    var s = mySlot();
+    var owned = s >= 0 ? countOwned(s) : 0;
     var total = state.regions.length;
     var pct = total ? Math.round((owned / total) * 100) : 0;
+    var army = s >= 0 ? armyOf(s) : null;
 
-    els.statTurn.textContent = String(state.turn);
-    els.statWho.textContent = shortName(state.cur);
-    els.statWho.style.color = colorOf(state.cur);
-    els.statLand.textContent = owned + '/' + total + ' · ' + pct + '%';
-    els.statReinf.textContent = mine ? String(state.reinforcements) : '—';
+    els.statTime.textContent = mmss(state.time);
+    els.statLand.textContent = s >= 0 ? owned + '/' + total : total - countOwned(-1) + '/' + total;
+    els.statTroops.textContent = s >= 0 ? String(totalTroops(s)) : '—';
+    els.statProd.textContent = army ? (army.prod || 0).toFixed(1) + '/s' : '—';
+    els.btnSpeed.textContent = '×' + (state.speed || 1);
 
     var html = '';
     for (var i = 0; i < NATIONS.length; i++) {
       if (state.active && !state.active[i]) continue;
       var c = countOwned(i);
-      html += '<span class="leg' + (i === state.cur ? ' cur' : '') + (c === 0 ? ' dead' : '') +
-        '" style="color:' + NATIONS[i].color + '"><i class="dot"></i>' +
-        esc(shortName(i)) + ' <span class="n">' + c + '</span></span>';
+      var isLeader = state.leader && state.leader.slot === i;
+      html += '<span class="leg' + (i === s ? ' cur' : '') + (c === 0 ? ' dead' : '') +
+        '" style="color:' + NATIONS[i].color + '">' +
+        (isLeader ? '<b class="crown-ico">♛</b>' : '') +
+        '<i class="dot"></i>' + esc(shortName(i)) +
+        ' <span class="n">' + c + '</span></span>';
     }
     html += '<span class="leg' + (countOwned(-1) === 0 ? ' dead' : '') +
       '" style="color:#8fa0b8"><i class="dot"></i>중립 <span class="n">' + countOwned(-1) + '</span></span>';
     els.legend.innerHTML = html;
 
-    els.modeDeploy.disabled = !mine || state.reinforcements <= 0;
-    els.modeAttack.disabled = !mine;
-    els.modeDeploy.className = 'mode-btn' + (mine && uiMode === 'deploy' ? ' on' : '');
-    els.modeAttack.className = 'mode-btn' + (mine && uiMode === 'attack' ? ' on' : '');
+    // AI 위임 표시
+    var delegated = s >= 0 && state.delegate;
+    els.delegateBar.classList.toggle('hidden', !delegated);
+    els.ratioRow.classList.toggle('hidden', s < 0 || delegated || state.over);
+    var deadNow = s >= 0 && !state.over && countOwned(s) === 0 && !delegated;
+    els.specChip.classList.toggle('hidden', !deadNow);
+    if (deadNow) els.specChip.textContent = state.sim ? '탈락 · 관전 중 (다른 나라 참전 가능)' : '탈락 · 관전 중';
 
-    if (!mine || uiMode !== 'deploy' || state.reinforcements <= 0) {
-      els.btnAll.hidden = true;
-    } else {
-      els.btnAll.hidden = false;
-      els.btnAll.textContent = deployAll ? '전부' : '+1';
-      els.btnAll.className = 'chip-btn' + (deployAll ? ' on' : '');
-    }
+    // 속도 버튼은 호스트 + 혼자/시뮬레이션일 때만
+    var showSpeed = isHost() && soloGame();
+    els.btnSpeed.classList.toggle('hidden', !showSpeed);
 
-    els.btnEnd.disabled = !mine;
-    els.btnEnd.textContent = '턴 종료';
-
+    // 외교 버튼 알림
     var pend = pendingForMe().length;
     els.btnDiplo.className = pend > 0 ? 'has' : '';
     els.btnDiplo.innerHTML = pend > 0 ? '외교<i class="dotb"></i>' : '외교';
 
+    renderHint();
+  }
+
+  function renderHint() {
+    if (!state) return;
+    var s = mySlot();
     var hint = '';
     if (state.over) {
       hint = '게임이 끝났습니다';
-    } else if (!mine && state.phase === 'ai') {
-      hint = '<b style="color:' + colorOf(state.cur) + '">' + esc(longName(state.cur)) + '</b>의 턴 · 이동 중…';
-    } else if (!mine) {
-      hint = '<b style="color:' + colorOf(state.cur) + '">' + esc(longName(state.cur)) + '</b> 님의 차례를 기다리는 중';
-    } else if (uiMode === 'deploy' && state.reinforcements > 0) {
-      hint = '내 영토를 탭해 배치 · 남은 <b>' + state.reinforcements + '</b>개';
+    } else if (s < 0) {
+      hint = '관전 중 · 참전할 나라를 탭하세요 (' + (state.speed || 1) + '배속)';
+    } else if (state.delegate) {
+      hint = '🤖 AI가 대신 싸우는 중 · [조종 가져오기]로 직접 지휘';
+    } else if (countOwned(s) === 0) {
+      hint = '영토를 모두 잃었습니다 · 관전 중';
     } else if (selected != null) {
-      var s2 = state.regions[selected];
-      hint = '<b>' + esc(s2.name) + '</b> 병력 ' + s2.troops + ' · 빨강=공격 / 초록=이동';
+      var sel = state.regions[selected];
+      var send = Math.max(1, Math.min(sel.troops - 1, Math.floor(sel.troops * ratio)));
+      hint = '<b>' + esc(sel.name) + '</b> 병력 ' + sel.troops + ' · 보낼 <b>' + send +
+        '</b> · 옆 영토를 탭해 출정';
     } else {
-      hint = '병력 2 이상인 내 영토를 탭하세요';
+      hint = '내 영토를 탭하고 옆 영토를 탭하면 바로 출정 · 보낼 병력 ' +
+        Math.round(ratio * 100) + '%';
     }
     var call = callForMe();
-    if (call && mine) hint += ' · 🤝 ' + esc(shortName(call.target)) + ' 공동 참전';
+    if (call && s >= 0) hint += ' · 🤝 ' + esc(shortName(call.target)) + ' 공동 참전';
     els.hint.innerHTML = hint;
   }
 
   function updateBanner() {
-    if (!state || state.over) {
-      els.turnBanner.className = '';
-      return;
-    }
-    var text;
-    var mine = isMyTurn();
-    if (mine) {
-      text = (state.reinforcements > 0 ? '내 차례 · 배치 ' + state.reinforcements + '개' : '내 차례 · 공격 또는 이동');
-      els.turnBanner.className = 'show mine';
-    } else if (state.phase === 'ai' && state.cur === me.slot) {
-      text = '다음 차례로 넘기는 중 <span class="sp"><i></i><i></i><i></i></span>';
-      els.turnBanner.className = 'show';
-    } else if (state.phase === 'ai') {
-      text = '<b style="color:' + colorOf(state.cur) + '">' + esc(longName(state.cur)) +
-        '</b> 생각 중 <span class="sp"><i></i><i></i><i></i></span>';
-      els.turnBanner.className = 'show';
+    if (!state) { els.liveBanner.className = ''; return; }
+    var s = mySlot();
+    var text = '';
+    var cls = '';
+    if (state.over) {
+      var w = state.over.winner;
+      text = w < 0 ? '무승부' : '<b style="color:' + colorOf(w) + '">' + esc(longName(w)) + '</b> 승리';
+      cls = 'show';
+    } else if (s < 0) {
+      var lead = state.leader;
+      text = '관전 중 · ' + (lead ? '1위 <b style="color:' + colorOf(lead.slot) + '">' +
+        esc(shortName(lead.slot)) + '</b> ' + lead.share + '%' : '난전 중');
+      cls = 'show';
+    } else if (state.delegate) {
+      text = '';
+      cls = '';
+    } else if (countOwned(s) === 0) {
+      text = '탈락 · 관전 중';
+      cls = 'show';
     } else {
-      text = '<b style="color:' + colorOf(state.cur) + '">' + esc(longName(state.cur)) + '</b> 님의 차례';
-      els.turnBanner.className = 'show';
+      text = '';
+      cls = '';
     }
-    els.turnBanner.innerHTML = text;
-  }
-
-  function updateSpecChip() {
-    var dead = !!(state && !state.over && me.slot != null && countOwned(me.slot) === 0);
-    els.specChip.classList.toggle('hidden', !(dead && spectating));
+    els.liveBanner.innerHTML = text;
+    els.liveBanner.className = cls;
   }
 
   /* =========================================================================
-     캔버스 렌더 (single-file 버전과 같은 그림)
+     관전 · 난입
+     ========================================================================= */
+  function renderSpectate() {
+    if (!state) return;
+    var s = mySlot();
+    var show = s < 0 && !state.over;
+    els.spectateBar.classList.toggle('hidden', !show);
+    if (!show) return;
+
+    var html = '';
+    for (var i = 0; i < NATIONS.length; i++) {
+      if (state.active && !state.active[i]) continue;
+      var c = countOwned(i);
+      if (c === 0) continue;
+      var a = armyOf(i);
+      html += '<button class="sp-nation' + (spectatePick === i ? ' on' : '') + '" type="button" data-slot="' + i + '">' +
+        '<i class="dot" style="color:' + NATIONS[i].color + '"></i>' +
+        '<span class="sp-nm">' + esc(shortName(i)) + '</span>' +
+        '<span class="sp-n">' + c + ' · ' + (a ? a.troops : 0) + '</span>' +
+      '</button>';
+    }
+    els.spNations.innerHTML = html;
+    els.btnJump.disabled = spectatePick == null;
+    if (spectatePick == null) {
+      els.spPick.textContent = '참전할 나라를 탭하세요';
+    } else {
+      els.spPick.textContent = NATIONS[spectatePick].name + ' 로 참전합니다';
+    }
+  }
+
+  function pickNation(slot) {
+    if (slot == null || slot < 0) return;
+    if (!state || !state.active[slot] || countOwned(slot) === 0) {
+      toast('그 나라는 참전할 수 없어요', 'warn');
+      return;
+    }
+    spectatePick = slot;
+    renderSpectate();
+    vibrate(8);
+  }
+
+  /* =========================================================================
+     캔버스 렌더
      ========================================================================= */
   function buildBackground() {
     var w = canvas.width, h = canvas.height;
@@ -765,6 +895,29 @@
     lightGrad.addColorStop(1, 'rgba(0,0,0,0.22)');
   }
 
+  function computeMapBox() {
+    if (!state) return;
+    var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (var i = 0; i < state.regions.length; i++) {
+      var poly = state.regions[i].poly;
+      for (var k = 0; k < poly.length; k++) {
+        var p = poly[k];
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+    }
+    if (!isFinite(minX)) return;
+    var pad = 34;
+    mapBox = {
+      x: minX - pad,
+      y: minY - pad,
+      w: (maxX - minX) + pad * 2,
+      h: (maxY - minY) + pad * 2
+    };
+  }
+
   function resizeCanvas() {
     if (!canvas || !mapWrap) return;
     var rect = mapWrap.getBoundingClientRect();
@@ -773,20 +926,74 @@
     dpr = Math.min(window.devicePixelRatio || 1, 3);
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
-
-    scale = Math.min(w / VW, h / VH);
-    offX = (w - VW * scale) / 2;
-    offY = (h - VH * scale) / 2;
-
+    scale = Math.min(w / mapBox.w, h / mapBox.h);
+    offX = (w - mapBox.w * scale) / 2 - mapBox.x * scale;
+    offY = (h - mapBox.h * scale) / 2 - mapBox.y * scale;
     buildBackground();
     buildLightGradient();
     render();
   }
 
+  function drawMarches(ts) {
+    var ids = Object.keys(marches);
+    for (var k = 0; k < ids.length; k++) {
+      var m = marches[ids[k]];
+      var from = state.regions[m.from];
+      var to = state.regions[m.to];
+      if (!from || !to) continue;
+      var prog = clampNum((ts - m.startLocal) / (m.dur || 1200), 0, 1);
+      var x = from.cx + (to.cx - from.cx) * prog;
+      var y = from.cy + (to.cy - from.cy) * prog;
+      var col = colorOf(m.owner);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(from.cx, from.cy);
+      ctx.lineTo(to.cx, to.cy);
+      ctx.setLineDash([6 / scale, 7 / scale]);
+      ctx.lineWidth = 1.6 / scale;
+      ctx.strokeStyle = hexA(col, 0.28 + 0.2 * (1 - prog));
+      ctx.stroke();
+      ctx.restore();
+
+      // 이동 부대 표식
+      ctx.beginPath();
+      ctx.arc(x, y, 9 / scale, 0, Math.PI * 2);
+      ctx.fillStyle = hexA(col, 0.92);
+      ctx.fill();
+      ctx.lineWidth = 2 / scale;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.stroke();
+    }
+  }
+
+  function drawMarchesLabels() {
+    var ids = Object.keys(marches);
+    var ts = (window.performance && performance.now) ? performance.now() : Date.now();
+    for (var k = 0; k < ids.length; k++) {
+      var m = marches[ids[k]];
+      var from = state.regions[m.from];
+      var to = state.regions[m.to];
+      if (!from || !to) continue;
+      var prog = clampNum((ts - m.startLocal) / (m.dur || 1200), 0, 1);
+      var x = (from.cx + (to.cx - from.cx) * prog) * scale + offX;
+      var y = (from.cy + (to.cy - from.cy) * prog) * scale + offY;
+      var px = clampNum(9 * scale * 0.9, 8, 13);
+      ctx.font = '800 ' + px.toFixed(1) + 'px -apple-system, "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = px * 0.32;
+      ctx.strokeStyle = 'rgba(3,7,14,0.9)';
+      ctx.strokeText(String(m.n), x, y);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(m.n), x, y);
+    }
+  }
+
   function render(now) {
     if (!ctx || !state) return;
-    var t = now || (window.performance && performance.now ? performance.now() : Date.now());
-    var meSlot = me.slot;
+    var t = now || ((window.performance && performance.now) ? performance.now() : Date.now());
+    var s = mySlot();
     var regions = state.regions;
     var i;
 
@@ -838,14 +1045,33 @@
       ctx.stroke();
     }
 
+    // 공격 · 합류 섬광
+    var nowMs = Date.now();
+    for (var fid in flashes) {
+      var f = flashes[fid];
+      var age = nowMs - f.at;
+      if (age > 900) { delete flashes[fid]; continue; }
+      var fr = regions[fid];
+      if (!fr) continue;
+      var ph = age / 900;
+      ctx.beginPath();
+      addPoly(ctx, fr.poly);
+      ctx.fillStyle = (f.kind === 'good' ? 'rgba(74,222,128,' : 'rgba(248,113,113,') +
+        (0.3 * (1 - ph)).toFixed(3) + ')';
+      ctx.fill();
+      ctx.lineWidth = (3 * (1 - ph)) / scale;
+      ctx.strokeStyle = (f.kind === 'good' ? 'rgba(134,239,172,' : 'rgba(252,165,165,') +
+        (0.85 * (1 - ph)).toFixed(3) + ')';
+      ctx.stroke();
+    }
+
     var pulse = 0.5 + 0.5 * Math.sin(t / 260);
-    if (selected != null && isMyTurn()) {
+    if (selected != null && canAct()) {
       var sel = regions[selected];
       if (sel) {
         for (i = 0; i < sel.neighbors.length; i++) {
           var nb = regions[sel.neighbors[i]];
-          var isEnemy = nb.owner !== meSlot;
-          var pact = (nb.owner >= 0 && nb.owner !== meSlot) ? pactBetween(meSlot, nb.owner) : null;
+          var pact = (nb.owner >= 0 && nb.owner !== s) ? pactBetween(s, nb.owner) : null;
           ctx.beginPath();
           addPoly(ctx, nb.poly);
           if (pact) {
@@ -856,6 +1082,7 @@
             ctx.stroke();
             continue;
           }
+          var isEnemy = nb.owner !== s;
           ctx.fillStyle = isEnemy
             ? 'rgba(248,113,113,' + (0.14 + 0.14 * pulse).toFixed(3) + ')'
             : 'rgba(74,222,128,' + (0.12 + 0.12 * pulse).toFixed(3) + ')';
@@ -877,6 +1104,21 @@
       }
     }
 
+    // 관전 중 고른 나라 테두리
+    if (mySlot() < 0 && spectatePick != null) {
+      for (i = 0; i < regions.length; i++) {
+        if (regions[i].owner !== spectatePick) continue;
+        ctx.beginPath();
+        addPoly(ctx, regions[i].poly);
+        ctx.lineWidth = (2.4 + pulse * 1.2) / scale;
+        ctx.strokeStyle = 'rgba(255,255,255,' + (0.55 + 0.4 * pulse).toFixed(3) + ')';
+        ctx.stroke();
+      }
+    }
+
+    drawMarches(t);
+    drawMarchesLabels();
+
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     for (i = 0; i < regions.length; i++) {
       var reg = regions[i];
@@ -893,6 +1135,12 @@
       ctx.strokeText(String(reg.troops), x, y - rad * 0.1);
       ctx.fillText(String(reg.troops), x, y - rad * 0.1);
 
+      if (reg.cap) {
+        ctx.font = '700 ' + clampNum(rad * 0.26, 8, 11).toFixed(1) + 'px -apple-system, "Segoe UI", system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(255,236,170,0.95)';
+        ctx.fillText('♛', x, y - rad * 0.62);
+      }
+
       if (rad >= 23) {
         var namePx = clampNum(rad * 0.3, 8, 11);
         var ny = y + rad * 0.6;
@@ -906,13 +1154,8 @@
     }
   }
 
-  function refresh() {
-    render();
-    updateHUD();
-  }
-
   /* =========================================================================
-     지도 터치
+     지도 터치 → 출정
      ========================================================================= */
   function hitRegion(v) {
     var best = -1, bestD = Infinity;
@@ -947,111 +1190,127 @@
     };
     var idx = hitRegion(v);
     if (idx < 0) {
-      if (selected != null) { selected = null; refresh(); }
+      if (selected != null) { selected = null; render(); renderHint(); }
       return;
     }
-    if (!isMyTurn()) {
-      var r = state.regions[idx];
-      var pact = r.owner >= 0 && r.owner !== me.slot ? pactBetween(me.slot, r.owner) : null;
-      toast(r.name + ' · ' + longName(r.owner) + ' · 병력 ' + r.troops +
-        (pact ? ' · ' + (pact.type === 'ally' ? '동맹' : '조약') + ' ' + pact.turns + '턴' : ''), 'info');
-      return;
-    }
-    handleRegionTap(idx);
-  }
-
-  function handleRegionTap(idx) {
     var r = state.regions[idx];
-    var mine = r.owner === me.slot;
+    var s = mySlot();
 
-    if (uiMode === 'deploy' && state.reinforcements > 0) {
-      if (mine) {
-        var amount = deployAll ? 'all' : 1;
-        var avail = state.reinforcements - pendingDeploy;
-        if (avail <= 0) return;
-        pendingDeploy += deployAll ? avail : 1;
-        send({ type: 'action', action: { kind: 'deploy', idx: idx, amount: amount } });
-        vibrate(6);
-      } else {
-        toast('배치는 내 영토에만 · 공격은 [공격 · 이동]', 'warn');
-      }
+    // 관전 중: 나라 고르기
+    if (s < 0) {
+      if (r.owner >= 0) pickNation(r.owner);
+      else toast(r.name + ' · 중립 · 병력 ' + r.troops, 'info');
       return;
     }
 
-    if (uiMode === 'deploy') {
-      uiMode = 'attack';
-      refresh();
+    if (!canAct()) {
+      if (state.over) return;
+      if (state.delegate) toast('AI가 대신 싸우는 중 · [조종 가져오기]를 누르세요', 'warn');
+      else if (countOwned(s) === 0) toast(r.name + ' · ' + longName(r.owner) + ' · 병력 ' + r.troops, 'info');
+      return;
+    }
+
+    if (r.owner === s) {
+      if (selected === idx) {
+        selected = null;
+        render();
+        renderHint();
+        return;
+      }
+      if (selected != null) {
+        var prev = state.regions[selected];
+        if (prev && prev.owner === s && prev.neighbors.indexOf(idx) >= 0) {
+          sendMove(selected, idx);
+          return;
+        }
+      }
+      selected = idx;
+      vibrate(6);
+      render();
+      renderHint();
+      return;
     }
 
     if (selected == null) {
-      if (mine && r.troops >= 2) {
-        selected = idx;
-        refresh();
-      } else if (mine) {
-        toast(r.name + ' 병력 1 · 먼저 배치하세요', 'warn');
-      } else {
-        toast('내 영토를 먼저 선택하세요', 'warn');
-      }
+      toast(r.name + ' · ' + longName(r.owner) + ' · 병력 ' + r.troops, 'info');
       return;
     }
-
-    if (selected === idx) {
-      selected = null;
-      refresh();
+    var src = state.regions[selected];
+    if (!src || src.owner !== s) { selected = null; return; }
+    if (src.neighbors.indexOf(idx) < 0) {
+      toast('인접한 영토로만 보낼 수 있어요', 'warn');
       return;
     }
-
-    var sel = state.regions[selected];
-    if (sel.neighbors.indexOf(idx) < 0) {
-      if (mine && r.troops >= 2) selected = idx;
-      else selected = null;
-      refresh();
-      return;
-    }
-
-    if (mine) {
-      send({ type: 'action', action: { kind: 'transfer', from: selected, to: idx } });
-      selected = null;
-      refresh();
-      return;
-    }
-
     if (r.owner >= 0) {
-      var pact = pactBetween(me.slot, r.owner);
+      var pact = pactBetween(s, r.owner);
       if (pact) {
-        toast((pact.type === 'ally' ? '동맹' : '불가침 조약') + ' 중 · ' + pact.turns + '턴 남음 · 먼저 파기하세요', 'warn');
-        vibrate(14);
+        toast((pact.type === 'ally' ? '동맹' : '조약') + ' 중 · ' + secLeft(pact) + '초 남음 · 먼저 파기하세요', 'warn');
+        vibrate(16);
         return;
       }
     }
-    send({ type: 'action', action: { kind: 'attack', from: selected, to: idx } });
-    if (sel.troops < 2) selected = null;
-    refresh();
+    sendMove(selected, idx);
   }
 
-  function setMode(mode) {
-    if (!isMyTurn()) return;
-    if (mode === 'deploy' && state.reinforcements <= 0) {
-      toast('배치할 병력이 없습니다', 'warn');
+  function sendMove(from, to) {
+    if (!state || !canAct()) return;
+    var src = state.regions[from];
+    if (!src || src.owner !== mySlot() || src.troops < 2) {
+      selected = null;
+      render();
       return;
     }
-    uiMode = mode;
-    if (mode !== 'attack') selected = null;
-    else selected = null;
-    refresh();
+    var n = Math.max(1, Math.min(src.troops - 1, Math.floor(src.troops * ratio)));
+    var ok = send({ type: 'action', action: { kind: 'send', from: from, to: to, ratio: ratio } });
+    if (!ok) return;
+    src.troops = Math.max(1, src.troops - n);
+    var target = state.regions[to];
+    vibrate(target && target.owner === mySlot() ? 5 : 12);
+    if (src.troops < 2) selected = null;
+    updateHUD();
+    render();
   }
 
-  function endTurn() {
-    if (!isMyTurn()) return;
-    if (state.reinforcements > 0 && !confirmEnd) {
-      confirmEnd = true;
-      toast('배치 ' + state.reinforcements + '개가 남았습니다 · 한 번 더 누르면 턴 종료', 'warn');
-      setTimeout(function () { confirmEnd = false; }, 3200);
-      return;
+  /* =========================================================================
+     비율 · 속도
+     ========================================================================= */
+  function renderRatio() {
+    var btns = els.ratioRow.getElementsByTagName('button');
+    for (var i = 0; i < btns.length; i++) {
+      var v = Number(btns[i].getAttribute('data-ratio'));
+      btns[i].className = 'ratio-btn' + (Math.abs(v - ratio) < 0.01 ? ' on' : '');
     }
-    confirmEnd = false;
-    selected = null;
-    send({ type: 'action', action: { kind: 'end' } });
+    renderHint();
+  }
+
+  function setRatio(v) {
+    ratio = clampNum(v, 0.1, 1);
+    storageSet(RATIO_KEY, String(ratio));
+    renderRatio();
+    render();
+    vibrate(5);
+  }
+
+  function cycleSpeed() {
+    if (!state) return;
+    var cur = state.speed || 1;
+    var idx = SPEEDS.indexOf(cur);
+    var next = SPEEDS[(idx + 1) % SPEEDS.length];
+    send({ type: 'speed', value: next });
+    toast('속도 ×' + next, 'info');
+  }
+
+  function setSpeed(v) {
+    if (state) state.speed = v;
+    updateHUD();
+    var segs = [els.menuSpeed, els.roomSpeed];
+    for (var k = 0; k < segs.length; k++) {
+      if (!segs[k]) continue;
+      var btns = segs[k].getElementsByTagName('button');
+      for (var i = 0; i < btns.length; i++) {
+        btns[i].className = 'seg-btn' + (Number(btns[i].getAttribute('data-speed')) === v ? ' on' : '');
+      }
+    }
   }
 
   /* =========================================================================
@@ -1073,23 +1332,22 @@
 
   function renderDiplo() {
     if (!state) return;
+    lastDiploRender = Date.now();
     var scrollTop = els.diploList.scrollTop;
     var pacts = 0, pend = pendingForMe().length;
     var html = '';
     var others = 0;
-    var myTurnNow = isMyTurn();
+    var s = mySlot();
+    var act = canAct();
     var canAid = canAidNow();
-    var anyEnemy = false;
-    var j;
-    for (j = 0; j < NATIONS.length; j++) if (isEnemyOfMe(j)) anyEnemy = true;
 
     for (var i = 0; i < NATIONS.length; i++) {
       if (state.active && !state.active[i]) continue;
-      if (i === me.slot) continue;
+      if (i === s) continue;
       if (countOwned(i) === 0) continue;
       others++;
       var n = NATIONS[i];
-      var tr = pactBetween(me.slot, i);
+      var tr = pactBetween(s, i);
       var rel = relationWith(i);
       var info = relationInfo(rel);
       var rep = reputationOf(i);
@@ -1097,8 +1355,8 @@
       if (tr) pacts++;
       var relWidth = Math.min(50, Math.abs(rel) / 2);
       var relLeft = rel >= 0 ? 50 : 50 - relWidth;
-      var canAlly = !!tr && tr.type === 'truce' && myTurnNow;
-      var canCall = !!tr && tr.type === 'ally' && hasCallTarget(i) && myTurnNow;
+      var canAlly = !!tr && tr.type === 'truce' && act;
+      var canCall = !!tr && tr.type === 'ally' && hasCallTarget(i) && act;
 
       html += '<div class="diplo-item">' +
         '<div class="diplo-head">' +
@@ -1116,17 +1374,17 @@
           '" style="left:' + relLeft + '%;width:' + relWidth + '%"></i></div>' +
         '<div class="diplo-btns">' +
           '<button class="dbtn" type="button" data-act="truce" data-id="' + i + '"' +
-            (tr || !myTurnNow ? ' disabled' : '') + '>불가침</button>' +
+            (tr || !act ? ' disabled' : '') + '>불가침</button>' +
           '<button class="dbtn ally" type="button" data-act="ally" data-id="' + i + '"' +
             (canAlly ? '' : ' disabled') + '>동맹</button>' +
           '<button class="dbtn" type="button" data-act="aid" data-id="' + i + '"' +
-            (!canAid || !myTurnNow ? ' disabled' : '') + '>지원 +' + TUNING.aidAmount + '</button>' +
+            (!canAid || !act ? ' disabled' : '') + '>지원 +3</button>' +
           '<button class="dbtn gold" type="button" data-act="tribute" data-id="' + i + '"' +
-            (tr || !myTurnNow ? ' disabled' : '') + '>조공</button>' +
+            (tr || !act ? ' disabled' : '') + '>조공</button>' +
           '<button class="dbtn" type="button" data-act="cede" data-id="' + i + '"' +
-            (!myTurnNow || countOwned(me.slot) === 0 ? ' disabled' : '') + '>영토</button>' +
+            (!act || countOwned(s) === 0 ? ' disabled' : '') + '>영토</button>' +
           '<button class="dbtn warn" type="button" data-act="break" data-id="' + i + '"' +
-            (!tr || !myTurnNow ? ' disabled' : '') + '>파기</button>' +
+            (!tr || !act ? ' disabled' : '') + '>파기</button>' +
           (canCall ? '<button class="dbtn call" type="button" data-act="call" data-id="' + i +
             '">공동 참전 요청</button>' : '') +
         '</div>' +
@@ -1135,10 +1393,11 @@
     if (!others) html = '<p class="empty-note">지금은 외교할 상대국이 없습니다.</p>';
     els.diploList.innerHTML = html;
     els.diploList.scrollTop = scrollTop;
-    els.diploSub.textContent = '신뢰 ' + reputationOf(me.slot) + ' · 조약 ' + pacts + '건' +
-      (pend ? ' · 제안 ' + pend + '건 대기' : '');
+    els.diploSub.textContent = (s >= 0 ? '신뢰 ' + reputationOf(s) : '관전') +
+      ' · 조약 ' + pacts + '건' + (pend ? ' · 제안 ' + pend + '건 대기' : '');
     var myCall = callForMe();
-    if (myCall) els.diploSub.textContent += ' · 🤝 ' + shortName(myCall.target);
+    if (myCall) els.diploSub.textContent += ' · 🤝 ' + shortName(myCall.target) +
+      ' ' + Math.ceil(myCall.left / 1000) + '초';
     renderDiploFeed();
   }
 
@@ -1150,7 +1409,7 @@
       return;
     }
     var html = '';
-    for (var i = log.length - 1; i >= 0 && i >= log.length - 7; i--) {
+    for (var i = log.length - 1; i >= 0 && i >= log.length - 8; i--) {
       var e = log[i];
       var d = new Date(e.at || Date.now());
       var hh = ('0' + d.getHours()).slice(-2);
@@ -1162,11 +1421,11 @@
   }
 
   function doDiploAction(act, id) {
-    if (!state || !isMyTurn()) {
-      toast('내 차례에만 외교할 수 있어요', 'warn');
+    if (!state || !canAct()) {
+      toast(state && state.delegate ? 'AI가 대신 싸우는 중 · 조종을 가져오세요' : '지금은 외교할 수 없어요', 'warn');
       return;
     }
-    if (id === me.slot) return;
+    if (id === mySlot()) return;
 
     if (act === 'truce') {
       send({ type: 'action', action: { kind: 'propose', to: id } });
@@ -1198,7 +1457,7 @@
   }
 
   /* =========================================================================
-     조공 · 영토 할양 · 공동 참전 선택
+     조공 · 영토 할양 · 공동 참전
      ========================================================================= */
   var tributeCtx = { to: null, mode: 'demand', amount: 1 };
   var cedeCtx = { to: null, regionId: null };
@@ -1222,15 +1481,15 @@
       amt[k].className = 'count-btn' + (Number(amt[k].getAttribute('data-amount')) === tributeCtx.amount ? ' on' : '');
     }
     els.tributeNote.textContent = tributeCtx.mode === 'demand'
-      ? '상대가 매 라운드 ' + tributeCtx.amount + '개를 나에게 바칩니다. 수락하면 4턴간 서로 공격할 수 없습니다.'
-      : '내가 매 라운드 ' + tributeCtx.amount + '개를 상대에게 바칩니다. 4턴 휴전과 관계 개선을 얻습니다.';
+      ? '상대가 12초마다 ' + tributeCtx.amount + '개를 나에게 바칩니다. 수락하면 45초간 서로 공격할 수 없습니다.'
+      : '내가 12초마다 ' + tributeCtx.amount + '개를 상대에게 바칩니다. 45초 휴전과 관계 개선을 얻습니다.';
   }
   function closeTribute() {
     els.tributeModal.classList.remove('show');
     els.tributeModal.setAttribute('aria-hidden', 'true');
   }
   function sendTribute() {
-    if (!tributeCtx.to && tributeCtx.to !== 0) return;
+    if (tributeCtx.to == null) return;
     send({
       type: 'action',
       action: {
@@ -1249,7 +1508,7 @@
     var list = [];
     for (var i = 0; i < state.regions.length; i++) {
       var r = state.regions[i];
-      if (r.owner !== me.slot) continue;
+      if (r.owner !== mySlot()) continue;
       var adjacent = false;
       for (var k = 0; k < r.neighbors.length; k++) {
         if (state.regions[r.neighbors[k]].owner === to) { adjacent = true; break; }
@@ -1304,7 +1563,7 @@
     els.callTo.style.color = colorOf(to);
     var list = [];
     for (var i = 0; i < NATIONS.length; i++) {
-      if (i === me.slot || i === to) continue;
+      if (i === mySlot() || i === to) continue;
       if (!isEnemyOfMe(i)) continue;
       if (pactBetween(to, i)) continue;
       list.push(i);
@@ -1370,40 +1629,40 @@
     if (kind === 'ally') {
       title = '동맹 제안';
       body = '<b>' + esc(from) + '</b> 님이 <b>정식 동맹</b>을 제안했습니다.<br>' +
-        '<b>' + p.turns + '턴</b> 동맹: 공동의 적 공격 시 <b>+1</b>, 공동 참전 요청 가능.';
+        '<b>' + (p.sec || 60) + '초</b> 동맹: 공동의 적 공격 시 공격력 상승, 공동 참전 요청 가능.';
     } else if (kind === 'tribute') {
-      var payer = p.direction === 'demand' ? longName(me.slot) : from;
-      var payee = p.direction === 'demand' ? from : longName(me.slot);
+      var payer = p.direction === 'demand' ? longName(mySlot()) : from;
+      var payee = p.direction === 'demand' ? from : longName(mySlot());
       title = p.direction === 'demand' ? '조공 요구' : '조공 제안';
       body = '<b>' + esc(from) + '</b> 님이 조공 조약을 제안했습니다.<br>' +
-        '<b>' + esc(payer) + ' → ' + esc(payee) + '</b> 매 라운드 <b>' + p.amount + '개</b>씩 ' +
-        (p.turns || 4) + '턴. 수락하면 서로 공격할 수 없습니다.';
+        '<b>' + esc(payer) + ' → ' + esc(payee) + '</b> 12초마다 <b>' + p.amount + '개</b>씩, ' +
+        (p.sec || 45) + '초간. 수락하면 서로 공격할 수 없습니다.';
     } else if (kind === 'cede') {
       title = '영토 할양 제안';
-      body = '<b>' + esc(from) + '</b> 님이 <b>' + esc(p.regionName || '영토') + '</b> 의 영토를 넘기겠다고 합니다.<br>' +
-        '관계 <b>+25</b>' + (p.withTruce ? ' 와 함께 <b>불가침 4턴</b>' : '') + '을 얻습니다.';
+      body = '<b>' + esc(from) + '</b> 님이 <b>' + esc(p.regionName || '영토') + '</b> 를 넘기겠다고 합니다.<br>' +
+        '관계 <b>+25</b>' + (p.withTruce ? ' 와 함께 <b>불가침 45초</b>' : '') + '을 얻습니다.';
     } else if (kind === 'call') {
       title = '공동 참전 요청';
       body = '<b>' + esc(from) + '</b> 님이 <b>' + esc(p.targetName || '적국') +
-        '</b> 에 대한 공동 참전을 요청합니다.<br>수락하면 관계가 오르고, 동맹은 다음 턴부터 그 나라를 우선 공격합니다.';
+        '</b> 에 대한 공동 참전을 요청합니다.<br>수락하면 관계가 오르고, 동맹은 그 나라를 우선 공격합니다.';
     } else {
       title = '불가침 조약 제안';
       body = '<b>' + esc(from) + '</b> 님이 <b>불가침 조약</b>을 제안했습니다.<br>' +
-        '수락하면 <b>' + p.turns + '턴</b> 동안 서로 공격할 수 없습니다.';
+        '수락하면 <b>' + (p.sec || 45) + '초</b> 동안 서로 공격할 수 없습니다.';
     }
     els.propFrom.textContent = from + ' · 관계 ' + relationWith(p.from) + ' · 신뢰 ' + reputationOf(p.from);
     els.propFrom.style.color = colorOf(p.from);
     var titleEl = els.propModal.querySelector('.prop-title');
     if (titleEl) titleEl.textContent = title;
     els.propBody.innerHTML = body;
-    els.propModal.classList.add('show');
+    els.propModal.classList.add('show', 'peek');
     els.propModal.setAttribute('aria-hidden', 'false');
     vibrate([10, 26, 10]);
   }
 
   function closeProposal() {
     propShowing = null;
-    els.propModal.classList.remove('show');
+    els.propModal.classList.remove('show', 'peek');
     els.propModal.setAttribute('aria-hidden', 'true');
   }
 
@@ -1422,22 +1681,23 @@
     if (!state || !state.over || resultShown) return;
     resultShown = true;
     var o = state.over;
-    var win = o.winner === me.slot;
-    var mine = countOwned(me.slot);
+    var s = mySlot();
+    var win = o.winner === s && s >= 0;
+    var mine = s >= 0 ? countOwned(s) : 0;
 
-    els.resultTitle.textContent = win ? '승리!' : '패배…';
+    els.resultTitle.textContent = s < 0 ? '시뮬레이션 종료' : (win ? '승리!' : '패배…');
     els.resultTitle.className = 'result-title ' + (win ? 'win' : 'lose');
-    els.resultSub.textContent = state.turn + '턴 · ' + longName(o.winner) +
-      (o.type === 'nation' ? '이(가) 대륙을 통일했습니다.' : '이(가) 마지막까지 살아남았습니다.');
+    els.resultSub.textContent = mmss(state.time) + ' · ' +
+      (o.winner < 0 ? '무승부' : longName(o.winner) +
+        (o.type === 'nation' ? '이(가) 대륙을 통일했습니다.' : '이(가) 마지막까지 살아남았습니다.'));
 
-    var land = mine + '/' + state.regions.length;
-    els.resultLine.textContent = '내 영토 ' + land + ' · 전투 ' +
-      (state.stats ? state.stats.battles : 0) + '회';
+    els.resultLine.textContent = '내 영토 ' + mine + '/' + state.regions.length +
+      ' · 전투 ' + (state.stats ? state.stats.battles : 0) + '회';
     els.rLand.textContent = String(mine);
-    els.rTroops.textContent = String(totalTroops(me.slot));
-    els.rTurns.textContent = String(state.turn);
+    els.rTroops.textContent = String(s >= 0 ? totalTroops(s) : 0);
+    els.rTime.textContent = mmss(state.time);
 
-    var host = state.host === me.slot;
+    var host = isHost();
     els.btnRematch.hidden = !host;
     els.rematchNote.hidden = host;
 
@@ -1453,10 +1713,23 @@
 
   function maybeShowElim() {
     if (elimShown || !state || state.over) return;
-    if (me.slot == null || state.active && !state.active[me.slot]) return;
-    if (countOwned(me.slot) > 0) return;
+    var s = mySlot();
+    if (s < 0 || (state.active && !state.active[s])) return;
+    if (countOwned(s) > 0) return;
+    if (state.sim) {
+      // 시뮬레이션에서는 다른 나라로 다시 참전할 수 있다
+      elimShown = true;
+      els.elimSub.textContent = mmss(state.time) + ' 만에 영토를 모두 잃었습니다.';
+      els.elimNote.textContent = '이 나라는 AI에게 맡기고, 관전하다 다른 나라를 골라 다시 참전할 수 있어요.';
+      els.spectateBar.classList.remove('hidden');
+      els.elimModal.classList.add('show');
+      els.elimModal.setAttribute('aria-hidden', 'false');
+      vibrate([20, 40, 20]);
+      return;
+    }
     elimShown = true;
-    els.elimSub.textContent = state.turn + '턴 만에 모든 영토를 잃었습니다.';
+    els.elimSub.textContent = mmss(state.time) + ' 만에 모든 영토를 잃었습니다.';
+    els.elimNote.textContent = '관전 모드로 남아 게임이 끝나는 모습을 볼 수 있어요.';
     els.elimModal.classList.add('show');
     els.elimModal.setAttribute('aria-hidden', 'false');
     vibrate([20, 40, 20]);
@@ -1473,11 +1746,12 @@
   function renderMenuPlayers() {
     if (!els.menuPlayers || !state) return;
     var html = '';
+    var s = mySlot();
     for (var i = 0; i < 4; i++) {
       if (state.active && !state.active[i]) continue;
       var p = playerOf(i);
       var nat = NATIONS[i];
-      html += '<div class="room-p' + (i === me.slot ? ' me' : '') + (p && p.isAI ? ' ai' : '') + '">' +
+      html += '<div class="room-p' + (i === s ? ' me' : '') + (p && p.isAI ? ' ai' : '') + '">' +
         '<i class="dot" style="color:' + nat.color + '"></i>' +
         '<span class="pname">' + esc(p ? p.name : nat.name) + '</span>' +
         '<span class="pnation">' + nat.short + '</span>' +
@@ -1487,12 +1761,20 @@
       '</div>';
     }
     els.menuPlayers.innerHTML = html;
+
+    var s2 = mySlot();
+    var delegated = s2 >= 0 && state.delegate;
+    els.btnDelegate.classList.toggle('hidden', !soloGame() || s2 < 0);
+    els.btnDelegate.textContent = delegated ? '🎮 조종 가져오기' : '🤖 AI 위임 (자동 전투)';
+    els.btnSpectateBack.classList.toggle('hidden', !state.sim || s2 < 0);
+    els.menuSpeedRow.classList.toggle('hidden', !isHost() || !soloGame());
   }
 
   function openMenu() {
     if (!state) return;
     els.menuCode.textContent = state.code || me.code || '----';
     renderMenuPlayers();
+    setSpeed(state.speed || 1);
     els.menuModal.classList.add('show');
     els.menuModal.setAttribute('aria-hidden', 'false');
   }
@@ -1528,8 +1810,8 @@
       }
       els.logList.innerHTML = html;
     }
-    var r = state ? state.regions.length : 0;
-    els.logSub.textContent = state ? ('턴 ' + state.turn + ' · 영토 ' + r + '개') : '';
+    els.logSub.textContent = state ? (mmss(state.time) + ' · 영토 ' + state.regions.length + '개 · 행군 ' +
+      (state.marches ? state.marches.length : 0)) : '';
   }
 
   /* =========================================================================
@@ -1554,6 +1836,16 @@
     var ok = send({ type: 'create', name: name, aiFill: true });
     setTimeout(function () { els.btnCreate.disabled = false; }, 900);
     if (!ok) els.btnCreate.disabled = false;
+  }
+
+  function doSim() {
+    var name = currentName();
+    if (!name) return;
+    me.name = name;
+    els.btnSim.disabled = true;
+    var ok = send({ type: 'create', name: name, sim: true });
+    setTimeout(function () { els.btnSim.disabled = false; }, 900);
+    if (!ok) els.btnSim.disabled = false;
   }
 
   function doJoin() {
@@ -1592,10 +1884,9 @@
 
   function bindUI() {
     els.btnCreate.addEventListener('click', doCreate);
+    els.btnSim.addEventListener('click', doSim);
     els.btnJoin.addEventListener('click', doJoin);
-    els.joinCode.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') doJoin();
-    });
+    els.joinCode.addEventListener('keydown', function (e) { if (e.key === 'Enter') doJoin(); });
     els.nameInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') {
         if ((els.joinCode.value || '').trim()) doJoin(); else doCreate();
@@ -1614,7 +1905,6 @@
       if (code) copyText(code, '방 코드 복사 완료');
     });
     els.btnShare.addEventListener('click', shareRoom);
-    els.menuCode.addEventListener('click', function () { /* noop */ });
     els.btnMenuCopy.addEventListener('click', function () {
       var code = (state && state.code) || me.code || '';
       if (code) copyText(code, '방 코드 복사 완료');
@@ -1629,22 +1919,57 @@
       els.btnStart.disabled = true;
       setTimeout(function () { if (state == null) els.btnStart.disabled = false; }, 1200);
     });
-    els.btnLeaveLobby.addEventListener('click', function () {
-      send({ type: 'leave' });
+    els.btnLeaveLobby.addEventListener('click', function () { send({ type: 'leave' }); });
+
+    els.roomSpeed.addEventListener('click', function (ev) {
+      var t = ev.target;
+      while (t && t !== els.roomSpeed) {
+        if (t.getAttribute && t.getAttribute('data-speed')) {
+          send({ type: 'speed', value: Number(t.getAttribute('data-speed')) });
+          return;
+        }
+        t = t.parentNode;
+      }
     });
 
-    els.modeDeploy.addEventListener('click', function () { setMode('deploy'); });
-    els.modeAttack.addEventListener('click', function () { setMode('attack'); });
-    els.btnAll.addEventListener('click', function () {
-      if (!isMyTurn() || uiMode !== 'deploy' || state.reinforcements <= 0) return;
-      deployAll = !deployAll;
-      toast(deployAll ? '배치 방식: 남은 병력 전부' : '배치 방식: +1씩');
-      updateHUD();
+    els.ratioRow.addEventListener('click', function (ev) {
+      var t = ev.target;
+      while (t && t !== els.ratioRow) {
+        if (t.getAttribute && t.getAttribute('data-ratio')) {
+          setRatio(Number(t.getAttribute('data-ratio')));
+          return;
+        }
+        t = t.parentNode;
+      }
     });
-    els.btnEnd.addEventListener('click', endTurn);
+
+    els.btnSpeed.addEventListener('click', cycleSpeed);
     els.btnDiplo.addEventListener('click', openDiplo);
     els.btnLog.addEventListener('click', openLog);
     els.btnMenu.addEventListener('click', openMenu);
+    els.btnMenu2.addEventListener('click', openMenu);
+
+    els.btnTakeBack.addEventListener('click', function () {
+      send({ type: 'delegate', value: false });
+    });
+
+    els.spNations.addEventListener('click', function (ev) {
+      var t = ev.target;
+      while (t && t !== els.spNations) {
+        if (t.getAttribute && t.getAttribute('data-slot') != null) {
+          pickNation(Number(t.getAttribute('data-slot')));
+          return;
+        }
+        t = t.parentNode;
+      }
+    });
+    els.btnJump.addEventListener('click', function () {
+      if (spectatePick == null) return;
+      send({ type: 'takeover', slot: spectatePick });
+      toast(NATIONS[spectatePick].name + ' 참전! 영토를 탭해 지휘하세요', 'good');
+      vibrate([14, 30, 14]);
+      spectatePick = null;
+    });
 
     els.btnCloseRules.addEventListener('click', closeRules);
     els.btnCloseDiplo.addEventListener('click', closeDiplo);
@@ -1656,27 +1981,46 @@
     els.btnElimLeave.addEventListener('click', function () { send({ type: 'leave' }); });
     els.btnSpectate.addEventListener('click', function () {
       hideElim();
-      spectating = true;
-      updateSpecChip();
-      toast('관전 모드 · 지도를 탭해 상황을 볼 수 있어요');
+      if (state && state.sim && mySlot() >= 0 && countOwned(mySlot()) === 0) {
+        send({ type: 'spectate' });
+        spectatePick = null;
+      }
+      updateHUD();
+      updateBanner();
+      renderSpectate();
+      toast(state && state.sim ? '관전 모드 · 다른 나라를 탭해 다시 참전' : '관전 모드 · 지도를 탭해 상황을 볼 수 있어요');
     });
     els.btnRematch.addEventListener('click', function () {
       send({ type: 'rematch' });
       hideResult();
     });
+    els.btnDelegate.addEventListener('click', function () {
+      var delegated = state && mySlot() >= 0 && state.delegate;
+      send({ type: 'delegate', value: !delegated });
+      closeMenu();
+    });
+    els.btnSpectateBack.addEventListener('click', function () {
+      send({ type: 'spectate' });
+      closeMenu();
+      selected = null;
+    });
 
-    els.diploModal.addEventListener('click', function (ev) {
-      if (ev.target === els.diploModal) closeDiplo();
+    els.menuSpeed.addEventListener('click', function (ev) {
+      var t = ev.target;
+      while (t && t !== els.menuSpeed) {
+        if (t.getAttribute && t.getAttribute('data-speed')) {
+          send({ type: 'speed', value: Number(t.getAttribute('data-speed')) });
+          setSpeed(Number(t.getAttribute('data-speed')));
+          return;
+        }
+        t = t.parentNode;
+      }
     });
-    els.menuModal.addEventListener('click', function (ev) {
-      if (ev.target === els.menuModal) closeMenu();
-    });
-    els.logModal.addEventListener('click', function (ev) {
-      if (ev.target === els.logModal) closeLog();
-    });
-    els.rulesModal.addEventListener('click', function (ev) {
-      if (ev.target === els.rulesModal) closeRules();
-    });
+
+    els.diploModal.addEventListener('click', function (ev) { if (ev.target === els.diploModal) closeDiplo(); });
+    els.menuModal.addEventListener('click', function (ev) { if (ev.target === els.menuModal) closeMenu(); });
+    els.logModal.addEventListener('click', function (ev) { if (ev.target === els.logModal) closeLog(); });
+    els.rulesModal.addEventListener('click', function (ev) { if (ev.target === els.rulesModal) closeRules(); });
 
     els.diploList.addEventListener('click', function (ev) {
       var t = ev.target;
@@ -1716,9 +2060,7 @@
     });
     els.tributeSend.addEventListener('click', sendTribute);
     els.tributeClose.addEventListener('click', closeTribute);
-    els.tributeModal.addEventListener('click', function (ev) {
-      if (ev.target === els.tributeModal) closeTribute();
-    });
+    els.tributeModal.addEventListener('click', function (ev) { if (ev.target === els.tributeModal) closeTribute(); });
 
     els.cedeList.addEventListener('click', function (ev) {
       var t = ev.target;
@@ -1733,9 +2075,7 @@
     });
     els.cedeSend.addEventListener('click', sendCede);
     els.cedeClose.addEventListener('click', closeCede);
-    els.cedeModal.addEventListener('click', function (ev) {
-      if (ev.target === els.cedeModal) closeCede();
-    });
+    els.cedeModal.addEventListener('click', function (ev) { if (ev.target === els.cedeModal) closeCede(); });
 
     els.callList.addEventListener('click', function (ev) {
       var t = ev.target;
@@ -1750,9 +2090,7 @@
     });
     els.callSend.addEventListener('click', sendCall);
     els.callClose.addEventListener('click', closeCall);
-    els.callModal.addEventListener('click', function (ev) {
-      if (ev.target === els.callModal) closeCall();
-    });
+    els.callModal.addEventListener('click', function (ev) { if (ev.target === els.callModal) closeCall(); });
 
     var downX = 0, downY = 0, downAt = 0, tracking = false;
     canvas.addEventListener('pointerdown', function (ev) {
@@ -1789,11 +2127,9 @@
     document.addEventListener('gesturestart', function (ev) { ev.preventDefault(); });
 
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'visible') {
-        if (!connected) {
-          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-          connect();
-        }
+      if (document.visibilityState === 'visible' && !connected) {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        connect();
       }
     });
     window.addEventListener('online', function () {
@@ -1831,12 +2167,13 @@
   function cacheEls() {
     var ids = [
       'app', 'lobby', 'homePanel', 'roomPanel', 'nameInput', 'joinCode', 'homeNote',
-      'btnCreate', 'btnJoin', 'roomCode', 'btnCopyCode', 'btnShare', 'roomPlayers',
-      'aiToggle', 'aiRow', 'roomNote', 'btnStart', 'waitHost', 'btnLeaveLobby',
-      'roomCode', 'netBar', 'netText', 'boot', 'bootText',
-      'statTurn', 'statWho', 'statLand', 'statReinf', 'legend', 'map', 'mapWrap', 'toast',
-      'turnBanner', 'specChip', 'modeDeploy', 'modeAttack', 'btnAll', 'hint',
-      'btnDiplo', 'btnLog', 'btnEnd', 'btnMenu',
+      'btnCreate', 'btnSim', 'btnJoin', 'roomCode', 'btnCopyCode', 'btnShare', 'roomPlayers',
+      'aiToggle', 'aiRow', 'roomSpeedRow', 'roomSpeed', 'roomNote', 'btnStart', 'waitHost', 'btnLeaveLobby',
+      'netBar', 'netText', 'boot', 'bootText',
+      'statTime', 'statLand', 'statTroops', 'statProd', 'btnSpeed', 'legend',
+      'map', 'mapWrap', 'toast', 'liveBanner', 'specChip', 'delegateBar', 'btnTakeBack',
+      'spectateBar', 'spPick', 'spNations', 'btnJump',
+      'ratioRow', 'hint', 'btnDiplo', 'btnLog', 'btnMenu', 'btnMenu2',
       'rulesModal', 'btnRules', 'btnCloseRules',
       'diploModal', 'diploList', 'diploSub', 'diploFeed', 'btnCloseDiplo',
       'tributeModal', 'tributeTo', 'tributeModeRow', 'tributeNote', 'tributeAmountRow', 'tributeSend', 'tributeClose',
@@ -1844,11 +2181,11 @@
       'callModal', 'callTo', 'callList', 'callSend', 'callClose',
       'propModal', 'propFrom', 'propBody', 'propAccept', 'propDecline',
       'menuModal', 'menuCode', 'menuPlayers', 'btnCloseMenu', 'btnMenuCopy',
-      'btnLeaveGame', 'btnCloseMenu',
-      'logModal', 'logList', 'logSub', 'btnCloseLog',
-      'elimModal', 'elimSub', 'btnSpectate', 'btnElimLeave',
+      'menuSpeedRow', 'menuSpeed', 'btnDelegate', 'btnSpectateBack',
+      'btnLeaveGame', 'logModal', 'logList', 'logSub', 'btnCloseLog',
+      'elimModal', 'elimSub', 'elimNote', 'btnSpectate', 'btnElimLeave',
       'resultOverlay', 'resultTitle', 'resultSub', 'resultLine', 'resultStats',
-      'rLand', 'rTroops', 'rTurns', 'btnRematch', 'rematchNote', 'btnResultLeave'
+      'rLand', 'rTroops', 'rTime', 'btnRematch', 'rematchNote', 'btnResultLeave'
     ];
     for (var i = 0; i < ids.length; i++) els[ids[i]] = document.getElementById(ids[i]);
   }
@@ -1856,6 +2193,8 @@
   function loadSaved() {
     var savedName = storageGet(NAME_KEY);
     if (savedName) els.nameInput.value = savedName;
+    var savedRatio = Number(storageGet(RATIO_KEY));
+    if (savedRatio && savedRatio > 0 && savedRatio <= 1) ratio = savedRatio;
     var raw = storageGet(SESSION_KEY);
     if (!raw) return false;
     try {
@@ -1877,8 +2216,8 @@
     if (canvas) ctx = canvas.getContext('2d');
 
     bindUI();
+    renderRatio();
 
-    // 초대 링크 ?code=ABCD
     try {
       var q = new URLSearchParams(location.search);
       var code = q.get('code');
@@ -1895,12 +2234,30 @@
     var last = 0;
     function tick(ts) {
       requestAnimationFrame(tick);
+      if (!state) return;
       if (ts - last < 33) return;
       last = ts;
-      if (state && !state.over && isMyTurn() && selected != null) render(ts);
+      render(ts);
     }
     requestAnimationFrame(tick);
+
+    setInterval(function () {
+      if (!state) return;
+      updateHUD();
+      if (els.diploModal.classList.contains('show')) renderDiplo();
+    }, 1000);
   }
+
+  // 디버깅 · 확인용 최소 훅 (게임 동작에는 관여하지 않음)
+  try {
+    window.__TW__ = {
+      state: function () { return state; },
+      me: function () { return me; },
+      ratio: function () { return ratio; },
+      selected: function () { return selected; },
+      marches: function () { return marches; }
+    };
+  } catch (e) { /* 무시 */ }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

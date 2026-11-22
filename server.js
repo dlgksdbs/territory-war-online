@@ -1,10 +1,11 @@
 'use strict';
 
 /* =============================================================================
-   영토 전쟁 ONLINE · 웹소켓 멀티플레이 서버
+   영토 전쟁 ONLINE · 실시간(RTS) 웹소켓 멀티플레이 서버
    - 의존성: ws (WebSocket) 만 사용
    - 같은 포트에서 public/index.html (HTTP) 과 /ws (WebSocket) 를 함께 서비스
-   - 게임 상태·주사위·외교·AI 턴은 모두 서버가 권위를 가진다 (클라이언트는 표시만)
+   - 지도 생성·병력 생산·행군·전투·외교·AI 는 모두 서버가 권위를 가진다
+   - 턴 개념 없음: 100ms 시뮬레이션 스텝이 끊임없이 돌아간다
    ============================================================================= */
 
 const http = require('http');
@@ -18,10 +19,49 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const NATION_COUNT = 4;
 const ROOM_IDLE_MS = 30 * 60 * 1000;      // 접속자가 모두 없는 방은 30분 뒤 정리
 const ROOM_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const TURN_GRACE_MS = 75 * 1000;          // 접속이 끊긴 플레이어의 턴을 자동 종료하는 시간
 const MAX_ROOMS = 800;
 const MAX_PLAYERS = NATION_COUNT;
 const WS_MAX_PAYLOAD = 16 * 1024;
+const AUTO_AI_MS = 25 * 1000;             // 접속이 이만큼 끊기면 AI 가 잠시 대신 조종한다
+
+/* 실시간 시뮬레이션 상수 */
+const SIM = {
+  stepMs: 100,              // 서버 시뮬레이션 스텝
+  tickMs: 400,              // 클라이언트 동기화 주기
+  prodMs: 1700,             // 일반 영토 1개 병력 생산 시간
+  capitalProdMul: 1.75,     // 수도 생산 속도 배수
+  capBase: 9,               // 병력 상한(기본)
+  capNeighbor: 0.35,        // 이웃 수에 따른 상한 보너스
+  capCapital: 4,            // 수도 상한 보너스
+  slowAbove: 0.75,          // 상한의 75%를 넘으면 생산 속도
+  slowMul: 0.45,
+  marchMs: 1200,            // 행군 시간 (출정 → 도착)
+  defBonus: 1.15,           // 수비 보너스
+  capitalDefBonus: 1.3,     // 수도 수비 보너스
+  allyAttackBonus: 0.12,    // 공동의 적 공격 시 공격력 보너스
+  dispatchCooldownMs: 260,  // 연타 방지
+  ratioDefault: 0.5,
+  maxMarches: 160,          // 방 전체 동시 행군 상한
+  aiMinMs: 1800,            // AI 판단 간격
+  aiMaxMs: 3200,
+  aiDiploMinMs: 6500,
+  aiDiploMaxMs: 11000,
+  overtimeAfterMs: 6 * 60 * 1000,   // 6분 이후부터 생산 가속 (결말 유도)
+  overtimeStepMs: 60 * 1000,
+  overtimeGain: 0.25,
+  speeds: [1, 2, 4]
+};
+
+/* 외교 지속 시간 (초) */
+const DUR = {
+  truce: 45,
+  ally: 60,
+  tribute: 45,
+  tributePay: 12,     // 조공 지급 주기
+  call: 30,
+  grudge: 60,
+  proposal: 30        // 제안 유효 시간
+};
 
 /* =============================================================================
    0. 공통 유틸 · 시드 난수
@@ -342,33 +382,9 @@ function generateMap(W, H, count) {
 }
 
 /* =============================================================================
-   2. 게임 규칙 (DOM 과 무관 · 서버 권위)
+   2. 실시간 게임 규칙 (DOM 과 무관 · 서버 권위)
+   - 턴 없음: 병력 생산 · 행군 · 전투 · 외교가 모두 초 단위로 흐른다
    ============================================================================= */
-
-const TUNING = {
-  aiAttacksBase: 4,
-  aiAttacksPerOwned: 0.55,
-  aiAttacksMax: 11,
-  playerBias: 0,
-  neutralBonus: 1.7,
-  reinforceDiv: 2,
-  minReinforce: 3,
-  treatyTurns: 4,      // 불가침 조약 지속 턴
-  allyTurns: 5,        // 동맹 지속 턴
-  callTurns: 2,        // 공동 참전 요청 지속 턴
-  tributeTurns: 4,     // 조공 조약 지속 턴
-  aidAmount: 3,        // 병력 지원량
-  aidThreshold: 5,     // 지원을 뽑아낼 영토의 최소 병력
-  grudgeTurns: 6,      // 조약 파기 후 원한 지속 턴
-  aidRelation: 15,     // 병력 지원 시 관계 상승
-  aidReputation: 3,
-  betrayReputation: 35,
-  betrayRelation: 55,
-  combatRelation: 4,
-  allianceRelation: 10,
-  cedeRelation: 25,
-  repStart: 60
-};
 
 const NATIONS = [
   { id: 0, name: '청룡 왕국', short: '청룡', color: '#3b82f6' },
@@ -410,7 +426,7 @@ function addRelation(state, a, b, delta) {
 function reputationOf(state, slot) {
   if (slot == null || slot < 0) return 50;
   const v = state.reputation[slot];
-  return typeof v === 'number' ? v : TUNING.repStart;
+  return typeof v === 'number' ? v : 60;
 }
 
 function addReputation(state, slot, delta) {
@@ -443,6 +459,7 @@ function diploNote(state, text, kind, slots) {
   const clean = polishKo(text);
   state.diploLog.push({ at: Date.now(), text: clean, kind: kind || 'info', slots: slots || [] });
   if (state.diploLog.length > 30) state.diploLog.splice(0, state.diploLog.length - 30);
+  state.logRev = (state.logRev || 0) + 1;
   return clean;
 }
 
@@ -472,7 +489,7 @@ function callTargetsFor(state, ai) {
   const set = new Set();
   if (!state.calls) return set;
   for (const c of state.calls) {
-    if (c.to === ai && c.turns > 0) set.add(c.target);
+    if (c.to === ai && c.until > state.time) set.add(c.target);
   }
   if (state.grudge && state.grudge[ai]) set.add(state.grudge[ai].at);
   return set;
@@ -480,7 +497,7 @@ function callTargetsFor(state, ai) {
 
 function activeCallFor(state, ai) {
   if (!state.calls) return null;
-  return state.calls.find((c) => c.to === ai && c.turns > 0) || null;
+  return state.calls.find((c) => c.to === ai && c.until > state.time) || null;
 }
 
 function atWar(state, a, b) {
@@ -503,7 +520,6 @@ function hasAllyAgainst(state, owner, defender) {
   return false;
 }
 
-
 function buildRegionsFrom(generated) {
   const regions = [];
   for (let i = 0; i < generated.cells.length; i++) {
@@ -520,7 +536,8 @@ function buildRegionsFrom(generated) {
       r: Math.sqrt(area / Math.PI),
       neighbors: generated.adj[i].slice(),
       owner: -1,
-      troops: 1
+      troops: 1,
+      p: 0
     });
   }
   return regions;
@@ -597,7 +614,9 @@ function assignOwners(regions, activeCount) {
 }
 
 const Game = {
-  TUNING,
+  TUNING: SIM,
+  SIM,
+  DUR,
 
   newGame(opts) {
     opts = opts || {};
@@ -640,11 +659,11 @@ const Game = {
       human,
       regions,
       total: regions.length,
-      turn: 1,
-      cur: 0,
-      phase: 'player',
-      reinforcements: 0,
+      time: 0,
       over: null,
+      capitals: [-1, -1, -1, -1],
+      marches: [],
+      nextMarchId: 1,
       treaties: {},
       proposals: [],
       nextProposalId: 1,
@@ -656,18 +675,35 @@ const Game = {
       nextCallId: 1,
       names: NATIONS.map((n) => n.name),
       everEliminated: false,
-      stats: { battles: 0, captures: 0 }
+      repTimer: 0,
+      logRev: 0,
+      overtimeAnnounced: false,
+      ai: [
+        { nextAt: 2200, nextDiploAt: 7000 },
+        { nextAt: 2600, nextDiploAt: 9000 },
+        { nextAt: 3000, nextDiploAt: 8000 },
+        { nextAt: 3400, nextDiploAt: 10000 }
+      ],
+      stats: { battles: 0, captures: 0, dispatches: 0, betrayals: 0 }
     };
     for (let i = 0; i < NATION_COUNT; i++) {
       if (!active[i]) continue;
-      state.reputation[i] = TUNING.repStart;
+      state.reputation[i] = 60;
       for (let j = i + 1; j < NATION_COUNT; j++) {
         if (!active[j]) continue;
         state.relations[tkey(i, j)] = 0;
       }
     }
-    Game.startTurn(state, 0);
-    Game.checkOver(state);
+    // 수도: 시작 영토 중 병력이 가장 많은 곳
+    for (let s = 0; s < NATION_COUNT; s++) {
+      if (!active[s]) continue;
+      let best = null;
+      for (const r of regions) {
+        if (r.owner !== s) continue;
+        if (!best || r.troops > best.troops || (r.troops === best.troops && r.neighbors.length > best.neighbors.length)) best = r;
+      }
+      if (best) state.capitals[s] = best.id;
+    }
     return state;
   },
 
@@ -698,297 +734,203 @@ const Game = {
     return t;
   },
 
-  reinforceCount(state, owner) {
-    return Math.max(TUNING.minReinforce, Math.floor(Game.countOwned(state, owner) / TUNING.reinforceDiv));
+  /* ---------------- 실시간 병력 생산 ---------------- */
+
+  overtimeMult(state) {
+    if (state.time <= SIM.overtimeAfterMs) return 1;
+    const steps = Math.floor((state.time - SIM.overtimeAfterMs) / SIM.overtimeStepMs);
+    return Math.min(2, 1 + SIM.overtimeGain * steps);
   },
 
-  startTurn(state, who) {
-    state.cur = who;
-    if (state.human[who]) {
-      state.phase = 'player';
-      state.reinforcements = Game.reinforceCount(state, who);
-    } else {
-      state.phase = 'ai';
-      state.reinforcements = 0;
+  prodCapOf(state, r) {
+    const capBonus = Math.min(4, Math.round(r.neighbors.length * SIM.capNeighbor));
+    const capHome = state.capitals[r.owner] === r.id ? SIM.capCapital : 0;
+    return Math.round((SIM.capBase + capBonus + capHome) * Game.overtimeMult(state));
+  },
+
+  productionRateOf(state, owner) {
+    let perSec = 0;
+    const mul = Game.overtimeMult(state);
+    for (const r of state.regions) {
+      if (r.owner !== owner) continue;
+      const cap = Game.prodCapOf(state, r);
+      if (r.troops >= cap) continue;
+      const period = SIM.prodMs / (state.capitals[owner] === r.id ? SIM.capitalProdMul : 1);
+      const slow = r.troops >= cap * SIM.slowAbove ? SIM.slowMul : 1;
+      perSec += (1000 / period) * slow * mul;
+    }
+    return Math.round(perSec * 10) / 10;
+  },
+
+  tickProduction(state, dt) {
+    const mul = Game.overtimeMult(state);
+    for (const r of state.regions) {
+      if (r.owner < 0) { r.p = 0; continue; }
+      const cap = Game.prodCapOf(state, r);
+      if (r.troops >= cap) { r.p = 0; continue; }
+      const period = SIM.prodMs / (state.capitals[r.owner] === r.id ? SIM.capitalProdMul : 1);
+      const slow = r.troops >= cap * SIM.slowAbove ? SIM.slowMul : 1;
+      r.p += (dt / period) * slow * mul;
+      let guard = 0;
+      while (r.p >= 1 && r.troops < cap && guard++ < 200) {
+        r.p -= 1;
+        r.troops += 1;
+      }
+      if (r.troops >= cap || r.p >= 1) r.p = 0;
     }
   },
 
-  deploy(state, idx, amount) {
-    const r = state.regions[idx];
-    if (!r) return 0;
-    if (r.owner !== state.cur) return 0;
-    if (state.phase !== 'player' || state.reinforcements <= 0) return 0;
-    const n = Math.min(amount, state.reinforcements);
-    if (n <= 0) return 0;
-    r.troops += n;
-    state.reinforcements -= n;
-    return n;
-  },
+  /* ---------------- 출정 · 행군 · 전투 ---------------- */
 
-  transfer(state, fromIdx, toIdx) {
-    const from = state.regions[fromIdx], to = state.regions[toIdx];
-    if (!from || !to) return 0;
-    if (from.owner !== to.owner) return 0;
-    if (!from.neighbors.includes(toIdx)) return 0;
-    if (from.troops < 2) return 0;
-    const n = from.troops - 1;
-    from.troops = 1;
-    to.troops += n;
-    return n;
-  },
-
-  attack(state, fromIdx, toIdx) {
-    const from = state.regions[fromIdx], to = state.regions[toIdx];
+  dispatch(state, slot, fromIdx, toIdx, ratio) {
+    const from = state.regions[fromIdx];
+    const to = state.regions[toIdx];
     if (!from || !to) return { ok: false, reason: 'missing' };
-    if (!from.neighbors.includes(toIdx)) return { ok: false, reason: 'far' };
-    if (from.owner === to.owner) return { ok: false, reason: 'friend' };
-    if (to.owner >= 0) {
-      const pact = treatyOf(state, from.owner, to.owner);
+    if (fromIdx === toIdx) return { ok: false, reason: 'same' };
+    if (from.neighbors.indexOf(toIdx) < 0) return { ok: false, reason: 'far' };
+    if (from.owner !== slot) return { ok: false, reason: 'owner' };
+    if (from.troops < 2) return { ok: false, reason: 'weak' };
+    if (state.over) return { ok: false, reason: 'over' };
+    if (state.marches.length >= SIM.maxMarches) return { ok: false, reason: 'busy' };
+    const isOwn = to.owner === slot;
+    if (to.owner >= 0 && !isOwn) {
+      const pact = treatyOf(state, slot, to.owner);
       if (pact) return { ok: false, reason: 'treaty', treaty: pact };
     }
-    if (from.troops < 2 || to.troops < 1) return { ok: false, reason: 'weak' };
+    let r = Number(ratio);
+    if (!Number.isFinite(r) || r <= 0) r = SIM.ratioDefault;
+    r = clampNum(r, 0.1, 1);
+    let n = Math.floor(from.troops * r);
+    if (r >= 0.999) n = from.troops - 1;
+    n = clampNum(n, 1, from.troops - 1);
 
-    const targetOwner = to.owner;
-    const targetName = to.name;
-    const aDice = Math.min(3, from.troops - 1);
-    const dDice = Math.min(2, to.troops);
-    const ar = [], dr = [];
-    for (let i = 0; i < aDice; i++) ar.push(1 + Math.floor(rand() * 6));
-    for (let i = 0; i < dDice; i++) dr.push(1 + Math.floor(rand() * 6));
-    ar.sort((a, b) => b - a);
-    dr.sort((a, b) => b - a);
-
-    // 동맹 보너스: 공동의 적과 싸울 때 가장 높은 공격 주사위 +1
-    const allyBonus = hasAllyAgainst(state, from.owner, targetOwner);
-    if (allyBonus) ar[0] = Math.min(6, ar[0] + 1);
-
-    let aLoss = 0, dLoss = 0;
-    const pairs = Math.min(aDice, dDice);
-    for (let i = 0; i < pairs; i++) {
-      if (ar[i] > dr[i]) dLoss++; else aLoss++;
-    }
-    aLoss = Math.min(aLoss, from.troops - 1);
-    dLoss = Math.min(dLoss, to.troops);
-
-    from.troops -= aLoss;
-    to.troops -= dLoss;
-
-    let captured = false, moved = 0;
-    if (to.troops <= 0) {
-      if (from.troops >= 2) {
-        moved = Math.max(1, Math.min(from.troops - 1, aDice));
-        from.troops -= moved;
-        to.troops = moved;
-        to.owner = from.owner;
-        captured = true;
-      } else {
-        to.troops = 1;
-      }
-    }
-
-    state.stats.battles++;
-    if (captured) state.stats.captures++;
-
-    if (targetOwner >= 0) {
-      addRelation(state, from.owner, targetOwner, captured ? -12 : -6);
-      if (allyBonus) {
-        for (let al = 0; al < NATION_COUNT; al++) {
-          if (al === from.owner || !state.active[al]) continue;
-          const at = treatyOf(state, from.owner, al);
-          if (at && at.type === 'ally' && relationOf(state, from.owner, al) >= 25 && atWar(state, al, targetOwner)) {
-            addRelation(state, from.owner, al, TUNING.combatRelation);
-          }
-        }
-      }
-    }
-
+    from.troops -= n;
+    const march = {
+      id: state.nextMarchId++,
+      owner: slot,
+      from: fromIdx,
+      to: toIdx,
+      troops: n,
+      startAt: state.time,
+      arriveAt: state.time + SIM.marchMs,
+      dur: SIM.marchMs
+    };
+    state.marches.push(march);
+    state.stats.dispatches++;
     return {
       ok: true,
-      aLoss,
-      dLoss,
-      captured,
-      moved,
-      allyBonus,
-      fromOwner: from.owner,
-      targetOwner,
+      march,
+      troops: n,
+      attack: !isOwn,
       fromName: from.name,
-      toName: targetName,
-      ar,
-      dr
+      toName: to.name,
+      fromLeft: from.troops
     };
   },
 
-  /* ---------------- AI: 전선 배치 · 후방 이동 · 공격 판단 ---------------- */
+  /** 행군 도착 처리: 같은 편이면 합류, 아니면 전투 */
+  resolveMarch(state, m) {
+    const to = state.regions[m.to];
+    const from = state.regions[m.from];
+    if (!to) return null;
+    const attacker = nationName(state, m.owner);
+    const atkAlive = m.owner >= 0 && state.active[m.owner] &&
+      Game.countOwned(state, m.owner) > 0;
 
-  aiReinforce(state, ai) {
-    const own = state.regions.filter((r) => r.owner === ai);
-    if (!own.length) return 0;
-    const borders = own.filter((r) => r.neighbors.some((nb) => state.regions[nb].owner !== ai));
-    const pool = borders.length ? borders : own;
-    const scored = pool
-      .map((r) => ({ r, score: Game.frontlineScore(state, ai, r) }))
-      .sort((a, b) => b.score - a.score);
-    let n = Math.max(TUNING.minReinforce, Math.floor(own.length / TUNING.reinforceDiv));
-    const total = n;
-    const top = scored[0];
-    if (!top) return 0;
-    // 70% 는 가장 급한 전선, 나머지는 두 번째 전선 (안전한 내부 영토에는 절대 넣지 않는다)
-    const first = scored[1] && n >= 3 ? Math.ceil(n * 0.7) : n;
-    top.r.troops += first;
-    n -= first;
-    if (n > 0 && scored[1]) scored[1].r.troops += n;
-    return total;
-  },
+    if (to.owner === m.owner) {
+      to.troops += m.troops;
+      return {
+        kind: 'reinforce',
+        text: attacker + ' 병력 ' + m.troops + ' → ' + to.name + ' 합류 (' + to.troops + ')',
+        silent: true,
+        at: m.to, troops: m.troops
+      };
+    }
 
-  frontlineScore(state, ai, r) {
-    const leader = leaderOf(state);
-    const callTargets = callTargetsFor(state, ai);
-    const grudge = state.grudge[ai];
-    let threat = 0, opportunity = 0, bonus = 0;
-    for (const nb of r.neighbors) {
-      const t = state.regions[nb];
-      if (t.owner === ai) continue;
-      if (t.owner >= 0 && treatyOf(state, ai, t.owner)) continue;
-      threat += t.troops * (state.human[t.owner] ? 1.2 : 1);
-      const diff = r.troops - t.troops;
-      const need = t.owner === -1 ? 1 : 2;
-      if (diff >= need) opportunity = Math.max(opportunity, diff + (t.owner === -1 ? 1.2 : 0));
-      if (leader >= 0 && t.owner === leader) bonus += 1.6;
-      if (callTargets.has(t.owner)) bonus += 3.5;
-      if (t.owner === -1 && state.turn <= 8) bonus += 1.0;
-      if (t.troops <= 1 && t.owner >= 0) bonus += 0.8;
+    const defOwner = to.owner;
+    // 행군 중 휴전이 맺어졌다면 회군
+    if (defOwner >= 0 && treatyOf(state, m.owner, defOwner)) {
+      if (from && from.owner === m.owner) from.troops += m.troops;
+      return {
+        kind: 'info',
+        text: '휴전 성립 · ' + attacker + ' 행군 회군 (' + to.name + ')',
+        silent: false
+      };
     }
-    if (grudge) bonus += 1.2;
-    return threat * 1.35 + opportunity + bonus;
-  },
 
-  aiShiftTroops(state, ai) {
-    const own = state.regions.filter((r) => r.owner === ai);
-    if (own.length < 2) return 0;
-    // 전선(적과 맞닿은 영토)에서의 거리
-    const dist = {};
-    const q = [];
-    for (const r of own) {
-      if (r.neighbors.some((nb) => state.regions[nb].owner !== ai)) {
-        dist[r.id] = 0;
-        q.push(r.id);
-      }
+    if (!atkAlive) {
+      return { kind: 'fade', text: attacker + ' 행군 소멸 (' + to.name + ')', silent: true };
     }
-    if (!q.length) return 0;
-    for (let h = 0; h < q.length; h++) {
-      const v = state.regions[q[h]];
-      for (const nb of v.neighbors) {
-        const t = state.regions[nb];
-        if (t.owner === ai && dist[t.id] == null) {
-          dist[t.id] = dist[v.id] + 1;
-          q.push(t.id);
-        }
-      }
+
+    const isCap = defOwner >= 0 && state.capitals[defOwner] === to.id;
+    const defPower = to.troops * (isCap ? SIM.capitalDefBonus : SIM.defBonus);
+    const allyBonus = defOwner >= 0 && hasAllyAgainst(state, m.owner, defOwner);
+    const atkPower = m.troops * (1 + (allyBonus ? SIM.allyAttackBonus : 0)) * (0.92 + rand() * 0.16);
+
+    state.stats.battles++;
+    let captured = false;
+    let aLoss = 0;
+    let dLoss = 0;
+
+    if (atkPower > defPower) {
+      const share = defPower / Math.max(0.001, atkPower);
+      aLoss = Math.min(m.troops - 1, Math.round(m.troops * share * 0.6));
+      dLoss = to.troops;
+      captured = true;
+    } else {
+      aLoss = m.troops;
+      dLoss = Math.min(to.troops, Math.round(to.troops * (atkPower / Math.max(0.001, defPower)) * 0.75));
     }
-    let moved = 0;
-    for (let pass = 0; pass < 3; pass++) {
-      // 내부의 남는 병력을 전선 쪽으로
-      const rear = own
-        .filter((r) => dist[r.id] > 0 && r.troops >= 3)
-        .sort((a, b) => dist[b.id] - dist[a.id]);
-      for (const r of rear) {
-        if (r.troops < 3) continue;
-        let best = null, bestScore = -1e9;
-        for (const nb of r.neighbors) {
-          const t = state.regions[nb];
-          if (t.owner !== ai) continue;
-          if (dist[t.id] == null || dist[t.id] >= dist[r.id]) continue;
-          const sc = -dist[t.id] * 2 + Game.frontlineScore(state, ai, t) * 0.25 + rand();
-          if (sc > bestScore) { bestScore = sc; best = t; }
-        }
-        if (!best) continue;
-        const n = r.troops - 1;
-        r.troops = 1;
-        best.troops += n;
-        moved += n;
-      }
-      // 안전한 전선에 쌓인 병력을 위협 전선으로
-      for (const r of own) {
-        if (dist[r.id] !== 0 || r.troops < 4) continue;
-        let threat = 0;
-        for (const nb of r.neighbors) {
-          const t = state.regions[nb];
-          if (t.owner !== ai && !(t.owner >= 0 && treatyOf(state, ai, t.owner))) threat += t.troops;
-        }
-        if (threat > 1) continue;
-        let best = null, bestT = 0;
-        for (const nb of r.neighbors) {
-          const t = state.regions[nb];
-          if (t.owner !== ai) continue;
-          let th = 0;
-          for (const nn of t.neighbors) {
-            const e = state.regions[nn];
-            if (e.owner !== ai && !(e.owner >= 0 && treatyOf(state, ai, e.owner))) th += e.troops;
+
+    if (captured) {
+      const survivors = clampNum(m.troops - aLoss, 1, m.troops);
+      const wasCapital = isCap && defOwner >= 0;
+      to.owner = m.owner;
+      to.troops = survivors;
+      to.p = 0;
+      if (wasCapital) state.capitals[defOwner] = -1;
+      state.stats.captures++;
+      if (defOwner >= 0) {
+        addRelation(state, m.owner, defOwner, -12);
+        if (allyBonus) {
+          for (let al = 0; al < NATION_COUNT; al++) {
+            if (al === m.owner || !state.active[al]) continue;
+            const at = treatyOf(state, m.owner, al);
+            if (at && at.type === 'ally' && relationOf(state, m.owner, al) >= 25 && atWar(state, al, defOwner)) {
+              addRelation(state, m.owner, al, 4);
+            }
           }
-          if (th > bestT) { bestT = th; best = t; }
         }
-        if (!best || bestT <= threat) continue;
-        const n = Math.min(3, r.troops - 1);
-        r.troops -= n;
-        best.troops += n;
-        moved += n;
       }
+      let text = attacker + ' ✦ ' + to.name + ' 점령 · 병력 ' + survivors + ' 주둔' +
+        (defOwner >= 0 ? ' · ' + nationName(state, defOwner) + ' -' + dLoss : '');
+      if (wasCapital) text += ' · 수도 함락!';
+      return {
+        kind: captured ? 'good' : 'info',
+        text,
+        battle: true,
+        captured: true,
+        at: to.id,
+        region: to.name,
+        attacker: m.owner,
+        defender: defOwner,
+        troops: survivors,
+        capital: wasCapital
+      };
     }
-    return moved;
-  },
 
-  aiPickAttack(state, ai) {
-    let best = null, bestScore = -1e9;
-    const grudge = state.grudge[ai];
-    const leader = leaderOf(state);
-    const callTargets = callTargetsFor(state, ai);
-    for (const r of state.regions) {
-      if (r.owner !== ai || r.troops < 2) continue;
-      for (const nb of r.neighbors) {
-        const t = state.regions[nb];
-        if (t.owner === ai) continue;
-        if (t.troops < 1) continue;
-        if (t.owner >= 0 && treatyOf(state, ai, t.owner)) continue;
-        const diff = r.troops - t.troops;
-        const need = t.owner === -1 ? 1 : 2; // 적국은 +2, 약한 중립은 +1 우위일 때만
-        if (diff < need) continue;
-        if (t.owner >= 0 && t.troops >= 4 && diff < 3) continue;
-
-        let score = diff * 1.15;
-        if (t.owner === -1) score += state.turn <= 8 ? 2.4 : 0.6;
-        if (t.troops <= 1 && t.owner >= 0) score += 2.0;
-        if (leader >= 0 && t.owner === leader) score += 1.6;
-        if (callTargets.has(t.owner)) score += 5.0;
-        if (grudge && grudge.at === t.owner) score += 2.2;
-        if (state.human[t.owner]) score += 0.3;
-
-        // 과확장 방지: 점령 직후 1개만 남는데 큰 적 부대에 둘러싸이면 감점
-        let danger = 0;
-        for (const nn of r.neighbors) {
-          if (nn === t.id) continue;
-          const e = state.regions[nn];
-          if (e.owner === ai) continue;
-          if (e.owner >= 0 && treatyOf(state, ai, e.owner)) continue;
-          if (e.troops > 2) danger += e.troops;
-        }
-        if (danger >= 4 && !(t.troops <= 1 && t.neighbors.length >= 4)) score -= 2.8;
-        if (r.troops <= 2) score -= 1.5;
-        if (t.owner === -1 && t.neighbors.length <= 2) score -= 0.4;
-        score += rand() * 0.6;
-        if (score > bestScore) { bestScore = score; best = { from: r, to: t, score }; }
-      }
-    }
-    if (!best || bestScore <= 0.5) return null;
-    return best;
-  },
-
-  aiAttackBudget(state, ai) {
-    const n = Game.countOwned(state, ai);
-    let b = Math.round(TUNING.aiAttacksBase + n * TUNING.aiAttacksPerOwned);
-    if (activeCallFor(state, ai)) b += 2;
-    const leader = leaderOf(state);
-    if (leader >= 0 && leader !== ai) b += 1;
-    return Math.round(clampNum(b, TUNING.aiAttacksBase, 13));
+    to.troops = Math.max(1, to.troops - dLoss);
+    return {
+      kind: 'warn',
+      text: attacker + ' 공격 실패 · ' + to.name + ' · 아군 -' + aLoss + ' / 적 -' + dLoss +
+        (allyBonus ? ' [동맹 +]' : ''),
+      battle: true,
+      captured: false,
+      at: to.id,
+      region: to.name,
+      attacker: m.owner,
+      defender: defOwner
+    };
   },
 
   checkOver(state) {
@@ -996,7 +938,7 @@ const Game = {
     const total = state.regions.length;
     for (let i = 0; i < NATION_COUNT; i++) {
       if (state.active[i] && Game.countOwned(state, i) === total) {
-        state.over = { type: 'nation', winner: i };
+        state.over = { type: 'nation', winner: i, at: state.time };
         return state.over;
       }
     }
@@ -1007,24 +949,28 @@ const Game = {
       if (c > 0) { alive++; last = i; }
       else state.everEliminated = true;
     }
-    // 참전국이 하나만 남았고, 실제로 누군가 탈락한 뒤라면 마지막 생존국 승리
     if (alive === 1 && state.everEliminated) {
-      state.over = { type: 'lastStanding', winner: last };
+      state.over = { type: 'lastStanding', winner: last, at: state.time };
+    } else if (alive === 0) {
+      state.over = { type: 'draw', winner: -1, at: state.time };
     }
     return state.over;
   },
 
   /* ---------------- 외교: 조약 · 제안 · 평판 ---------------- */
 
-  createTreaty(state, a, b, type, turns, extra) {
+  createTreaty(state, a, b, type, sec, extra) {
     const k = tkey(a, b);
     const prev = state.treaties[k];
+    const use = type || 'truce';
+    const durMs = Math.max(5, (sec || DUR[use] || 45)) * 1000;
     const tr = {
       a: Math.min(a, b),
       b: Math.max(a, b),
-      type: type || 'truce',
-      turns: Math.max(1, turns || TUNING.treatyTurns),
-      since: prev ? prev.since : state.turn
+      type: use,
+      until: state.time + durMs,
+      since: prev ? prev.since : state.time,
+      nextPayAt: state.time + DUR.tributePay * 1000
     };
     if (extra) Object.assign(tr, extra);
     state.treaties[k] = tr;
@@ -1045,9 +991,10 @@ const Game = {
   breakPact(state, from, to) {
     const tr = Game.removeTreaty(state, from, to);
     if (!tr) return null;
-    if (to >= 0) state.grudge[to] = { at: from, turns: TUNING.grudgeTurns };
-    addRelation(state, from, to, -TUNING.betrayRelation);
-    addReputation(state, from, -TUNING.betrayReputation);
+    if (to >= 0) state.grudge[to] = { at: from, until: state.time + DUR.grudge * 1000 };
+    addRelation(state, from, to, -55);
+    addReputation(state, from, -35);
+    state.stats.betrayals++;
     for (let i = 0; i < NATION_COUNT; i++) {
       if (i === from || i === to || !state.active[i]) continue;
       addRelation(state, from, i, -8);
@@ -1059,7 +1006,7 @@ const Game = {
       (p) => !((p.from === from && p.to === to) || (p.from === to && p.to === from))
     );
     diploNote(state, nationName(state, from) + '이(가) ' + nationName(state, to) +
-      '와(과)의 ' + treatyLabel(tr) + '을(를) 파기했습니다 · 신뢰도 -' + TUNING.betrayReputation,
+      '와(과)의 ' + treatyLabel(tr) + '을(를) 파기했습니다 · 신뢰도 -35',
       'bad', [from, to]);
     return tr;
   },
@@ -1074,7 +1021,6 @@ const Game = {
       if (!source || r.troops > source.troops) source = r;
     }
     if (!source) return { ok: false };
-    // 받는 쪽: 지불국과 맞닿은 영토 우선, 없으면 가장 약한 영토
     let target = null;
     for (const q of state.regions) {
       if (q.owner !== payee) continue;
@@ -1094,56 +1040,91 @@ const Game = {
     return { ok: true, from: payer, to: payee, amount, region: target.name };
   },
 
-  tickTreaties(state) {
-    const expired = [];
-    const tributes = [];
-    const broke = [];
+  /** 매 스텝 호출: 조공 지급 · 조약 만료 · 제안 만료 · 신뢰 회복 */
+  tickDiplomacy(state, dt) {
+    const events = [];
     for (const k of Object.keys(state.treaties)) {
       const tr = state.treaties[k];
       if (!tr) continue;
-      if (tr.type === 'tribute') {
+      if (tr.type === 'tribute' && state.time >= tr.nextPayAt) {
+        tr.nextPayAt = state.time + DUR.tributePay * 1000;
         const paid = Game.payTribute(state, tr);
         if (paid.ok) {
-          tributes.push(paid);
           diploNote(state, nationName(state, tr.payer) + ' → ' + nationName(state, tr.payee) +
             ' 조공 ' + paid.amount + ' (' + paid.region + ')', 'tribute', [tr.payer, tr.payee]);
+          events.push({
+            kind: 'tribute',
+            text: '조공 · ' + nationName(state, tr.payer) + ' → ' + nationName(state, tr.payee) +
+              ' ' + paid.amount + '개',
+            silent: true
+          });
         } else {
-          broke.push({ a: tr.a, b: tr.b, type: 'tribute' });
           delete state.treaties[k];
           addReputation(state, tr.payer, -10);
           addRelation(state, tr.payer, tr.payee, -15);
           diploNote(state, nationName(state, tr.payer) + '이(가) 조공을 이행하지 못해 조약이 깨졌습니다',
             'bad', [tr.payer, tr.payee]);
+          events.push({
+            kind: 'bad',
+            text: '조공 미이행 · ' + nationName(state, tr.payer) + ' ↔ ' + nationName(state, tr.payee) + ' 조약 파기'
+          });
           continue;
         }
       }
-      tr.turns--;
-      if (tr.turns <= 0) {
-        expired.push({ a: tr.a, b: tr.b, type: tr.type });
+      if (state.time >= tr.until) {
+        const label = treatyLabel(tr);
         delete state.treaties[k];
+        diploNote(state, label + ' 만료 · ' + nationName(state, tr.a) + ' ↔ ' + nationName(state, tr.b),
+          'warn', [tr.a, tr.b]);
+        events.push({
+          kind: 'warn',
+          text: label + ' 만료 · ' + nationName(state, tr.a) + ' ↔ ' + nationName(state, tr.b)
+        });
       }
     }
 
     for (const c of state.calls.slice()) {
-      c.turns--;
-      if (c.turns <= 0) {
+      if (state.time >= c.until) {
         state.calls = state.calls.filter((x) => x !== c);
+        events.push({
+          kind: 'info', silent: true,
+          text: '공동 참전 종료 · ' + nationName(state, c.to) + ' → ' + nationName(state, c.target)
+        });
       }
     }
 
     for (const k of Object.keys(state.grudge)) {
       const gr = state.grudge[k];
       if (!gr) continue;
-      gr.turns--;
-      if (gr.turns <= 0) delete state.grudge[k];
+      if (state.time >= gr.until) delete state.grudge[k];
     }
 
-    // 평판은 매 라운드 조금씩 회복 (배신의 대가는 오래 남는다)
-    for (let i = 0; i < NATION_COUNT; i++) {
-      if (state.active[i] && Game.countOwned(state, i) > 0) addReputation(state, i, 1);
+    for (const p of state.proposals.slice()) {
+      if (state.time - p.at >= DUR.proposal * 1000) {
+        state.proposals = state.proposals.filter((x) => x !== p);
+        events.push({
+          kind: 'info', silent: true,
+          text: nationName(state, p.from) + '의 제안이 만료되었습니다'
+        });
+      }
     }
 
-    return { expired, tributes, broke };
+    state.repTimer += dt;
+    while (state.repTimer >= 10000) {
+      state.repTimer -= 10000;
+      for (let i = 0; i < NATION_COUNT; i++) {
+        if (state.active[i] && Game.countOwned(state, i) > 0) addReputation(state, i, 1);
+      }
+    }
+
+    if (!state.overtimeAnnounced && state.time >= SIM.overtimeAfterMs) {
+      state.overtimeAnnounced = true;
+      events.push({
+        kind: 'warn',
+        text: '⏱ 6분 경과 · 병력 생산이 빨라집니다 (결전 모드)'
+      });
+    }
+    return events;
   },
 
   evaluateTruce(state, ai, other) {
@@ -1225,23 +1206,23 @@ const Game = {
   queueProposal(state, from, to, fields) {
     const kind = fields.kind || 'truce';
     if (state.proposals.some((p) => p.from === from && p.to === to && p.kind === kind)) return null;
-    const p = Object.assign({ id: state.nextProposalId++, from, to, at: Date.now() }, fields);
+    const p = Object.assign({ id: state.nextProposalId++, from, to, at: state.time }, fields);
     p.kind = kind;
     state.proposals.push(p);
     return p;
   },
 
-  proposeTruce(state, from, to, turns) {
+  proposeTruce(state, from, to, sec) {
     if (from === to) return { status: 'none', reason: 'self' };
     if (to < 0 || !state.active[to] || Game.countOwned(state, to) === 0) {
       return { status: 'none', reason: 'dead' };
     }
     if (treatyOf(state, from, to)) return { status: 'none', reason: 'already' };
-    const t = turns || TUNING.treatyTurns;
+    const t = sec || DUR.truce;
 
     if (state.human[to]) {
       const had = state.proposals.some((p) => p.from === from && p.to === to && p.kind === 'truce');
-      const p = Game.queueProposal(state, from, to, { kind: 'truce', turns: t });
+      const p = Game.queueProposal(state, from, to, { kind: 'truce', sec: t });
       return { status: 'queued', dup: had, proposal: p, text: had ? null : '불가침 조약을 제안했습니다' };
     }
     if (Game.evaluateTruce(state, to, from)) {
@@ -1249,16 +1230,16 @@ const Game = {
       addRelation(state, from, to, 5);
       addReputation(state, from, 2);
       const text = nationName(state, from) + ' ↔ ' + nationName(state, to) +
-        ' 불가침 조약 체결 (' + t + '턴)';
+        ' 불가침 조약 체결 (' + t + '초)';
       diploNote(state, text, 'good', [from, to]);
-      return { status: 'accepted', turns: t, text };
+      return { status: 'accepted', sec: t, text };
     }
     const text = nationName(state, to) + '이(가) 불가침 제안을 거절했습니다';
     diploNote(state, text, 'warn', [from, to]);
     return { status: 'declined', text };
   },
 
-  proposeAlliance(state, from, to, turns) {
+  proposeAlliance(state, from, to, sec) {
     if (from === to) return { status: 'none', reason: 'self' };
     if (to < 0 || !state.active[to] || Game.countOwned(state, to) === 0) {
       return { status: 'none', reason: 'dead' };
@@ -1266,21 +1247,21 @@ const Game = {
     const tr = treatyOf(state, from, to);
     if (!tr || tr.type === 'ally') return { status: 'none', reason: 'need_truce' };
     if (tr.type === 'tribute') return { status: 'none', reason: 'need_truce' };
-    const t = turns || TUNING.allyTurns;
+    const t = sec || DUR.ally;
 
     if (state.human[to]) {
       const had = state.proposals.some((p) => p.from === from && p.to === to && p.kind === 'ally');
-      const p = Game.queueProposal(state, from, to, { kind: 'ally', turns: t });
+      const p = Game.queueProposal(state, from, to, { kind: 'ally', sec: t });
       return { status: 'queued', dup: had, proposal: p, text: had ? null : '동맹을 제안했습니다' };
     }
     if (Game.evaluateAlliance(state, to, from)) {
       Game.createTreaty(state, from, to, 'ally', t);
-      addRelation(state, from, to, TUNING.allianceRelation);
+      addRelation(state, from, to, 10);
       addReputation(state, from, 4);
       const text = nationName(state, from) + ' ↔ ' + nationName(state, to) +
-        ' 정식 동맹 체결 (' + t + '턴 · 공동 참전 가능)';
+        ' 정식 동맹 체결 (' + t + '초 · 공동 참전 가능)';
       diploNote(state, text, 'good', [from, to]);
-      return { status: 'accepted', turns: t, text };
+      return { status: 'accepted', sec: t, text };
     }
     const text = nationName(state, to) + '이(가) 동맹 제안을 거절했습니다';
     diploNote(state, text, 'warn', [from, to]);
@@ -1295,14 +1276,14 @@ const Game = {
     if (treatyOf(state, from, to)) return { status: 'none', reason: 'already' };
     const amt = clampNum(Math.floor(Number(amount) || 1), 1, 2);
     const dir = direction === 'offer' ? 'offer' : 'demand';
-    const t = TUNING.tributeTurns;
+    const t = DUR.tribute;
     const payer = dir === 'demand' ? to : from;
     const payee = dir === 'demand' ? from : to;
 
     if (state.human[to]) {
       const had = state.proposals.some((p) => p.from === from && p.to === to && p.kind === 'tribute');
       const p = Game.queueProposal(state, from, to, {
-        kind: 'tribute', turns: t, amount: amt, direction: dir,
+        kind: 'tribute', sec: t, amount: amt, direction: dir,
         payer, payee
       });
       return { status: 'queued', dup: had, proposal: p, text: had ? null : '조공을 제안했습니다' };
@@ -1322,9 +1303,9 @@ const Game = {
     addRelation(state, from, to, 3);
     if (dir === 'offer') addReputation(state, payer, 3); else addReputation(state, payer, -2);
     const text = nationName(state, payer) + ' → ' + nationName(state, payee) + ' 조공 ' +
-      amt + '개씩 ' + t + '턴 조약 체결';
+      amt + '개씩 ' + t + '초 조약 체결';
     diploNote(state, text, 'tribute', [from, to]);
-    return { status: 'accepted', turns: t, text };
+    return { status: 'accepted', sec: t, text };
   },
 
   proposeCede(state, from, to, regionId, withTruce) {
@@ -1339,7 +1320,7 @@ const Game = {
       const had = state.proposals.some((p) => p.from === from && p.to === to && p.kind === 'cede');
       const p = Game.queueProposal(state, from, to, {
         kind: 'cede', regionId, regionName: region.name,
-        withTruce: !!withTruce, turns: withTruce ? TUNING.treatyTurns : 0
+        withTruce: !!withTruce, sec: withTruce ? DUR.truce : 0
       });
       return { status: 'queued', dup: had, proposal: p, text: had ? null : '영토 할양을 제안했습니다' };
     }
@@ -1359,18 +1340,20 @@ const Game = {
     if (!region || region.owner !== from) return null;
     region.owner = to;
     region.troops = 1;
-    addRelation(state, from, to, TUNING.cedeRelation);
+    region.p = 0;
+    if (state.capitals[from] === region.id) state.capitals[from] = -1;
+    addRelation(state, from, to, 25);
     addReputation(state, from, 5);
     if (withTruce) {
       const prev = treatyOf(state, from, to);
       if (!prev) {
-        Game.createTreaty(state, from, to, 'truce', TUNING.treatyTurns);
+        Game.createTreaty(state, from, to, 'truce', DUR.truce);
       } else if (prev.type === 'truce') {
-        prev.turns = Math.max(prev.turns, TUNING.treatyTurns);
+        prev.until = Math.max(prev.until, state.time + DUR.truce * 1000);
       }
     }
     const text = nationName(state, from) + ' → ' + nationName(state, to) + ' ' + region.name +
-      ' 할양 · 관계 +' + TUNING.cedeRelation + (withTruce ? ' · 불가침 ' + TUNING.treatyTurns + '턴' : '');
+      ' 할양 · 관계 +25' + (withTruce ? ' · 불가침 ' + DUR.truce + '초' : '');
     diploNote(state, text, 'good', [from, to]);
     return region;
   },
@@ -1386,13 +1369,13 @@ const Game = {
     if (state.proposals.some((p) => p.from === from && p.to === to && p.kind === 'call' && p.target === target)) {
       return { status: 'none', reason: 'dup' };
     }
-    if (state.calls.some((c) => c.from === from && c.to === to && c.target === target && c.turns > 0)) {
+    if (state.calls.some((c) => c.from === from && c.to === to && c.target === target && c.until > state.time)) {
       return { status: 'none', reason: 'dup' };
     }
 
     if (state.human[to]) {
       const p = Game.queueProposal(state, from, to, {
-        kind: 'call', target, targetName: nationName(state, target), turns: TUNING.callTurns
+        kind: 'call', target, targetName: nationName(state, target), sec: DUR.call
       });
       return { status: 'queued', proposal: p, text: nationName(state, to) + '에 공동 참전을 요청했습니다' };
     }
@@ -1421,8 +1404,8 @@ const Game = {
     const c = {
       id: state.nextCallId++,
       from, to, target,
-      turns: TUNING.callTurns,
-      at: Date.now()
+      until: state.time + DUR.call * 1000,
+      at: state.time
     };
     state.calls.push(c);
     return c;
@@ -1440,32 +1423,32 @@ const Game = {
     let text = '';
     let skipNote = false;
     if (p.kind === 'truce') {
-      Game.createTreaty(state, p.from, p.to, 'truce', p.turns || TUNING.treatyTurns);
+      Game.createTreaty(state, p.from, p.to, 'truce', p.sec || DUR.truce);
       addRelation(state, p.from, p.to, 5);
       addReputation(state, p.from, 2);
       text = nationName(state, p.from) + ' ↔ ' + nationName(state, p.to) +
-        ' 불가침 조약 체결 (' + (p.turns || TUNING.treatyTurns) + '턴)';
+        ' 불가침 조약 체결 (' + (p.sec || DUR.truce) + '초)';
     } else if (p.kind === 'ally') {
-      Game.createTreaty(state, p.from, p.to, 'ally', p.turns || TUNING.allyTurns);
-      addRelation(state, p.from, p.to, TUNING.allianceRelation);
+      Game.createTreaty(state, p.from, p.to, 'ally', p.sec || DUR.ally);
+      addRelation(state, p.from, p.to, 10);
       addReputation(state, p.from, 4);
       text = nationName(state, p.from) + ' ↔ ' + nationName(state, p.to) +
-        ' 정식 동맹 체결 (' + (p.turns || TUNING.allyTurns) + '턴)';
+        ' 정식 동맹 체결 (' + (p.sec || DUR.ally) + '초)';
     } else if (p.kind === 'tribute') {
       const payer = p.payer != null ? p.payer : (p.direction === 'demand' ? p.to : p.from);
       const payee = p.payee != null ? p.payee : (p.direction === 'demand' ? p.from : p.to);
-      Game.createTreaty(state, p.from, p.to, 'tribute', p.turns || TUNING.tributeTurns, {
+      Game.createTreaty(state, p.from, p.to, 'tribute', p.sec || DUR.tribute, {
         payer, payee, amount: clampNum(p.amount || 1, 1, 2)
       });
       addRelation(state, p.from, p.to, 3);
       if (p.direction === 'offer') addReputation(state, payer, 3); else addReputation(state, payer, -2);
       text = nationName(state, payer) + ' → ' + nationName(state, payee) + ' 조공 ' +
-        clampNum(p.amount || 1, 1, 2) + '개씩 ' + (p.turns || TUNING.tributeTurns) + '턴 조약 체결';
+        clampNum(p.amount || 1, 1, 2) + '개씩 ' + (p.sec || DUR.tribute) + '초 조약 체결';
     } else if (p.kind === 'cede') {
       Game.applyCede(state, p.from, p.to, p.regionId, p.withTruce);
       text = nationName(state, p.from) + ' → ' + nationName(state, p.to) + ' ' +
         (p.regionName || '영토') + ' 할양' + (p.withTruce ? ' · 불가침 체결' : '');
-      skipNote = true; // applyCede 가 상세한 소식을 이미 남긴다
+      skipNote = true;
     } else if (p.kind === 'call') {
       Game.addCall(state, p.from, p.to, p.target);
       addRelation(state, p.from, p.to, 10);
@@ -1478,8 +1461,7 @@ const Game = {
   },
 
   canAid(state, from) {
-    if (state.reinforcements >= TUNING.aidAmount) return true;
-    return state.regions.some((r) => r.owner === from && r.troops >= TUNING.aidThreshold);
+    return state.regions.some((r) => r.owner === from && r.troops >= 6);
   },
 
   sendAid(state, from, to) {
@@ -1487,26 +1469,14 @@ const Game = {
       return { ok: false, reason: 'target' };
     }
     if (!state.human[from]) return { ok: false, reason: 'turn' };
-    const need = TUNING.aidAmount;
-    let source = null, srcName = '';
-
-    if (state.reinforcements >= need) {
-      state.reinforcements -= need;
-      source = 'reserve';
-      srcName = '남은 배치';
-    } else {
-      let best = null;
-      for (const r of state.regions) {
-        if (r.owner !== from || r.troops < TUNING.aidThreshold) continue;
-        if (!best || r.troops > best.troops) best = r;
-      }
-      if (best) {
-        best.troops -= need;
-        source = 'territory';
-        srcName = best.name;
-      }
+    const need = 3;
+    let best = null;
+    for (const r of state.regions) {
+      if (r.owner !== from || r.troops < 6) continue;
+      if (!best || r.troops > best.troops) best = r;
     }
-    if (!source) return { ok: false, reason: 'short' };
+    if (!best) return { ok: false, reason: 'short' };
+    best.troops -= need;
 
     let target = null;
     for (const q of state.regions) {
@@ -1527,33 +1497,215 @@ const Game = {
     const tr = treatyOf(state, from, to);
     if (tr && tr.type !== 'tribute') {
       tr.type = 'ally';
-      tr.turns = Math.max(tr.turns, TUNING.allyTurns);
+      tr.until = Math.max(tr.until, state.time + DUR.ally * 1000);
     } else if (!tr) {
-      Game.createTreaty(state, from, to, 'ally', TUNING.allyTurns);
+      Game.createTreaty(state, from, to, 'ally', DUR.ally);
     }
-    addRelation(state, from, to, TUNING.aidRelation);
-    addReputation(state, from, TUNING.aidReputation);
+    addRelation(state, from, to, 15);
+    addReputation(state, from, 3);
     const after = treatyOf(state, from, to);
+    const left = after ? Math.max(0, Math.round((after.until - state.time) / 1000)) : DUR.ally;
     const text = nationName(state, from) + ' → ' + nationName(state, to) + ' 병력 ' + need +
-      ' 지원 (' + srcName + ') · 관계 +' + TUNING.aidRelation;
+      ' 지원 (' + best.name + ') · 관계 +15';
     diploNote(state, text, 'good', [from, to]);
     return {
       ok: true,
       amount: need,
-      source,
-      srcName,
+      source: 'territory',
+      srcName: best.name,
       region: target.name,
-      turns: after ? after.turns : TUNING.allyTurns,
+      sec: left,
       text
     };
   },
 
-  /* ---------------- AI 외교: 리더 견제 · 두 전선 · 조공 · 공동 참전 ---------------- */
+  /* ---------------- AI 실시간 판단 ---------------- */
+
+  frontlineScore(state, ai, r) {
+    const leader = leaderOf(state);
+    const callTargets = callTargetsFor(state, ai);
+    const grudge = state.grudge[ai];
+    let threat = 0, opportunity = 0, bonus = 0;
+    for (const nb of r.neighbors) {
+      const t = state.regions[nb];
+      if (t.owner === ai) continue;
+      if (t.owner >= 0 && treatyOf(state, ai, t.owner)) continue;
+      threat += t.troops * (state.human[t.owner] ? 1.2 : 1);
+      const diff = r.troops - t.troops;
+      const need = t.owner === -1 ? 1 : 2;
+      if (diff >= need) opportunity = Math.max(opportunity, diff + (t.owner === -1 ? 1.2 : 0));
+      if (leader >= 0 && t.owner === leader) bonus += 1.6;
+      if (callTargets.has(t.owner)) bonus += 3.5;
+      if (t.owner === -1 && state.time < 30000) bonus += 1.0;
+      if (t.troops <= 1 && t.owner >= 0) bonus += 0.8;
+    }
+    if (grudge) bonus += 1.2;
+    return threat * 1.35 + opportunity + bonus;
+  },
+
+  /** 전선에 병력이 부족할 때 인접 아군 영토에서 행군시킨다 */
+  aiDefend(state, ai) {
+    const incoming = state.marches.filter((m) => m.owner !== ai && state.regions[m.to] && state.regions[m.to].owner === ai);
+    if (!incoming.length) return 0;
+    let acted = 0;
+    for (const m of incoming) {
+      if (acted >= 2) break;
+      const target = state.regions[m.to];
+      if (target.troops >= m.troops + 1) continue;
+      let best = null;
+      for (const nb of target.neighbors) {
+        const r = state.regions[nb];
+        if (r.owner !== ai || r.id === target.id || r.troops < 3) continue;
+        if (!best || r.troops > best.troops) best = r;
+      }
+      if (!best) continue;
+      const res = Game.dispatch(state, ai, best.id, target.id, 0.7);
+      if (res.ok) acted++;
+    }
+    return acted;
+  },
+
+  /** 후방 병력을 전선으로 이동 (행군으로) */
+  aiMarchShift(state, ai) {
+    const own = state.regions.filter((r) => r.owner === ai);
+    if (own.length < 2) return 0;
+    const dist = {};
+    const q = [];
+    for (const r of own) {
+      if (r.neighbors.some((nb) => state.regions[nb].owner !== ai)) {
+        dist[r.id] = 0;
+        q.push(r.id);
+      }
+    }
+    if (!q.length) return 0;
+    for (let h = 0; h < q.length; h++) {
+      const v = state.regions[q[h]];
+      for (const nb of v.neighbors) {
+        const t = state.regions[nb];
+        if (t.owner === ai && dist[t.id] == null) {
+          dist[t.id] = dist[v.id] + 1;
+          q.push(t.id);
+        }
+      }
+    }
+    const rear = own.filter((r) => dist[r.id] > 0 && r.troops >= 4).sort((a, b) => dist[b.id] - dist[a.id]);
+    let moved = 0;
+    for (const r of rear) {
+      if (moved >= 4) break;
+      let best = null, bestD = dist[r.id];
+      for (const nb of r.neighbors) {
+        const t = state.regions[nb];
+        if (t.owner !== ai) continue;
+        const d = dist[t.id];
+        if (d == null || d >= bestD) continue;
+        bestD = d;
+        best = t;
+      }
+      if (!best) continue;
+      if (Game.dispatch(state, ai, r.id, best.id, 1).ok) moved++;
+    }
+    return moved;
+  },
+
+  /** 가장 유리한 전선 한 곳에 인접 병력을 한꺼번에 모은다 (결정적 돌파용) */
+  aiMassToFront(state, ai) {
+    let best = null, bestScore = -1e9;
+    for (const r of state.regions) {
+      if (r.owner !== ai) continue;
+      for (const nb of r.neighbors) {
+        const t = state.regions[nb];
+        if (t.owner === ai) continue;
+        if (t.owner >= 0 && treatyOf(state, ai, t.owner)) continue;
+        const score = r.troops - t.troops * 1.25 + (t.owner === -1 ? 2 : 0) +
+          (state.capitals[t.owner] === t.id ? 0.5 : 0);
+        if (score > bestScore) { bestScore = score; best = r; }
+      }
+    }
+    if (!best) return 0;
+    let moved = 0;
+    for (const nb of best.neighbors) {
+      const r = state.regions[nb];
+      if (r.owner !== ai || r.id === best.id || r.troops < 3) continue;
+      if (Game.dispatch(state, ai, r.id, best.id, 1).ok) moved++;
+    }
+    if (moved < 2) Game.aiMarchShift(state, ai);
+    return moved;
+  },
+
+  aiPickAttack(state, ai) {
+    let best = null, bestScore = -1e9;
+    const grudge = state.grudge[ai];
+    const leader = leaderOf(state);
+    const callTargets = callTargetsFor(state, ai);
+    for (const r of state.regions) {
+      if (r.owner !== ai || r.troops < 2) continue;
+      for (const nb of r.neighbors) {
+        const t = state.regions[nb];
+        if (t.owner === ai) continue;
+        if (t.troops < 1) continue;
+        if (t.owner >= 0 && treatyOf(state, ai, t.owner)) continue;
+        const diff = r.troops - t.troops;
+        const need = t.owner === -1 ? 1 : 2;
+        if (diff < need) continue;
+        // 출정은 병력 대부분(1개 남김)을 보낸다 → 이길 수 있을 때만 움직인다
+        if (t.owner >= 0) {
+          const capTarget = state.capitals[t.owner] === t.id;
+          const needForce = t.troops * (capTarget ? SIM.capitalDefBonus : SIM.defBonus) + 1;
+          if (r.troops - 1 < needForce) continue;
+        }
+
+        let score = diff * 1.15;
+        if (t.owner === -1) score += state.time < 30000 ? 2.4 : 0.6;
+        if (t.troops <= 1 && t.owner >= 0) score += 2.0;
+        if (leader >= 0 && t.owner === leader) score += 1.6;
+        if (callTargets.has(t.owner)) score += 5.0;
+        if (grudge && grudge.at === t.owner) score += 2.2;
+        if (state.human[t.owner]) score += 0.3;
+
+        let danger = 0;
+        for (const nn of r.neighbors) {
+          if (nn === t.id) continue;
+          const e = state.regions[nn];
+          if (e.owner === ai) continue;
+          if (e.owner >= 0 && treatyOf(state, ai, e.owner)) continue;
+          if (e.troops > 2) danger += e.troops;
+        }
+        if (danger >= 4 && !(t.troops <= 1 && t.neighbors.length >= 4)) score -= 2.8;
+        if (r.troops <= 2) score -= 1.5;
+        if (t.owner === -1 && t.neighbors.length <= 2) score -= 0.4;
+        score += rand() * 0.6;
+        if (score > bestScore) { bestScore = score; best = { from: r, to: t, score }; }
+      }
+    }
+    if (!best || bestScore <= 0.5) return null;
+    return best;
+  },
+
+  nudgeAiCadence(state, slot) {
+    const a = state.ai[slot] || (state.ai[slot] = { nextAt: 0, nextDiploAt: 0 });
+    a.nextAt = state.time + SIM.aiMinMs + rand() * (SIM.aiMaxMs - SIM.aiMinMs);
+  },
+
+  aiThink(state, slot) {
+    const out = { events: [] };
+    if (!state.active[slot] || Game.countOwned(state, slot) === 0) return out;
+
+    Game.aiDefend(state, slot);
+
+    const mv = Game.aiPickAttack(state, slot);
+    if (mv) {
+      Game.dispatch(state, slot, mv.from.id, mv.to.id, 1);
+    } else {
+      Game.aiMassToFront(state, slot);
+    }
+    return out;
+  },
+
+  /* ---------------- AI 외교 ---------------- */
   aiDiplomacy(state, ai) {
     const out = [];
     const total = state.regions.length;
     const leader = leaderOf(state);
-    const myCount = Game.countOwned(state, ai);
     const two = twoFrontCount(state, ai) >= 2;
     const share = (n) => Game.countOwned(state, n) / Math.max(1, total);
 
@@ -1566,7 +1718,6 @@ const Game = {
       out.push({ type: 'proposal', proposal: p, text: text || '제안이 도착했습니다' });
     }
 
-    // 1) 35% 이상을 먹은 1위 국가 견제: 다른 강국과 손잡는다
     if (leader >= 0 && leader !== ai && share(leader) > 0.35) {
       const partners = [];
       for (let i = 0; i < NATION_COUNT; i++) {
@@ -1592,7 +1743,6 @@ const Game = {
       }
     }
 
-    // 2) 두 전선: 약한 쪽과 먼저 휴전, 필요하면 조공 1개를 바친다
     if (two && rand() < 0.8) {
       const threats = [];
       for (let i = 0; i < NATION_COUNT; i++) {
@@ -1616,7 +1766,6 @@ const Game = {
       }
     }
 
-    // 3) 약한 이웃에게 조공 요구
     if (rand() < 0.32) {
       const victims = [];
       for (let i = 0; i < NATION_COUNT; i++) {
@@ -1636,7 +1785,6 @@ const Game = {
       }
     }
 
-    // 4) 동맹에게 공동 참전 요청
     if (rand() < 0.5) {
       const allies = [];
       for (let i = 0; i < NATION_COUNT; i++) {
@@ -1669,7 +1817,6 @@ const Game = {
       }
     }
 
-    // 5) 사람 플레이어와의 관계 관리
     if (rand() < 0.3) {
       const humans = [];
       for (let i = 0; i < NATION_COUNT; i++) {
@@ -1696,6 +1843,75 @@ const Game = {
   }
 };
 
+/* =============================================================================
+   실시간 시뮬레이션 스텝
+   ============================================================================= */
+
+const Sim = {
+  step(state, dt) {
+    const events = [];
+    if (!state || state.over || dt <= 0) return { events, over: state ? state.over : null };
+    state.time += dt;
+
+    Game.tickProduction(state, dt);
+
+    if (state.marches.length) {
+      const due = [];
+      const rest = [];
+      for (const m of state.marches) {
+        if (m.arriveAt <= state.time) due.push(m); else rest.push(m);
+      }
+      if (due.length) {
+        state.marches = rest;
+        due.sort((a, b) => a.arriveAt - b.arriveAt);
+        for (const m of due) {
+          const res = Game.resolveMarch(state, m);
+          if (res && !res.silent) events.push(res);
+          if (Game.checkOver(state)) break;
+        }
+      }
+    }
+
+    const dipEvents = Game.tickDiplomacy(state, dt);
+    for (const e of dipEvents) if (!e.silent) events.push(e);
+
+    if (!state.over) {
+      for (let slot = 0; slot < NATION_COUNT; slot++) {
+        if (!state.active[slot] || state.human[slot]) continue;
+        if (Game.countOwned(state, slot) === 0) continue;
+        const aiState = state.ai[slot] || (state.ai[slot] = { nextAt: 0, nextDiploAt: 0 });
+        if (state.time >= aiState.nextAt) {
+          Game.aiThink(state, slot);
+          Game.nudgeAiCadence(state, slot);
+        }
+        if (state.over) break;
+        if (state.time >= aiState.nextDiploAt) {
+          aiState.nextDiploAt = state.time + SIM.aiDiploMinMs +
+            rand() * (SIM.aiDiploMaxMs - SIM.aiDiploMinMs);
+          const dip = Game.aiDiplomacy(state, slot);
+          for (const item of dip) {
+            if (!item) continue;
+            if (item.type === 'note') {
+              events.push({ kind: item.kind || 'info', text: item.text });
+            } else if (item.type === 'proposal' && item.proposal) {
+              events.push({
+                kind: 'warn',
+                text: nationName(state, slot) + ' 님이 ' + (item.text || '제안을 보냈습니다'),
+                toSlot: item.proposal.to,
+                silent: false
+              });
+            }
+          }
+          if (Game.checkOver(state)) break;
+        }
+      }
+    }
+
+    const over = Game.checkOver(state);
+    return { events, over };
+  }
+};
+
 function treatyLabel(tr) {
   if (!tr) return '조약';
   if (tr.type === 'ally') return '동맹';
@@ -1704,7 +1920,7 @@ function treatyLabel(tr) {
 }
 
 /* =============================================================================
-   3. 방 · 플레이어 · 진행
+   3. 방 · 플레이어 · 실시간 진행
    ============================================================================= */
 
 const rooms = new Map();
@@ -1730,56 +1946,63 @@ function sanitizeName(raw) {
   return s;
 }
 
-function createRoom(ws, name, aiFill) {
+function newPlayer(slot, name, ws, isAI, controlSlot) {
+  return {
+    slot,
+    controlSlot: controlSlot == null ? slot : controlSlot,
+    name,
+    token: makeToken(),
+    ws: ws || null,
+    connected: !!ws,
+    isAI: !!isAI,
+    abandoned: false,
+    autoAI: false,
+    lastDispatch: 0,
+    disconnectedAt: null,
+    dropTimer: null
+  };
+}
+
+function createRoom(ws, name, aiFill, sim) {
   const code = makeRoomCode();
   const room = {
     code,
     hostSlot: 0,
-    players: [],
+    players: [newPlayer(0, name, ws, false, sim ? -1 : 0)],
     started: false,
+    sim: !!sim,
     aiFill: aiFill !== false,
+    speed: sim ? 2 : 1,
     game: null,
-    flow: 0,
-    log: [],
-    createdAt: Date.now(),
+    lastStep: 0,
+    lastBroadcast: 0,
+    lastDiploSent: -1,
+    lastLogSent: -1,
     lastAt: Date.now(),
-    autoEndTimer: null,
+    createdAt: Date.now(),
     finishedAt: null,
+    logRev: 1,
+    log: [],
     closed: false
   };
-  const player = {
-    slot: 0,
-    name,
-    token: makeToken(),
-    ws,
-    connected: true,
-    isAI: false,
-    abandoned: false
-  };
-  room.players.push(player);
   rooms.set(code, room);
-  bind(ws, room, player);
-  return { room, player };
+  bind(ws, room, room.players[0]);
+  return { room, player: room.players[0] };
 }
 
 function joinRoom(ws, codeRaw, name) {
   const code = String(codeRaw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
   const room = rooms.get(code);
   if (!room) return { error: ['NO_ROOM', '그런 방이 없어요. 코드를 확인해 주세요.'] };
+  if (room.sim) return { error: ['SIM_ROOM', 'AI 시뮬레이션 방에는 난입할 수 없어요.'] };
   if (room.started) return { error: ['ROOM_STARTED', '이미 시작된 방이에요.'] };
-  if (room.players.length >= MAX_PLAYERS) return { error: ['ROOM_FULL', '방이 가득 찼어요 (4명).'] };
+  if (room.players.filter((p) => !p.isAI).length >= MAX_PLAYERS) {
+    return { error: ['ROOM_FULL', '방이 가득 찼어요 (4명).'] };
+  }
   let slot = 0;
   const used = new Set(room.players.map((p) => p.slot));
   while (used.has(slot)) slot++;
-  const player = {
-    slot,
-    name,
-    token: makeToken(),
-    ws,
-    connected: true,
-    isAI: false,
-    abandoned: false
-  };
+  const player = newPlayer(slot, name, ws, false, slot);
   room.players.push(player);
   room.lastAt = Date.now();
   bind(ws, room, player);
@@ -1789,6 +2012,10 @@ function joinRoom(ws, codeRaw, name) {
 
 function findPlayer(room, slot) {
   return room.players.find((p) => p.slot === slot) || null;
+}
+
+function controlOf(room, player) {
+  return player && player.controlSlot != null ? player.controlSlot : -1;
 }
 
 function bind(ws, room, player) {
@@ -1801,13 +2028,21 @@ function bind(ws, room, player) {
   player.connected = true;
   player.disconnectedAt = null;
   if (player.dropTimer) { clearTimeout(player.dropTimer); player.dropTimer = null; }
-  if (room.autoEndTimer) { clearTimeout(room.autoEndTimer); room.autoEndTimer = null; }
+  if (room.game && !room.game.over) {
+    const ctl = controlOf(room, player);
+    if (ctl >= 0 && player.autoAI) {
+      player.autoAI = false;
+      room.game.human[ctl] = true;
+      broadcastEvent(room, player.name + ' 님이 다시 조종합니다', 'good');
+    }
+  }
   room.lastAt = Date.now();
 }
 
 function addLog(room, text, kind) {
   room.log.push({ at: Date.now(), text, kind: kind || 'info' });
   if (room.log.length > 40) room.log.splice(0, room.log.length - 40);
+  room.logRev++;
 }
 
 function send(ws, obj) {
@@ -1827,25 +2062,111 @@ function playerName(room, slot) {
 
 function nationLabel(room, slot) {
   if (slot < 0) return NEUTRAL_NAME;
-  const p = findPlayer(room, slot);
-  if (p && p.isAI) return p.name;
+  const st = room.game;
+  if (st && st.names && st.names[slot]) return st.names[slot];
   return playerName(room, slot);
 }
 
-function publicState(room, slot) {
+function playerView(room) {
+  return room.players.map((p) => ({
+    slot: p.slot,
+    control: controlOf(room, p),
+    name: p.name,
+    connected: p.connected,
+    isAI: p.isAI,
+    autoAI: !!p.autoAI,
+    host: p.slot === room.hostSlot
+  }));
+}
+
+function treatyView(st) {
+  return Object.keys(st.treaties).map((k) => {
+    const t = st.treaties[k];
+    return {
+      a: t.a, b: t.b, type: t.type,
+      left: Math.max(0, Math.round(t.until - st.time)),
+      payer: t.payer == null ? null : t.payer,
+      payee: t.payee == null ? null : t.payee,
+      amount: t.amount == null ? null : t.amount
+    };
+  });
+}
+
+function proposalView(st) {
+  return st.proposals.map((p) => ({
+    id: p.id, from: p.from, to: p.to, kind: p.kind || 'truce', sec: p.sec,
+    age: Math.max(0, Math.round(st.time - p.at)),
+    amount: p.amount == null ? null : p.amount,
+    direction: p.direction || null,
+    regionId: p.regionId == null ? null : p.regionId,
+    regionName: p.regionName || null,
+    target: p.target == null ? null : p.target,
+    targetName: p.targetName || null,
+    withTruce: !!p.withTruce
+  }));
+}
+
+function relationView(st) {
+  return Object.keys(st.relations).map((k) => {
+    const parts = k.split('-');
+    return { a: Number(parts[0]), b: Number(parts[1]), value: st.relations[k] };
+  });
+}
+
+function callView(st) {
+  return (st.calls || []).map((c) => ({
+    id: c.id, from: c.from, to: c.to, target: c.target,
+    left: Math.max(0, Math.round(c.until - st.time))
+  }));
+}
+
+function marchView(st) {
+  return st.marches.map((m) => ({
+    id: m.id, owner: m.owner, from: m.from, to: m.to, n: m.troops,
+    left: Math.max(0, Math.round(m.arriveAt - st.time)), dur: m.dur
+  }));
+}
+
+function leaderView(st) {
+  const slot = leaderOf(st);
+  if (slot < 0) return null;
+  return { slot, share: Math.round((Game.countOwned(st, slot) / st.regions.length) * 100) };
+}
+
+function armyView(st) {
+  const out = [];
+  for (let i = 0; i < NATION_COUNT; i++) {
+    out.push({
+      slot: i,
+      land: Game.countOwned(st, i),
+      troops: Game.totalTroops(st, i),
+      prod: Game.productionRateOf(st, i),
+      rep: reputationOf(st, i)
+    });
+  }
+  return out;
+}
+
+function fullState(room, slot) {
   const st = room.game;
-  const base = {
+  const delegate = slot >= 0 && !st.human[slot];
+  return {
     type: 'state',
     code: room.code,
     host: room.hostSlot,
-    started: room.started,
+    started: true,
+    sim: !!room.sim,
     aiFill: room.aiFill,
+    speed: room.speed || 1,
     you: slot,
-    turn: st.turn,
-    cur: st.cur,
-    phase: st.phase,
-    reinforcements: st.reinforcements,
+    delegate,
+    time: Math.round(st.time),
     over: st.over,
+    names: st.names,
+    active: st.active,
+    human: st.human,
+    activeCount: st.activeCount,
+    capitals: st.capitals,
     regions: st.regions.map((r) => ({
       id: r.id,
       name: r.name,
@@ -1855,59 +2176,76 @@ function publicState(room, slot) {
       r: r.r,
       neighbors: r.neighbors,
       owner: r.owner,
-      troops: r.troops
+      troops: r.troops,
+      p: Math.round(r.p * 100) / 100,
+      cap: r.owner >= 0 && st.capitals[r.owner] === r.id
     })),
-    treaties: Object.keys(st.treaties).map((k) => {
-      const t = st.treaties[k];
-      return {
-        a: t.a, b: t.b, type: t.type, turns: t.turns,
-        payer: t.payer == null ? null : t.payer,
-        payee: t.payee == null ? null : t.payee,
-        amount: t.amount == null ? null : t.amount
-      };
-    }),
-    proposals: st.proposals.map((p) => ({
-      id: p.id, from: p.from, to: p.to, kind: p.kind || 'truce', turns: p.turns,
-      amount: p.amount == null ? null : p.amount,
-      direction: p.direction || null,
-      regionId: p.regionId == null ? null : p.regionId,
-      regionName: p.regionName || null,
-      target: p.target == null ? null : p.target,
-      targetName: p.targetName || null,
-      withTruce: !!p.withTruce
-    })),
-    relations: Object.keys(st.relations).map((k) => {
-      const parts = k.split('-');
-      return { a: Number(parts[0]), b: Number(parts[1]), value: st.relations[k] };
-    }),
+    marches: marchView(st),
+    treaties: treatyView(st),
+    proposals: proposalView(st),
+    relations: relationView(st),
     reputation: st.reputation,
-    calls: (st.calls || []).map((c) => ({
-      id: c.id, from: c.from, to: c.to, target: c.target, turns: c.turns
-    })),
+    calls: callView(st),
     diploLog: (st.diploLog || []).slice(-20),
-    names: st.names,
-    players: room.players.map((p) => ({
-      slot: p.slot,
-      name: p.name,
-      connected: p.connected,
-      isAI: p.isAI,
-      host: p.slot === room.hostSlot
-    })),
-    active: st.active,
-    human: st.human,
-    activeCount: st.activeCount,
+    logRev: st.logRev || 0,
+    army: armyView(st),
+    leader: leaderView(st),
+    players: playerView(room),
     stats: st.stats,
     log: room.log.slice(-24),
+    roomLogRev: room.logRev,
     serverTime: Date.now()
   };
-  return base;
+}
+
+function tickState(room, slot) {
+  const st = room.game;
+  const out = {
+    type: 'tick',
+    you: slot,
+    delegate: slot >= 0 && !st.human[slot],
+    sim: !!room.sim,
+    time: Math.round(st.time),
+    over: st.over,
+    speed: room.speed || 1,
+    regions: st.regions.map((r) => [r.owner, r.troops]),
+    marches: marchView(st),
+    treaties: treatyView(st),
+    proposals: proposalView(st),
+    relations: relationView(st),
+    reputation: st.reputation,
+    calls: callView(st),
+    army: armyView(st),
+    leader: leaderView(st),
+    players: playerView(room),
+    stats: st.stats,
+    logRev: st.logRev || 0,
+    serverTime: Date.now()
+  };
+  if (room.lastDiploSent !== st.logRev) {
+    room.lastDiploSent = st.logRev;
+    out.diploLog = (st.diploLog || []).slice(-12);
+  }
+  if (room.lastLogSent !== room.logRev) {
+    room.lastLogSent = room.logRev;
+    out.log = room.log.slice(-20);
+  }
+  return out;
 }
 
 function broadcastState(room) {
   if (!room.game) return;
   for (const p of room.players) {
-    if (!p.ws || p.isAI) continue;
-    send(p.ws, publicState(room, p.slot));
+    if (!p.ws || p.isAI || !p.connected) continue;
+    send(p.ws, fullState(room, controlOf(room, p)));
+  }
+}
+
+function broadcastTick(room) {
+  if (!room.game) return;
+  for (const p of room.players) {
+    if (!p.ws || p.isAI || !p.connected) continue;
+    send(p.ws, tickState(room, controlOf(room, p)));
   }
 }
 
@@ -1916,7 +2254,7 @@ function broadcastEvent(room, text, kind, extra) {
   addLog(room, clean, kind);
   const payload = Object.assign({ type: 'event', text: clean, kind: kind || 'info', at: Date.now() }, extra || {});
   for (const p of room.players) {
-    if (!p.ws || p.isAI) continue;
+    if (!p.ws || p.isAI || !p.connected) continue;
     send(p.ws, payload);
   }
 }
@@ -1927,248 +2265,151 @@ function lobbyPayload(room, slot) {
     code: room.code,
     host: room.hostSlot,
     started: room.started,
+    sim: !!room.sim,
     aiFill: room.aiFill,
+    speed: room.speed || 1,
     you: slot,
-    players: room.players.map((p) => ({
-      slot: p.slot,
-      name: p.name,
-      connected: p.connected,
-      isAI: p.isAI,
-      host: p.slot === room.hostSlot
-    })),
-    youToken: null
+    players: playerView(room)
   };
 }
 
 function broadcastLobby(room) {
   for (const p of room.players) {
-    if (!p.ws || p.isAI) continue;
-    send(p.ws, lobbyPayload(room, p.slot));
+    if (!p.ws || p.isAI || !p.connected) continue;
+    send(p.ws, lobbyPayload(room, controlOf(room, p)));
   }
+}
+
+function resetGameMeta(room) {
+  room.log = [];
+  room.logRev++;
+  room.lastDiploSent = -1;
+  room.lastLogSent = -1;
+  room.lastStep = Date.now();
+  room.lastBroadcast = 0;
+  room.finishedAt = null;
 }
 
 function startGame(room, bySlot) {
   if (room.started) return { error: ['ALREADY', '이미 시작했어요.'] };
   if (bySlot !== room.hostSlot) return { error: ['HOST_ONLY', '방장만 시작할 수 있어요.'] };
-  const humans = room.players.length;
+  const humans = room.players.filter((p) => !p.isAI).length;
   if (humans < 1) return { error: ['NO_PLAYER', '플레이어가 없어요.'] };
   if (humans === 1 && !room.aiFill) {
     return { error: ['NEED_OPPONENT', '혼자서는 AI 채우기를 켜거나 친구를 기다려 주세요.'] };
   }
 
-  // 나라 번호(0~3)는 로비 자리 순서와 같아야 하므로 빈 자리를 메운다
   const hostPlayer = findPlayer(room, room.hostSlot);
+  room.players = room.players.filter((p) => !p.isAI);
   room.players.sort((a, b) => a.slot - b.slot);
-  for (let i = 0; i < room.players.length; i++) room.players[i].slot = i;
+  for (let i = 0; i < room.players.length; i++) {
+    room.players[i].slot = i;
+    room.players[i].controlSlot = i;
+  }
   room.hostSlot = hostPlayer ? hostPlayer.slot : 0;
 
   room.game = Game.newGame({ humans, aiFill: room.aiFill });
-  // 외교 로그에 사람 이름이 바로 보이도록 이름표를 넘긴다
   room.game.names = NATIONS.map((n) => n.name);
   for (const p of room.players) room.game.names[p.slot] = p.name;
-  room.log = [];
+  resetGameMeta(room);
   room.started = true;
-  room.finishedAt = null;
-  room.flow++;
-  addLog(room, '게임 시작 · ' + humans + '명 참전' + (room.aiFill ? ' (빈 자리 AI)' : ''), 'good');
+  addLog(room, '실시간 전쟁 시작 · ' + humans + '명 참전' + (room.aiFill ? ' (빈 자리 AI)' : ''), 'good');
   broadcastLobby(room);
   broadcastState(room);
   for (const p of room.players) {
-    if (p.ws && !p.isAI) send(p.ws, { type: 'started' });
-  }
-  const st = room.game;
-  if (!st.human[st.cur]) {
-    // 방장이 없거나(있을 수 없지만) AI 차례라면 진행
-    const token = ++room.flow;
-    advanceTurn(room, token).catch(() => {});
-  } else {
-    scheduleAutoEnd(room);
-    // 시작 시 대기 중인 제안이 있으면 표시되도록 상태를 한 번 더 보낸다
-    setTimeout(() => broadcastState(room), 300);
+    if (p.ws && !p.isAI) send(p.ws, { type: 'started', sim: false });
   }
   return { ok: true };
 }
 
-function clearAutoEnd(room) {
-  if (room.autoEndTimer) {
-    clearTimeout(room.autoEndTimer);
-    room.autoEndTimer = null;
-  }
-}
-
-function scheduleAutoEnd(room, graceMs) {
-  clearAutoEnd(room);
-  const st = room.game;
-  if (!st || st.over || room.started === false) return;
-  const p = findPlayer(room, st.cur);
-  if (!p || p.isAI || p.connected) return;
-  const slot = st.cur;
-  const delay = graceMs || TURN_GRACE_MS;
-  room.autoEndTimer = setTimeout(() => {
-    room.autoEndTimer = null;
-    const g = room.game;
-    if (!g || g.over || g.cur !== slot || g.phase !== 'player') return;
-    broadcastEvent(room, playerName(room, slot) + ' 님 접속 끊김 · 턴을 자동 종료합니다', 'warn');
-    endHumanTurn(room, slot, true);
-  }, delay);
-}
-
-function endHumanTurn(room, slot, forced) {
-  const st = room.game;
-  if (!st || st.over) return false;
-  if (!st.human[st.cur] || st.cur !== slot) return false;
-  if (!forced) clearAutoEnd(room);
-  st.phase = 'ai';
+/** AI 4개국 난전 — 관전으로 시작하고, 언제든 한 나라를 골라 난입할 수 있다 */
+function startSim(room) {
+  if (!room.players.length) return { error: ['NO_PLAYER', '플레이어가 없어요.'] };
+  room.game = Game.newGame({ humans: 1, aiFill: true });
+  room.game.human = [false, false, false, false];
+  room.game.names = NATIONS.map((n) => n.name);
+  room.game.ai = [
+    { nextAt: 1200, nextDiploAt: 6000 },
+    { nextAt: 1800, nextDiploAt: 8000 },
+    { nextAt: 2400, nextDiploAt: 7000 },
+    { nextAt: 3000, nextDiploAt: 9000 }
+  ];
+  for (const p of room.players) p.controlSlot = -1;
+  resetGameMeta(room);
+  room.sim = true;
+  room.started = true;
+  room.speed = room.speed || 2;
+  addLog(room, 'AI 시뮬레이션 시작 · 4개국 난전 · 관전 중', 'good');
   broadcastState(room);
-  const token = ++room.flow;
-  advanceTurn(room, token).catch((err) => {
-    console.error('[advance]', err);
-  });
-  return true;
+  for (const p of room.players) {
+    if (p.ws && !p.isAI) send(p.ws, { type: 'started', sim: true });
+  }
+  return { ok: true };
 }
 
-const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+/* ---------------- 전역 실시간 루프 ---------------- */
 
-function battleText(room, res, attackerSlot) {
-  const attacker = nationLabel(room, attackerSlot);
-  const victim = res.targetOwner >= 0 ? nationLabel(room, res.targetOwner) : NEUTRAL_NAME;
-  const bonus = res.allyBonus ? ' [동맹 +1]' : '';
-  if (res.captured) {
-    return attacker + ' ✦ ' + res.toName + ' 점령 (주사위 ' + res.ar.join('·') + ' vs ' +
-      res.dr.join('·') + ')' + bonus + ' · ' + victim;
-  }
-  if (res.dLoss > 0 && res.aLoss > 0) {
-    return attacker + ' ↔ ' + victim + ' 접전 · 아군 -' + res.aLoss + ' / 적 -' + res.dLoss +
-      ' (' + res.ar.join('·') + ' vs ' + res.dr.join('·') + ')' + bonus;
-  }
-  if (res.dLoss > 0) {
-    return attacker + ' 공격 성공 · 적 -' + res.dLoss + ' (' + res.ar.join('·') + ' vs ' +
-      res.dr.join('·') + ')' + bonus;
-  }
-  return attacker + ' 공격 실패 · 아군 -' + res.aLoss + ' (' + res.ar.join('·') + ' vs ' +
-    res.dr.join('·') + ')' + bonus;
-}
-
-async function advanceTurn(room, token) {
+function stepRoom(room) {
   const st = room.game;
-  if (!st) return;
-  let n = st.cur;
-  let guard = 0;
+  if (!st || room.closed) return;
+  const now = Date.now();
+  if (!room.lastStep) { room.lastStep = now; return; }
+  const real = clampNum(now - room.lastStep, 0, 700);
+  room.lastStep = now;
+  if (st.over) return;
 
-  while (guard++ < 16) {
-    if (room.closed || room.flow !== token) return;
-    n = (n + 1) % NATION_COUNT;
-    if (n === 0) {
-      st.turn++;
-      const tick = Game.tickTreaties(st);
-      for (const e of tick.expired) {
-        if (!st.active[e.a] && !st.active[e.b]) continue;
-        broadcastEvent(
-          room,
-          '조약 만료 · ' + nationLabel(room, e.a) + ' ↔ ' + nationLabel(room, e.b),
-          'warn'
-        );
-      }
-      for (const tr of tick.tributes) {
-        broadcastEvent(room, '조공 · ' + nationLabel(room, tr.from) + ' → ' +
-          nationLabel(room, tr.to) + ' ' + tr.amount + '개 (' + tr.region + ')', 'info');
-      }
-      for (const b of tick.broke) {
-        broadcastEvent(room, '조약 파기 · ' + nationLabel(room, b.a) + ' ↔ ' +
-          nationLabel(room, b.b) + ' (조공 미이행)', 'bad');
-      }
-      broadcastState(room);
-    }
+  const anyHuman = room.players.some((p) => !p.isAI && p.connected && p.ws);
+  if (!anyHuman) return; // 아무도 없으면 시뮬레이션을 멈춘다
 
-    if (!st.active[n] || Game.countOwned(st, n) === 0) continue;
-
-    if (st.human[n]) {
-      Game.startTurn(st, n);
-      st.phase = 'player';
-      st.cur = n;
-      broadcastState(room);
-      broadcastEvent(room, nationLabel(room, n) + ' 님의 차례입니다', 'good');
-      const p = findPlayer(room, n);
-      scheduleAutoEnd(room, p && !p.connected ? 20000 : TURN_GRACE_MS);
-      return;
-    }
-
-    st.cur = n;
-    st.phase = 'ai';
-    st.reinforcements = 0;
-    broadcastState(room);
-    await sleep(700);
-    if (room.closed || room.flow !== token) return;
-
-    await runAiTurn(room, n, token);
-    if (room.closed || room.flow !== token) return;
-    if (st.over) return;
-  }
-}
-
-async function runAiTurn(room, slot, token) {
-  const st = room.game;
-  if (!st || st.over) return;
-
-  Game.aiReinforce(st, slot);
-  Game.aiShiftTroops(st, slot);
-  broadcastState(room);
-  await sleep(420);
-  if (room.closed || room.flow !== token) return;
-
-  const dip = Game.aiDiplomacy(st, slot);
-  for (const item of dip) {
-    if (!item) continue;
-    if (item.type === 'note') {
-      broadcastEvent(room, item.text, item.kind || 'info');
-    } else if (item.type === 'proposal' && item.proposal) {
-      broadcastState(room);
-      const target = findPlayer(room, item.proposal.to);
-      if (target && target.ws) {
-        const label = nationLabel(room, slot);
-        const what = item.text || '제안이 도착했습니다';
-        notify(target.ws, label + ' 님이 ' + what, 'warn');
-      }
-    }
-  }
-  if (dip.length) {
-    await sleep(360);
-    if (room.closed || room.flow !== token) return;
+  // 오래 끊긴 조종자는 AI 가 대신 조종
+  for (const p of room.players) {
+    if (p.isAI || p.connected || p.autoAI) continue;
+    const ctl = controlOf(room, p);
+    if (ctl < 0 || !st.human[ctl]) continue;
+    if (!p.disconnectedAt || now - p.disconnectedAt < AUTO_AI_MS) continue;
+    p.autoAI = true;
+    st.human[ctl] = false;
+    broadcastEvent(room, p.name + ' 님 접속 끊김 · AI가 대신 조종합니다', 'warn');
   }
 
-  const budget = Game.aiAttackBudget(st, slot);
-  for (let k = 0; k < budget && !st.over; k++) {
-    const mv = Game.aiPickAttack(st, slot);
-    if (!mv) break;
-    const res = Game.attack(st, mv.from.id, mv.to.id);
-    if (!res.ok) break;
-    const victimSlot = res.targetOwner;
-    broadcastState(room);
-    broadcastEvent(room, battleText(room, res, slot), res.captured ? 'good' : 'warn');
-    if (res.captured && victimSlot >= 0 && st.human[victimSlot] &&
-        Game.countOwned(st, victimSlot) === 0) {
-      broadcastEvent(room, nationLabel(room, victimSlot) + ' 님이 탈락했습니다', 'bad');
+  const dt = real * (room.speed || 1);
+  const out = Sim.step(st, dt);
+  for (const ev of out.events) {
+    if (!ev || !ev.text) continue;
+    if (ev.toSlot != null) {
+      const tp = room.players.find((p) => controlOf(room, p) === ev.toSlot);
+      if (tp && tp.ws) notify(tp.ws, ev.text, ev.kind || 'warn');
+      addLog(room, ev.text, ev.kind || 'warn');
+      continue;
     }
-    Game.checkOver(st);
-    if (st.over) { finishGame(room); return; }
-    await sleep(res.captured ? 620 : 360);
-    if (room.closed || room.flow !== token) return;
+    broadcastEvent(room, ev.text, ev.kind || 'info', {
+      battle: !!ev.battle,
+      at: ev.at == null ? null : ev.at,
+      attacker: ev.attacker == null ? null : ev.attacker,
+      defender: ev.defender == null ? null : ev.defender
+    });
   }
-  broadcastState(room);
+
+  if (now - room.lastBroadcast >= SIM.tickMs) {
+    room.lastBroadcast = now;
+    broadcastTick(room);
+  }
+
+  if (st.over) finishGame(room);
 }
 
 function finishGame(room) {
   const st = room.game;
   if (!st || !st.over) return;
-  clearAutoEnd(room);
   room.finishedAt = Date.now();
-  st.phase = 'over';
   broadcastState(room);
   const w = st.over.winner;
-  const winText = st.over.type === 'nation'
-    ? nationLabel(room, w) + '이(가) 대륙을 통일했습니다!'
-    : nationLabel(room, w) + '이(가) 마지막까지 살아남았습니다!';
-  broadcastEvent(room, '게임 종료 · ' + winText, 'good');
+  const winText = w < 0
+    ? '무승부 · 모두가 사라졌습니다'
+    : st.over.type === 'nation'
+      ? nationLabel(room, w) + '이(가) 대륙을 통일했습니다!'
+      : nationLabel(room, w) + '이(가) 마지막까지 살아남았습니다!';
+  broadcastEvent(room, '게임 종료 · ' + winText, 'good', { over: st.over });
 }
 
 function validName(ws, raw) {
@@ -2180,103 +2421,59 @@ function validName(ws, raw) {
   return name;
 }
 
-function validateAction(room, slot, action) {
+function actionBlocked(room, player, ctl) {
   const st = room.game;
-  if (!st) return 'not_started';
-  if (st.over) return 'over';
-  if (!action || typeof action !== 'object') return 'bad';
-  const isTurn = st.phase === 'player' && st.cur === slot && st.human[slot];
-  const kind = action.kind;
-
-  if (kind === 'respond') {
-    const p = st.proposals.find((x) => x.id === Number(action.id));
-    if (!p || p.to !== slot) return 'no_proposal';
-    return null;
+  if (!st) { notify(player.ws, '아직 게임이 시작되지 않았어요.', 'warn'); return true; }
+  if (st.over) { notify(player.ws, '게임이 끝났어요.', 'warn'); return true; }
+  if (ctl < 0) {
+    notify(player.ws, '관전 중이에요 · 참전할 나라를 먼저 고르세요.', 'warn');
+    return true;
   }
-  if (!isTurn) return 'not_your_turn';
-  if (kind === 'deploy' || kind === 'attack' || kind === 'transfer' || kind === 'end' ||
-      kind === 'propose' || kind === 'aid' || kind === 'break' || kind === 'alliance' ||
-      kind === 'tribute' || kind === 'cede' || kind === 'call') {
-    return null;
+  if (!st.human[ctl]) {
+    notify(player.ws, 'AI가 대신 조종 중이에요 · 조종을 가져오면 바로 싸울 수 있어요.', 'warn');
+    return true;
   }
-  return 'bad';
+  return false;
 }
 
 function handleAction(room, player, action) {
   const st = room.game;
-  const slot = player.slot;
-  const err = validateAction(room, slot, action);
-  if (err) {
-    const msg = {
-      not_started: '아직 게임이 시작되지 않았어요.',
-      over: '게임이 끝났어요.',
-      not_your_turn: '지금은 내 차례가 아니에요.',
-      no_proposal: '이미 사라진 제안이에요.',
-      bad: '잘못된 요청이에요.'
-    }[err] || '할 수 없는 동작이에요.';
-    notify(player.ws, msg, 'warn');
-    return;
-  }
-
+  const ctl = controlOf(room, player);
+  if (actionBlocked(room, player, ctl)) return;
+  if (!action || typeof action !== 'object') return;
   const kind = action.kind;
+  const slot = ctl;
 
-  if (kind === 'deploy') {
-    const idx = Number(action.idx);
-    if (!Number.isInteger(idx) || idx < 0 || idx >= st.total) return;
-    const r = st.regions[idx];
-    if (!r || r.owner !== slot) { notify(player.ws, '내 영토에만 배치할 수 있어요.', 'warn'); return; }
-    let amount = action.amount === 'all' ? st.reinforcements : Number(action.amount);
-    if (!Number.isFinite(amount) || amount < 1) amount = 1;
-    const placed = Game.deploy(st, idx, Math.floor(amount));
-    if (placed > 0) {
-      notify(player.ws, '+' + placed + ' 병력 → ' + r.name + ' (' + r.troops + ')', 'good');
-      broadcastState(room);
-    }
-    return;
-  }
-
-  if (kind === 'attack') {
+  if (kind === 'send' || kind === 'attack' || kind === 'transfer') {
     const from = Number(action.from), to = Number(action.to);
     if (!Number.isInteger(from) || !Number.isInteger(to)) return;
     const src = st.regions[from];
-    if (!src || src.owner !== slot) { notify(player.ws, '내 영토에서만 공격할 수 있어요.', 'warn'); return; }
-    const victimSlot = st.regions[to] ? st.regions[to].owner : -2;
-    const res = Game.attack(st, from, to);
+    if (!src || src.owner !== slot) { notify(player.ws, '내 영토에서만 출정할 수 있어요.', 'warn'); return; }
+    const now = Date.now();
+    if (now - (player.lastDispatch || 0) < SIM.dispatchCooldownMs) return;
+    const res = Game.dispatch(st, slot, from, to, action.ratio);
     if (!res.ok) {
-      if (res.reason === 'treaty') notify(player.ws, '불가침 조약 중이에요 · 먼저 파기하세요.', 'warn');
-      else if (res.reason === 'far') notify(player.ws, '인접한 영토만 공격할 수 있어요.', 'warn');
-      else if (res.reason === 'weak') notify(player.ws, '공격에는 병력 2 이상이 필요해요.', 'warn');
-      else notify(player.ws, '공격할 수 없어요.', 'warn');
+      if (res.reason === 'treaty') notify(player.ws, '조약 중이에요 · 먼저 파기하세요.', 'warn');
+      else if (res.reason === 'far') notify(player.ws, '인접한 영토로만 보낼 수 있어요.', 'warn');
+      else if (res.reason === 'weak') notify(player.ws, '병력 2 이상인 영토에서 출정할 수 있어요.', 'warn');
+      else if (res.reason === 'busy') notify(player.ws, '행군이 너무 많아요 · 잠시 후 다시', 'warn');
+      else notify(player.ws, '출정할 수 없어요.', 'warn');
       return;
     }
-    broadcastState(room);
-    broadcastEvent(room, battleText(room, res, slot), res.captured ? 'good' : 'warn');
-    if (res.captured && victimSlot >= 0 && st.human[victimSlot] && Game.countOwned(st, victimSlot) === 0) {
-      broadcastEvent(room, nationLabel(room, victimSlot) + ' 님이 탈락했습니다', 'bad');
-    }
-    if (Game.checkOver(st)) {
-      finishGame(room);
-    } else if (Game.countOwned(st, slot) > 0) {
-      // 턴은 유지 (여러 번 공격 가능)
-    }
+    player.lastDispatch = now;
+    if (res.attack) notify(player.ws, '출정 ' + res.troops + ' → ' + res.toName, 'move');
+    else notify(player.ws, '이동 ' + res.troops + ' → ' + res.toName, 'move');
     return;
   }
 
-  if (kind === 'transfer') {
-    const from = Number(action.from), to = Number(action.to);
-    if (!Number.isInteger(from) || !Number.isInteger(to)) return;
-    const src = st.regions[from];
-    if (!src || src.owner !== slot) return;
-    const n = Game.transfer(st, from, to);
-    if (n > 0) {
-      notify(player.ws, '병력 ' + n + ' 이동 → ' + st.regions[to].name, 'good');
-      broadcastState(room);
-    }
-    return;
-  }
-
-  if (kind === 'end') {
-    endHumanTurn(room, slot, false);
+  if (kind === 'respond') {
+    const id = Number(action.id);
+    const p = st.proposals.find((x) => x.id === id);
+    if (!p) { notify(player.ws, '이미 사라진 제안이에요.', 'warn'); return; }
+    if (p.to !== slot) return;
+    const r = Game.resolveProposal(st, p, !!action.accept);
+    broadcastEvent(room, r.text, action.accept ? 'good' : 'warn');
+    broadcastTick(room);
     return;
   }
 
@@ -2286,19 +2483,15 @@ function handleAction(room, player, action) {
     const r = Game.proposeTruce(st, slot, to);
     if (r.status === 'queued') {
       notify(player.ws, nationLabel(room, to) + ' 님에게 불가침 조약을 제안했습니다', 'good');
-      broadcastState(room);
       const target = findPlayer(room, to);
-      if (target && target.ws) {
-        notify(target.ws, nationLabel(room, slot) + ' 님이 불가침 조약을 제안했습니다', 'warn');
-      }
+      if (target && target.ws) notify(target.ws, nationLabel(room, slot) + ' 님이 불가침 조약을 제안했습니다', 'warn');
+      broadcastTick(room);
     } else if (r.status === 'accepted') {
-      broadcastEvent(room, r.text || ('불가침 조약 체결'), 'good');
-      broadcastState(room);
+      broadcastEvent(room, r.text || '불가침 조약 체결', 'good');
     } else if (r.status === 'declined') {
       notify(player.ws, r.text || '상대가 제안을 거절했습니다', 'bad');
-      broadcastState(room);
     } else if (r.reason === 'already') {
-      notify(player.ws, '이미 조약이 있어요. 동맹으로 격상할 수 있어요.', 'warn');
+      notify(player.ws, '이미 조약이 있어요. 파기하거나 동맹으로 격상하세요.', 'warn');
     } else {
       notify(player.ws, '지금은 제안할 수 없어요.', 'warn');
     }
@@ -2311,15 +2504,13 @@ function handleAction(room, player, action) {
     const r = Game.proposeAlliance(st, slot, to);
     if (r.status === 'queued') {
       notify(player.ws, nationLabel(room, to) + ' 님에게 동맹을 제안했습니다', 'good');
-      broadcastState(room);
       const target = findPlayer(room, to);
       if (target && target.ws) notify(target.ws, nationLabel(room, slot) + ' 님이 동맹을 제안했습니다', 'warn');
+      broadcastTick(room);
     } else if (r.status === 'accepted') {
       broadcastEvent(room, r.text, 'good');
-      broadcastState(room);
     } else if (r.status === 'declined') {
       notify(player.ws, r.text || '동맹 제안이 거절되었습니다', 'bad');
-      broadcastState(room);
     } else if (r.reason === 'need_truce') {
       notify(player.ws, '먼저 불가침 조약을 맺어야 동맹으로 격상할 수 있어요.', 'warn');
     } else {
@@ -2335,18 +2526,16 @@ function handleAction(room, player, action) {
     if (r.status === 'queued') {
       notify(player.ws, nationLabel(room, to) + ' 님에게 조공 ' +
         (action.direction === 'offer' ? '제안' : '요구') + '을 보냈습니다', 'good');
-      broadcastState(room);
       const target = findPlayer(room, to);
       if (target && target.ws) {
         notify(target.ws, nationLabel(room, slot) + ' 님이 조공 ' +
           (action.direction === 'offer' ? '제안' : '요구') + '을 보냈습니다', 'warn');
       }
+      broadcastTick(room);
     } else if (r.status === 'accepted') {
       broadcastEvent(room, r.text, 'good');
-      broadcastState(room);
     } else if (r.status === 'declined') {
       notify(player.ws, r.text || '조공 제안이 거절되었습니다', 'bad');
-      broadcastState(room);
     } else if (r.reason === 'already') {
       notify(player.ws, '이미 조약이 있어 조공 조약을 맺을 수 없어요.', 'warn');
     } else {
@@ -2363,18 +2552,16 @@ function handleAction(room, player, action) {
     if (r.status === 'queued') {
       notify(player.ws, nationLabel(room, to) + ' 님에게 ' + (st.regions[regionId] || {}).name +
         ' 할양을 제안했습니다', 'good');
-      broadcastState(room);
       const target = findPlayer(room, to);
       if (target && target.ws) {
         notify(target.ws, nationLabel(room, slot) + ' 님이 ' + (st.regions[regionId] || {}).name +
           ' 할양을 제안했습니다', 'warn');
       }
+      broadcastTick(room);
     } else if (r.status === 'accepted') {
       broadcastEvent(room, r.text, 'good');
-      broadcastState(room);
     } else if (r.status === 'declined') {
       notify(player.ws, r.text || '할양 제안이 거절되었습니다', 'bad');
-      broadcastState(room);
     } else if (r.reason === 'region') {
       notify(player.ws, '내 영토만 할양할 수 있어요.', 'warn');
     } else {
@@ -2390,18 +2577,16 @@ function handleAction(room, player, action) {
     const r = Game.callToArms(st, slot, to, target);
     if (r.status === 'queued') {
       notify(player.ws, nationLabel(room, to) + ' 님에게 공동 참전을 요청했습니다', 'good');
-      broadcastState(room);
       const tp = findPlayer(room, to);
       if (tp && tp.ws) {
         notify(tp.ws, nationLabel(room, slot) + ' 님이 ' + nationLabel(room, target) +
           ' 에 대한 공동 참전을 요청했습니다', 'warn');
       }
+      broadcastTick(room);
     } else if (r.status === 'accepted') {
       broadcastEvent(room, r.text, 'good');
-      broadcastState(room);
     } else if (r.status === 'declined') {
       notify(player.ws, r.text || '공동 참전 요청이 거절되었습니다', 'bad');
-      broadcastState(room);
     } else if (r.reason === 'no_ally') {
       notify(player.ws, '정식 동맹에게만 공동 참전을 요청할 수 있어요.', 'warn');
     } else if (r.reason === 'not_enemy') {
@@ -2416,28 +2601,15 @@ function handleAction(room, player, action) {
     return;
   }
 
-  if (kind === 'respond') {
-    const id = Number(action.id);
-    const p = st.proposals.find((x) => x.id === id);
-    if (!p) { notify(player.ws, '이미 사라진 제안이에요.', 'warn'); return; }
-    const r = Game.resolveProposal(st, p, !!action.accept);
-    broadcastEvent(room, r.text, action.accept ? 'good' : 'warn');
-    broadcastState(room);
-    return;
-  }
-
   if (kind === 'aid') {
     const to = Number(action.to);
     if (!Number.isInteger(to)) return;
     const a = Game.sendAid(st, slot, to);
     if (!a.ok) {
-      notify(player.ws, '병력이 부족해요 · 배치 ' + TUNING.aidAmount + '개 또는 병력 ' +
-        TUNING.aidThreshold + '+ 영토가 필요해요.', 'bad');
+      notify(player.ws, '병력 6 이상인 내 영토가 있어야 지원할 수 있어요.', 'bad');
       return;
     }
-    broadcastEvent(room, a.text || (nationLabel(room, slot) + ' → ' + nationLabel(room, to) +
-      ' 병력 ' + a.amount + ' 지원 · 동맹 ' + a.turns + '턴'), 'good');
-    broadcastState(room);
+    broadcastEvent(room, a.text, 'good');
     return;
   }
 
@@ -2447,7 +2619,100 @@ function handleAction(room, player, action) {
     const b = Game.breakPact(st, slot, to);
     if (!b) { notify(player.ws, '파기할 조약이 없어요.', 'warn'); return; }
     broadcastEvent(room, nationLabel(room, slot) + '이(가) ' + nationLabel(room, to) +
-      '와(과)의 조약을 파기했습니다 · 신뢰도 -' + TUNING.betrayReputation, 'bad');
+      '와(과)의 조약을 파기했습니다 · 신뢰도 -35', 'bad');
+    return;
+  }
+
+  if (kind === 'speed') {
+    setSpeed(room, player, action.value);
+    return;
+  }
+}
+
+function setSpeed(room, player, value) {
+  if (player.slot !== room.hostSlot) return;
+  const humans = room.players.filter((p) => !p.isAI).length;
+  if (room.started && humans > 1) {
+    notify(player.ws, '여러 명이 함께할 때는 로비에서만 속도를 바꿀 수 있어요.', 'warn');
+    return;
+  }
+  const v = Number(value);
+  if (SIM.speeds.indexOf(v) < 0) return;
+  room.speed = v;
+  if (room.started) {
+    broadcastEvent(room, '게임 속도 ×' + v, 'info');
+    broadcastState(room);
+  } else {
+    broadcastLobby(room);
+  }
+}
+
+/** AI 시뮬레이션에서 나라를 골라 직접 조종 / AI 위임 토글 */
+function handleControl(room, player, type, msg) {
+  const st = room.game;
+  if (!st) { notify(player.ws, '아직 게임이 시작되지 않았어요.', 'warn'); return; }
+  if (st.over) { notify(player.ws, '게임이 끝났어요.', 'warn'); return; }
+
+  if (type === 'takeover') {
+    if (!room.sim) { notify(player.ws, 'AI 시뮬레이션에서만 나라를 골라 참전할 수 있어요.', 'warn'); return; }
+    const slot = Number(msg.slot);
+    if (!Number.isInteger(slot) || slot < 0 || slot >= NATION_COUNT) return;
+    if (!st.active[slot] || Game.countOwned(st, slot) === 0) {
+      notify(player.ws, '그 나라는 지금 참전할 수 없어요 (멸망 또는 미참전).', 'warn');
+      return;
+    }
+    const prev = controlOf(room, player);
+    if (prev === slot && st.human[slot]) {
+      notify(player.ws, '이미 그 나라를 조종하고 있어요.', 'info');
+      return;
+    }
+    if (prev >= 0 && prev !== slot && st.human[prev]) {
+      st.human[prev] = false;
+      st.names[prev] = NATIONS[prev].name;
+      st.ai[prev] = { nextAt: st.time + 600, nextDiploAt: st.time + 6000 };
+      broadcastEvent(room, player.name + ' 님이 ' + NATIONS[prev].name + '을(를) AI에게 맡겼습니다', 'info');
+    }
+    player.controlSlot = slot;
+    player.autoAI = false;
+    player.lastDispatch = 0;
+    st.human[slot] = true;
+    st.names[slot] = player.name;
+    addLog(room, player.name + ' 님이 ' + NATIONS[slot].name + '에 참전했습니다', 'good');
+    broadcastEvent(room, '⚔️ ' + player.name + ' 님이 ' + NATIONS[slot].name + '에 참전했습니다!', 'good');
+    broadcastState(room);
+    return;
+  }
+
+  if (type === 'delegate') {
+    const ctl = controlOf(room, player);
+    if (ctl < 0) { notify(player.ws, '참전할 나라를 먼저 고르세요.', 'warn'); return; }
+    const humans = room.players.filter((p) => !p.isAI).length;
+    if (humans > 1) { notify(player.ws, '여러 명이 함께할 때는 위임을 쓸 수 없어요.', 'warn'); return; }
+    const on = msg.value !== false;
+    if (!on && st.human[ctl]) return;
+    if (on && !st.human[ctl]) return;
+    st.human[ctl] = !on;
+    if (on) st.ai[ctl] = { nextAt: st.time + 500, nextDiploAt: st.time + 6000 };
+    broadcastEvent(room,
+      on
+        ? '🤖 ' + player.name + ' 님이 AI에게 조종을 맡겼습니다 · 언제든 가져올 수 있어요'
+        : '🎮 ' + player.name + ' 님이 직접 조종합니다',
+      'info');
+    broadcastState(room);
+    return;
+  }
+
+  if (type === 'spectate') {
+    if (!room.sim) return;
+    const prev = controlOf(room, player);
+    if (prev >= 0 && st.human[prev]) {
+      st.human[prev] = false;
+      st.names[prev] = NATIONS[prev].name;
+      st.ai[prev] = { nextAt: st.time + 600, nextDiploAt: st.time + 6000 };
+    }
+    player.controlSlot = -1;
+    addLog(room, player.name + ' 님이 관전으로 돌아갔습니다', 'info');
+    broadcastEvent(room, player.name + ' 님이 관전합니다', 'info');
     broadcastState(room);
     return;
   }
@@ -2463,18 +2728,22 @@ function leaveRoom(ws, explicit) {
     room.players = room.players.filter((p) => p !== player);
     addLog(room, player.name + ' 님이 나갔습니다', 'info');
   } else {
-    // 진행 중 나가면 그 나라는 AI 가 이어받는다 (탈주 처리)
+    const ctl = controlOf(room, player);
+    if (ctl >= 0 && room.game && room.game.human[ctl]) room.game.human[ctl] = false;
     player.isAI = true;
     player.connected = false;
     player.abandoned = true;
     player.ws = null;
     if (room.game) {
-      room.game.human[player.slot] = false;
-      addLog(room, player.name + ' 님이 나갔습니다 · AI 가 이어받습니다', 'warn');
+      if (ctl >= 0) {
+        room.game.human[ctl] = false;
+        room.game.ai[ctl] = { nextAt: room.game.time + 800, nextDiploAt: room.game.time + 5000 };
+        room.game.names[ctl] = NATIONS[ctl].name;
+      }
+      addLog(room, player.name + ' 님이 나갔습니다 · AI가 이어받습니다', 'warn');
     }
   }
 
-  // 남은 플레이어에게 알린다
   if (room.players.length === 0) {
     room.players = [];
   } else {
@@ -2482,20 +2751,8 @@ function leaveRoom(ws, explicit) {
       const next = room.players.find((p) => !p.isAI);
       if (next) room.hostSlot = next.slot;
     }
-    if (room.started) {
-      broadcastState(room);
-      if (room.game && !room.game.over && room.game.cur === player.slot) {
-        // 나간 사람 차례였다면 바로 다음으로
-        const st = room.game;
-        if (st.human[st.cur] === false) {
-          st.phase = 'ai';
-          const token = ++room.flow;
-          advanceTurn(room, token).catch(() => {});
-        }
-      }
-    } else {
-      broadcastLobby(room);
-    }
+    if (room.started) broadcastState(room);
+    else broadcastLobby(room);
   }
 
   if (ws.room === room) {
@@ -2506,7 +2763,6 @@ function leaveRoom(ws, explicit) {
   const anyHuman = room.players.some((p) => !p.isAI);
   if (!anyHuman) {
     room.closed = true;
-    clearAutoEnd(room);
     rooms.delete(room.code);
   }
 }
@@ -2523,15 +2779,21 @@ function handleMessage(ws, msg) {
       send(ws, { type: 'error', code: 'BUSY', message: '지금 접속자가 많아요. 잠시 후 다시 시도해 주세요.' });
       return;
     }
-    const { room, player } = createRoom(ws, name, !!msg.aiFill);
+    const sim = !!msg.sim;
+    const { room, player } = createRoom(ws, name, sim ? true : !!msg.aiFill, sim);
     send(ws, {
       type: 'joined',
       code: room.code,
       token: player.token,
       slot: player.slot,
-      name: player.name
+      name: player.name,
+      sim
     });
-    broadcastLobby(room);
+    if (sim) {
+      startSim(room);
+    } else {
+      broadcastLobby(room);
+    }
     return;
   }
 
@@ -2566,13 +2828,13 @@ function handleMessage(ws, msg) {
       return;
     }
     bind(ws, room, player);
-    player.connected = true;
     send(ws, {
       type: 'resumed',
       code: room.code,
       token: player.token,
       slot: player.slot,
-      name: player.name
+      name: player.name,
+      sim: !!room.sim
     });
     addLog(room, player.name + ' 님이 다시 접속했습니다', 'info');
     if (room.started) {
@@ -2593,8 +2855,7 @@ function handleMessage(ws, msg) {
   room.lastAt = Date.now();
 
   if (type === 'aiFill') {
-    if (player.slot !== room.hostSlot) return;
-    if (room.started) return;
+    if (player.slot !== room.hostSlot || room.started) return;
     room.aiFill = !!msg.value;
     broadcastLobby(room);
     return;
@@ -2606,9 +2867,29 @@ function handleMessage(ws, msg) {
     return;
   }
 
+  if (type === 'sim') {
+    if (player.slot !== room.hostSlot || room.started) return;
+    startSim(room);
+    return;
+  }
+
+  if (type === 'takeover' || type === 'delegate' || type === 'spectate') {
+    if (!room.started) return;
+    handleControl(room, player, type, msg);
+    return;
+  }
+
   if (type === 'action') {
-    if (!room.started) { send(ws, { type: 'error', code: 'NOT_STARTED', message: '아직 시작하지 않았어요.' }); return; }
+    if (!room.started) {
+      send(ws, { type: 'error', code: 'NOT_STARTED', message: '아직 시작하지 않았어요.' });
+      return;
+    }
     handleAction(room, player, msg.action);
+    return;
+  }
+
+  if (type === 'speed') {
+    setSpeed(room, player, msg.value);
     return;
   }
 
@@ -2620,10 +2901,13 @@ function handleMessage(ws, msg) {
     if (!room.game || !room.game.over) return;
     room.started = false;
     room.game = null;
-    room.finishedAt = null;
-    room.flow++;
+    room.lastStep = 0;
+    if (room.sim) {
+      startSim(room);
+      return;
+    }
     room.players = room.players.filter((p) => !p.isAI);
-    for (const p of room.players) p.connected = !!p.ws;
+    for (const p of room.players) { p.connected = !!p.ws; p.autoAI = false; p.controlSlot = p.slot; }
     room.hostSlot = room.players[0] ? room.players[0].slot : 0;
     addLog(room, '새 게임을 준비합니다', 'info');
     broadcastLobby(room);
@@ -2645,12 +2929,11 @@ function handleDisconnect(ws) {
   const room = ws.room;
   const player = ws.player;
   if (!room || !player) return;
-  if (player.ws && player.ws !== ws) return; // 이미 새 연결로 교체됨
+  if (player.ws && player.ws !== ws) return;
   player.connected = false;
   player.ws = null;
   player.disconnectedAt = Date.now();
   if (!room.started) {
-    // 로비에서는 잠시 자리를 남겨 두고, 새로고침/재접속을 기다린다
     if (player.dropTimer) clearTimeout(player.dropTimer);
     player.dropTimer = setTimeout(() => {
       player.dropTimer = null;
@@ -2671,18 +2954,13 @@ function handleDisconnect(ws) {
     }, 45000);
   } else {
     addLog(room, player.name + ' 님의 접속이 끊겼습니다', 'warn');
-    broadcastState(room);
-    const st = room.game;
-    if (st && !st.over && st.cur === player.slot && st.phase === 'player') {
-      broadcastEvent(room, player.name + ' 님 접속 끊김 · ' + Math.round(TURN_GRACE_MS / 1000) +
-        '초 뒤 턴이 자동 종료됩니다', 'warn');
-      scheduleAutoEnd(room);
-    }
+    broadcastEvent(room, player.name + ' 님 접속 끊김 · ' + Math.round(AUTO_AI_MS / 1000) +
+      '초 뒤 AI가 대신 조종합니다', 'warn');
   }
 }
 
 /* =============================================================================
-   4. WebSocket 서버
+   4. WebSocket · HTTP 서버
    ============================================================================= */
 
 const MIME = {
@@ -2702,8 +2980,10 @@ function serveStatic(req, res) {
   let pathname = decodeURIComponent(url.pathname);
 
   if (pathname === '/healthz') {
+    let live = 0;
+    for (const room of rooms.values()) if (room.game && !room.game.over) live++;
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify({ ok: true, rooms: rooms.size, uptime: Math.round(process.uptime()) }));
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size, live, uptime: Math.round(process.uptime()) }));
     return;
   }
 
@@ -2721,7 +3001,7 @@ function serveStatic(req, res) {
       return;
     }
     const ext = path.extname(filePath).toLowerCase();
-    const noCache = ext === '.html';
+    const noCache = ext === '.html' || ext === '.js' || ext === '.css';
     res.writeHead(200, {
       'Content-Type': MIME[ext] || 'application/octet-stream',
       'Cache-Control': noCache ? 'no-cache' : 'public, max-age=3600',
@@ -2750,7 +3030,7 @@ function createServer() {
         ws.bucket = { count: 0, reset: now + 10000 };
       }
       ws.bucket.count++;
-      if (ws.bucket.count > 60) {
+      if (ws.bucket.count > 80) {
         try { ws.close(4008, 'too many messages'); } catch (e) { /* noop */ }
         return;
       }
@@ -2778,6 +3058,19 @@ function createServer() {
     });
   });
 
+  // 실시간 시뮬레이션: 방 전체를 한 타이머로 돌린다
+  const simulation = setInterval(() => {
+    for (const room of Array.from(rooms.values())) {
+      if (!room.game || room.closed) continue;
+      try {
+        stepRoom(room);
+      } catch (err) {
+        console.error('[sim]', err);
+      }
+    }
+  }, SIM.stepMs);
+  simulation.unref();
+
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
       if (ws.isAlive === false) {
@@ -2797,13 +3090,11 @@ function createServer() {
       const idle = now - room.lastAt;
       if (!anyConnected && idle > ROOM_IDLE_MS) {
         room.closed = true;
-        clearAutoEnd(room);
         rooms.delete(code);
         continue;
       }
       if (now - room.createdAt > ROOM_MAX_AGE_MS) {
         room.closed = true;
-        clearAutoEnd(room);
         rooms.delete(code);
       }
     }
@@ -2811,6 +3102,7 @@ function createServer() {
   cleanup.unref();
 
   wss.on('close', () => {
+    clearInterval(simulation);
     clearInterval(heartbeat);
     clearInterval(cleanup);
   });
@@ -2821,7 +3113,7 @@ function createServer() {
 function start() {
   const { server } = createServer();
   server.listen(PORT, '0.0.0.0', () => {
-    console.log('영토 전쟁 ONLINE · http://localhost:' + PORT + '  (WebSocket /ws)');
+    console.log('영토 전쟁 ONLINE · 실시간 · http://localhost:' + PORT + '  (WebSocket /ws)');
   });
   const shutdown = () => {
     console.log('서버를 종료합니다…');
@@ -2834,16 +3126,28 @@ function start() {
 
 module.exports = {
   Game,
+  Sim,
   NATIONS,
-  TUNING,
+  SIM,
+  DUR,
+  TUNING: SIM,
   rooms,
   createServer,
   createRoom,
   joinRoom,
   startGame,
+  startSim,
+  setSpeed,
+  handleControl,
+  controlOf,
   handleMessage,
-  publicState,
+  handleAction,
+  stepRoom,
+  fullState,
+  tickState,
+  publicState: fullState,
   sanitizeName
 };
 
 if (require.main === module) start();
+

@@ -2226,8 +2226,9 @@ function tickState(room, slot) {
     room.lastDiploSent = st.logRev;
     out.diploLog = (st.diploLog || []).slice(-12);
   }
-  if (room.lastLogSent !== room.logRev) {
+  if (room.lastLogSent !== room.logRev && Date.now() - (room.logSentAt || 0) > 2000) {
     room.lastLogSent = room.logRev;
+    room.logSentAt = Date.now();
     out.log = room.log.slice(-20);
   }
   return out;
@@ -2381,6 +2382,14 @@ function stepRoom(room) {
       if (tp && tp.ws) notify(tp.ws, ev.text, ev.kind || 'warn');
       addLog(room, ev.text, ev.kind || 'warn');
       continue;
+    }
+    if (ev.battle) {
+      const nowB = Date.now();
+      if (nowB - (room.lastBattleSent || 0) < 420) {
+        addLog(room, ev.text, ev.kind || 'info');
+        continue;
+      }
+      room.lastBattleSent = nowB;
     }
     broadcastEvent(room, ev.text, ev.kind || 'info', {
       battle: !!ev.battle,

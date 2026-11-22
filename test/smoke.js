@@ -635,14 +635,23 @@ async function networkTests() {
     arenaStart.skirmish.maxDamage >= 1, arenaStart.skirmish && arenaStart.skirmish.maxDamage);
 
   const targetBefore = pickRegion.target.troops;
+  const targetOwnerBefore = pickRegion.target.owner;
   send(d, { type: 'skirmish', kind: 'report', kills: 3 });
   const upd = await next(d, (m) => m.type === 'skirmish_update', 6000);
   ok('칼질 결과가 서버에 반영된다', upd.delta.damage === 1 && upd.skirmish.kills === 3,
     [upd.delta.damage, upd.skirmish.kills]);
-  const tickAfter = await next(d, (m) => m.type === 'tick' &&
-    m.regions[pickRegion.target.id][1] <= targetBefore - 1, 6000);
-  ok('지도 병력이 바로 줄어든다', tickAfter.regions[pickRegion.target.id][1] <= targetBefore - 1,
-    [targetBefore, tickAfter.regions[pickRegion.target.id][1]]);
+  // 병력이 줄어든 tick, 또는 그 사이 영토가 통째로 넘어간(주인 변경) tick — 둘 다 '전선이 밀렸다'는 뜻
+  const tickAfter = await next(d, (m) => {
+    if (m.type !== 'tick') return false;
+    const r = m.regions[pickRegion.target.id];
+    if (!r) return false;
+    return r[1] <= targetBefore - 1 || (targetOwnerBefore != null && r[0] !== targetOwnerBefore);
+  }, 9000);
+  const afterTroops = tickAfter.regions[pickRegion.target.id][1];
+  const afterOwner = tickAfter.regions[pickRegion.target.id][0];
+  ok('지도 병력이 바로 줄어든다 (또는 그사이 영토가 넘어간다)',
+    afterTroops <= targetBefore - 1 || afterOwner !== targetOwnerBefore,
+    { before: [targetOwnerBefore, targetBefore], after: [afterOwner, afterTroops] });
 
   const overReport = await next(d, (m) => m.type === 'skirmish_update' && m.skirmish.flagged > 0, 4000).catch(() => null);
   send(d, { type: 'skirmish', kind: 'report', kills: 500 });

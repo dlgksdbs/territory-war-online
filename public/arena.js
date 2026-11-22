@@ -26,12 +26,12 @@
   var DASH_SPEED = 470;
   var DASH_CD = 1500;
   var DASH_DMG = 9999;
-  var SLASH_ANIM = 420;     // 1인칭 검 궤적 ms (대각선 내려치기 → 위로 복귀)
+  var SLASH_ANIM = 460;     // 1인칭 검 궤적 ms (예비동작 → 대각선 내려치기 → 매끈한 복귀)
   var SWIPE_MS = 250;       // 오른쪽 화면 빠른 스와이프 판정 시간
   var SWIPE_MIN = 36;       // 스와이프 최소 거리(px)
   var SWIPE_VEL = 0.22;     // 스와이프 최소 속도(px/ms)
   var SWIPE_DEFAULT = { sx: 0.7, sy: 0.72 };   // 버튼 베기의 기본 대각선(오른쪽 아래)
-  var GUARD_MUL = 0.25;
+  var GUARD_MUL = 0;          // 꾹 누르고 있는 동안은 100% 막는다 (데미지 0)
   var PARRY_MS = 260;
 
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
@@ -98,6 +98,14 @@
         g.gain.setValueAtTime(0.05, t);
         g.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
         o.start(t); o.stop(t + 0.25);
+      } else if (kind === 'block') {
+        // 검으로 받아넘기는 쇳소리 (막기 성공)
+        o.type = 'square';
+        o.frequency.setValueAtTime(540, t);
+        o.frequency.exponentialRampToValueAtTime(300, t + 0.1);
+        g.gain.setValueAtTime(0.05, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+        o.start(t); o.stop(t + 0.14);
       } else if (kind === 'parry') {
         o.type = 'sine';
         o.frequency.setValueAtTime(1180, t);
@@ -229,12 +237,15 @@
       allyMs: cfg.allyMs || 0,
       allyTimer: 0,
       allySpawned: 0,
-      allyStart: Math.max(1, cfg.allyStart || cfg.allyCount || 3),
+      allyStart: Math.max(0, cfg.allyStart == null ? (cfg.allyCount == null ? 3 : cfg.allyCount) : cfg.allyStart),
       playerHp: Math.max(40, cfg.playerHp || 100),
       damageGiven: 0,
       timeLimit: cfg.timeLimit || 150000,
       lastSwipe: null,
       lastSlice: null,
+      blocks: 0,
+      lastBlockAt: 0,
+      guardFlash: 0,
       hud: { hpBars: 0 }
     };
 
@@ -401,6 +412,11 @@
     S.r3d = null;
     var ready = !!(window.TWArena3D && window.TWArena3D.supported());
     if (cfg && cfg.force2d) ready = false;
+    if (!ready && window.console) {
+      console.warn('[arena] 3D 없이 2D로 시작 · 모듈=' + !!window.TWArena3D +
+        ' 지원=' + (window.TWArena3D ? window.TWArena3D.supported() : '-') +
+        ' 강제2D=' + !!(cfg && cfg.force2d));
+    }
     if (ready) {
       // 매번 새 캔버스를 쓴다 (이전 WebGL 컨텍스트 재사용 문제 방지)
       var c3 = freshCanvas3d();
@@ -436,7 +452,7 @@
     return c;
   }
 
-  /** WebGL 컨텍스트를 잃으면 2D 렌더러로 자동 폴백 */
+  /** WebGL 컨텍스트를 잃으면 2D 렌더러로 자동 폴백 (시작 직후면 3D를 한 번 다시 시도) */
   function on3dLost(ev) {
     if (ev && ev.preventDefault) ev.preventDefault();
     if (!S) return;
@@ -447,6 +463,15 @@
     document.body.classList.remove('arena-3d');
     if (el.canvas3d) el.canvas3d.style.display = 'none';
     try { resize(); } catch (e) { /* noop */ }
+    // 휴대폰에서 판을 막 열 때 GPU 컨텍스트가 잠깐 끊기는 경우가 있다 → 한 번만 다시 3D로
+    if (!S.retried3d && S.elapsed < 1500) {
+      S.retried3d = true;
+      setTimeout(function () {
+        if (!S || S.r3d || S.ended) return;
+        start3d(S.cfg);
+        try { resize(); } catch (e) { /* noop */ }
+      }, 260);
+    }
   }
 
   /* ---------------------------------------------------------------------------
@@ -1006,31 +1031,41 @@
     var pl = S.player;
     if (!pl || S.down > 0) return;
     if (pl.guard) {
-      if (pl.guardT <= PARRY_MS) {
-        // 패링: 데미지 0 · 상대 경직 + 넉백
+      // 🛡️ 꾹 누르고 있는 동안은 어떤 공격이든 100% 막힌다 (데미지 0)
+      //    누른 직후(0.26초)에 받으면 '패링' — 상대가 크게 휘청이며 한 대 반격한다.
+      var perfect = pl.guardT <= PARRY_MS;
+      S.blocks = (S.blocks || 0) + 1;
+      S.lastBlockAt = S.time;
+      S.guardFlash = 300;
+      if (perfect) {
         pl.parry++;
         addFloat(pl.x, pl.y - 28, '패링!', '#93c5fd');
         sfx('parry');
         S.hitstop = Math.max(S.hitstop, 90);
         S.shake = Math.max(S.shake, 5);
-        if (from) {
-          var a = Math.atan2(from.y - pl.y, from.x - pl.x);
-          from.stun = Math.max(from.stun, 700);
-          from.x += Math.cos(a) * 46;
-          from.y += Math.sin(a) * 46;
+      } else {
+        addFloat(pl.x, pl.y - 26, '막았다', '#bfdbfe');
+        sfx('block');
+        S.hitstop = Math.max(S.hitstop, 45);
+        S.shake = Math.max(S.shake, 2.4);
+      }
+      if (from) {
+        var a = Math.atan2(from.y - pl.y, from.x - pl.x);
+        from.stun = Math.max(from.stun, perfect ? 700 : 340);
+        from.x += Math.cos(a) * (perfect ? 46 : 20);
+        from.y += Math.sin(a) * (perfect ? 46 : 20);
+        spawnSparks(pl.x + Math.cos(a) * 16, pl.y + Math.sin(a) * 16, perfect ? 10 : 7);
+        if (perfect) {
           from.hp -= 6;
-          spawnSparks(pl.x + Math.cos(a) * 16, pl.y + Math.sin(a) * 16, 10);
           if (from.hp <= 0) killEnemy(from, true, Math.atan2(from.y - pl.y, from.x - pl.x), 0.5);
         }
-        pl.guardT = 0;
-        pl.atkCd = 120;
-        return;
       }
-      dmg *= GUARD_MUL;
-      S.shake = Math.max(S.shake, 1.6);
-    } else {
-      S.shake = Math.max(S.shake, 3.4);
+      if (perfect) pl.guardT = 0;
+      pl.atkCd = Math.max(pl.atkCd, 120);
+      updateHud();
+      return;
     }
+    S.shake = Math.max(S.shake, 3.4);
     dmg = Math.max(1, Math.round(dmg));
     pl.hp -= dmg;
     pl.hit = 180;
@@ -1408,6 +1443,7 @@
       if (S.cuts[i].t >= S.cuts[i].dur) S.cuts.splice(i, 1);
     }
     if (S.shake > 0) S.shake = Math.max(0, S.shake - dt * 0.02);
+    if (S.guardFlash > 0) S.guardFlash = Math.max(0, S.guardFlash - dt);
     if (S.invuln > 0) S.invuln -= dt;
   }
 
@@ -2018,7 +2054,7 @@
       }
     }
     if (el.hint) {
-      if (pl.guard) el.hint.textContent = '검으로 옆을 막는 중 · 휘두르기 직전에 누르면 패링';
+      if (pl.guard) el.hint.textContent = '🛡️ 꾹 누르고 있는 동안은 모두 막는다 · 누른 직후에 받으면 패링';
       else if (pl.dashCd > 0) el.hint.textContent = '돌진 준비 ' + (pl.dashCd / 1000).toFixed(1) + '초';
       else if (S.r3d) el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 빠른 스와이프로 그 방향 베기 · 천천히 드래그하면 시점';
       else el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 탭/⚔️ 베기 · 🛡️로 막고 패링';

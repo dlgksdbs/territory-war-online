@@ -22,6 +22,7 @@
   var BIG_ENEMY_KEY = 'tw_online_big_enemy';
   var BIG_ALLY_KEY = 'tw_online_big_ally';
   var BIG_MIN = 20;
+  var BIG_ALLY_MIN = 0;         // 아군은 0명까지 — 혼자(1 vs 1000) 싸울 수 있다
   var BIG_MAX = 1000;
   var bigForce = { enemy: 100, ally: 100 };
 
@@ -2025,8 +2026,8 @@
     if (!window.TWArena) { toast('아레나를 불러오지 못했어요', 'bad'); return; }
     if (TWArena.isOpen()) return;
     var name = (els.nameInput && els.nameInput.value ? els.nameInput.value : '').trim().slice(0, 12) || '한윤';
-    var E = clampBig(bigForce.enemy);
-    var A = clampBig(bigForce.ally);
+    var E = clampBig(bigForce.enemy, BIG_MIN);
+    var A = clampBig(bigForce.ally, BIG_ALLY_MIN);
     var cfg = {
       id: 'solo-' + Date.now(),
       seed: (Date.now() % 100000) + 7,
@@ -2035,12 +2036,12 @@
       w: 700,
       h: 1500,
       playerY: 0.34,
-      // 내가 고른 수 그대로 — 적군 E명 vs 아군 A명 (각 최대 1000)
+      // 내가 고른 수 그대로 — 적군 E명 vs 아군 A명 (적 20~1000 · 아군 0~1000)
       enemyCount: E,
       allyCount: A,
-      allyStart: clampNum(Math.round(A * 0.32), 4, 40),
+      allyStart: A > 0 ? clampNum(Math.round(A * 0.32), 4, 40) : 0,
       maxAlive: clampNum(Math.round(E * 0.3), 12, 150),
-      maxAlliesAlive: clampNum(Math.round(A * 0.22), 8, 90),
+      maxAlliesAlive: A > 0 ? clampNum(Math.round(A * 0.22), 8, 90) : 0,
       spawnMs: clampNum(Math.round(700 - E * 0.45), 110, 700),
       allyMs: clampNum(Math.round(1500 - A * 0.6), 160, 1500),
       playerHp: 160,
@@ -2061,10 +2062,14 @@
     else vibrate([12, 30, 12]);
   }
 
-  function clampBig(v) {
+  function clampBig(v, least) {
     var n = Math.round(Number(v));
     if (!isFinite(n)) n = 100;
-    return clampNum(n, BIG_MIN, BIG_MAX);
+    return clampNum(n, least == null ? BIG_MIN : least, BIG_MAX);
+  }
+
+  function forceMin(key) {
+    return key === 'ally' ? BIG_ALLY_MIN : BIG_MIN;
   }
 
   /** 홈 화면 병사 수 UI (적군 · 아군 따로) */
@@ -2073,7 +2078,7 @@
       [els.bigAlly, els.bigAllyVal, els.bigAllyChips, 'ally']];
     for (var i = 0; i < pair.length; i++) {
       var input = pair[i][0], val = pair[i][1], chips = pair[i][2], key = pair[i][3];
-      var n = clampBig(bigForce[key]);
+      var n = clampBig(bigForce[key], forceMin(key));
       bigForce[key] = n;
       if (input) input.value = String(n);
       if (val) val.textContent = String(n);
@@ -2085,15 +2090,18 @@
       }
     }
     if (els.bbSub) {
-      els.bbSub.textContent = '적군 ' + bigForce.enemy + ' · 아군 ' + bigForce.ally + ' · 1인칭 난전';
+      els.bbSub.textContent = '적군 ' + bigForce.enemy + ' · 아군 ' + bigForce.ally +
+        (bigForce.ally === 0 ? ' (혼자) ' : ' ') + '· 1인칭 난전';
     }
   }
 
   function applyBigForceFromStorage() {
-    var e = Number(storageGet(BIG_ENEMY_KEY));
-    var a = Number(storageGet(BIG_ALLY_KEY));
-    if (e >= BIG_MIN) bigForce.enemy = clampBig(e);
-    if (a >= BIG_MIN) bigForce.ally = clampBig(a);
+    var se = storageGet(BIG_ENEMY_KEY);
+    var sa = storageGet(BIG_ALLY_KEY);
+    var e = Number(se);
+    var a = Number(sa);
+    if (se != null && se !== '' && e >= BIG_MIN) bigForce.enemy = clampBig(e);
+    if (sa != null && sa !== '' && a >= BIG_ALLY_MIN) bigForce.ally = clampBig(a, BIG_ALLY_MIN);
     renderBigForce();
   }
 
@@ -2105,7 +2113,7 @@
       (function (input, chips, key, storeKey) {
         if (input) {
           input.addEventListener('input', function () {
-            bigForce[key] = clampBig(input.value);
+            bigForce[key] = clampBig(input.value, forceMin(key));
             renderBigForce();
             storageSet(storeKey, String(bigForce[key]));
           });
@@ -2119,7 +2127,7 @@
             var t = ev.target;
             while (t && t !== chips) {
               if (t.getAttribute && t.getAttribute('data-count')) {
-                bigForce[key] = clampBig(t.getAttribute('data-count'));
+                bigForce[key] = clampBig(t.getAttribute('data-count'), forceMin(key));
                 renderBigForce();
                 storageSet(storeKey, String(bigForce[key]));
                 vibrate(6);

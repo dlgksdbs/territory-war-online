@@ -9,7 +9,8 @@
 const assert = require('assert');
 const http = require('http');
 const WebSocket = require('ws');
-const { createServer, Game, Sim, SIM, DUR } = require('../server');
+const { createServer, Game, Sim, SIM, DUR, SKIRMISH,
+  startSkirmish, applySkirmishProgress, endSkirmish, skirmishTick } = require('../server');
 
 let passed = 0;
 function ok(name, cond, extra) {
@@ -263,6 +264,155 @@ function headlessSimTests() {
 }
 
 /* =========================================================================
+   2.5 직접 참전 (칼질 스커미시)
+   ========================================================================= */
+function fakeRoom(seed) {
+  const st = Game.newGame({ humans: 2, aiFill: true, seed: seed || 424242 });
+  st.human = [true, true, false, false];
+  st.names = ['한윤', '지우', '녹림', '황금'];
+  const player = {
+    slot: 0, controlSlot: 0, name: '한윤', ws: null, connected: true,
+    isAI: false, skirmish: null, lastSkirmishEnd: 0
+  };
+  const room = {
+    code: 'TEST', game: st, players: [player], hostSlot: 0, sim: false,
+    log: [], logRev: 1, lastAt: Date.now(), closed: false
+  };
+  return { room, player, st };
+}
+
+function frontPair(st, slot) {
+  for (const r of st.regions) {
+    if (r.owner !== slot) continue;
+    for (const nb of r.neighbors) {
+      const t = st.regions[nb];
+      if (t.owner >= 0 && t.owner !== slot) return { region: r, target: t };
+    }
+  }
+  for (const r of st.regions) {
+    if (r.owner !== slot) continue;
+    const nb = r.neighbors.find((n) => st.regions[n].owner !== slot);
+    if (nb != null) return { region: r, target: st.regions[nb] };
+  }
+  return null;
+}
+
+const tkey = (a, b) => Math.min(a, b) + '-' + Math.max(a, b);
+
+function skirmishTests() {
+  console.log('엔진 · 직접 참전 (칼질 스커미시)');
+  const { room, player, st } = fakeRoom(424242);
+  const pair = frontPair(st, 0);
+  ok('전선 영토와 맞은편 적을 찾는다', !!pair && pair.region.owner === 0 && pair.target.owner !== 0);
+
+  const before = pair.target.troops;
+  const started = startSkirmish(room, player, pair.region.id);
+  ok('전선 영토에서 참전 시작', started.ok === true && !!player.skirmish, started.code);
+  ok('아레나 설정 · 적/아군 수가 전투 규모에 맞게 늘어난다',
+    started.arena.enemyCount >= 8 && started.arena.enemyCount <= SKIRMISH.enemyMax &&
+    started.arena.allyCount >= SKIRMISH.allyBase, started.arena.enemyCount);
+  ok('아레나에 양쪽 진영색 · 영토 이름 전달',
+    !!started.arena.me.color && !!started.arena.enemy.color &&
+    started.arena.region.id === pair.region.id && started.arena.target.id === pair.target.id);
+  ok('참전 중 재시작 거절', startSkirmish(room, player, pair.region.id).code === 'BUSY');
+
+  // 즉시 대량 보고는 초당 상한 + 여유분까지만 인정
+  const r1 = applySkirmishProgress(room, player, 999);
+  ok('비정상 킬 보고는 초당 상한으로 잘린다', player.skirmish.kills === SKIRMISH.graceKills && r1.delta === SKIRMISH.graceKills,
+    [player.skirmish.kills, r1.delta]);
+  ok('3킬 = 적 병력 1 감소', pair.target.troops === before - 1 && player.skirmish.damage === 1,
+    [before, pair.target.troops]);
+
+  // 시간이 흐른 만큼만 인정 (5초 전에 시작한 것으로)
+  player.skirmish.startedAt = Date.now() - 5000;
+  const r2 = applySkirmishProgress(room, player, 12);
+  ok('시간이 지나면 킬 상한이 늘어난다', player.skirmish.kills === 12, player.skirmish.kills);
+  const dmgAfter12 = Math.min(player.skirmish.maxDamage, Math.floor(12 / SKIRMISH.killsPerTroop));
+  ok('12킬 피해는 상한 안에서 적용', player.skirmish.damage === dmgAfter12, player.skirmish.damage);
+  ok('6킬마다 전선 아군 1 합류', player.skirmish.reinforce === 2 && r2.reinforce >= 1, player.skirmish.reinforce);
+  ok('6킬부터 대상 영토 수비 약화', player.skirmish.defenseBreak === true &&
+    pair.target.weakUntil > st.time, pair.target.weakUntil);
+
+  const srcBefore = pair.region.troops;
+  player.skirmish.startedAt = Date.now() - 30000;
+  applySkirmishProgress(room, player, 90);
+  ok('킬을 더 보고해도 피해는 상한을 넘지 않는다',
+    player.skirmish.damage <= player.skirmish.maxDamage && player.skirmish.damage <= SKIRMISH.maxTroopDamage &&
+    pair.target.troops >= 1, [player.skirmish.damage, pair.target.troops]);
+  ok('합류 병력도 상한을 넘지 않는다', player.skirmish.reinforce <= SKIRMISH.maxReinforce &&
+    pair.region.troops === srcBefore + (player.skirmish.reinforce - 2), pair.region.troops);
+
+  // 수비 약화가 실제 전투에 반영된다 (10 vs 10)
+  const st2 = Game.newGame({ humans: 2, aiFill: false, seed: 31 });
+  st2.human = [true, true, false, false];
+  const atk = st2.regions.find((r) => r.owner === 0);
+  const def = st2.regions[atk.neighbors.find((n) => st2.regions[n].owner !== 0)];
+  def.owner = 1; def.troops = 10; atk.troops = 11;
+  def.weakUntil = st2.time + 20000;
+  const weakMove = Game.dispatch(st2, 0, atk.id, def.id, 1);
+  ok('약화된 영토로 출정', weakMove.ok === true);
+  let guard = 0;
+  while (st2.marches.length && guard++ < 40) Sim.step(st2, 100);
+  ok('수비 약화 중에는 10 수비도 뚫린다', def.owner === 0, [def.owner, def.troops]);
+
+  // 승리 보너스 + 종료 요약
+  const sum = endSkirmish(room, player, 'win');
+  ok('승리로 참전 종료 · 요약', !!sum && sum.reason === 'win' && sum.kills > 0 && !!sum.region.name);
+  ok('참전 요약에 처치·피해·합류 기록', sum.damage > 0 && sum.reinforce > 0 && sum.defenseBreak === true);
+  ok('전적에 참전·처치 수 누적', st.stats.skirmishes === 1 && st.stats.skirmishKills === sum.kills,
+    [st.stats.skirmishes, st.stats.skirmishKills, sum.kills]);
+  ok('참전이 끝나면 슬롯이 비워진다', player.skirmish === null);
+
+  // 쿨다운
+  const cool = startSkirmish(room, player, pair.region.id);
+  ok('참전 직후에는 숨 고르기(쿨다운)', cool.code === 'COOLDOWN', cool.code);
+
+  // 남의 영토 / 내부 영토
+  const { room: room2, player: player2, st: st3 } = fakeRoom(777);
+  const foeRegion = st3.regions.find((r) => r.owner === 1);
+  ok('남의 영토에서는 참전 거절', startSkirmish(room2, player2, foeRegion.id).code === 'REGION');
+  const inner = st3.regions.find((r) => r.owner === 0);
+  for (const nb of inner.neighbors) { st3.regions[nb].owner = 0; }
+  ok('옆에 적이 없는 영토는 전선이 아니다', startSkirmish(room2, player2, inner.id).code === 'NO_FRONT');
+
+  // 조약 중인 나라와는 싸우지 않는다
+  const { room: room3, player: player3, st: st4 } = fakeRoom(424242);
+  const p3region = st4.regions.find((r) => r.owner === 0);
+  for (const nb of p3region.neighbors) {
+    st4.regions[nb].owner = 1;
+    st4.regions[nb].troops = 6;
+  }
+  st4.treaties[tkey(0, 1)] = { a: 0, b: 1, type: 'truce', until: st4.time + 40000 };
+  const treatyTry = startSkirmish(room3, player3, p3region.id);
+  ok('조약 중인 나라와는 참전 불가', treatyTry.code === 'TREATY', treatyTry.code);
+
+  // 관전 · 위임 · 종료 상태
+  const { room: room4, player: player4, st: st5 } = fakeRoom(55);
+  const p4 = frontPair(st5, 0);
+  player4.controlSlot = -1;
+  ok('관전 중에는 참전 불가', startSkirmish(room4, player4, p4.region.id).code === 'SPECTATE');
+  player4.controlSlot = 0; st5.human[0] = false;
+  ok('AI 위임 중에는 참전 불가', startSkirmish(room4, player4, p4.region.id).code === 'DELEGATE');
+  st5.human[0] = true; st5.over = { type: 'nation', winner: 1, at: 0 };
+  ok('게임이 끝났다면 참전 불가', startSkirmish(room4, player4, p4.region.id).code === 'OVER');
+
+  // 자동 종료: 시간 초과 · 전선 상실
+  const { room: room5, player: player5, st: st6 } = fakeRoom(612);
+  const p5 = frontPair(st6, 0);
+  startSkirmish(room5, player5, p5.region.id);
+  player5.skirmish.startedAt = Date.now() - SKIRMISH.maxMs - 1000;
+  skirmishTick(room5);
+  ok('참전 시간이 다 되면 자동 종료', player5.skirmish === null);
+
+  player5.lastSkirmishEnd = 0;
+  const p5b = frontPair(st6, 0);
+  startSkirmish(room5, player5, p5b.region.id);
+  p5b.region.owner = 1;
+  skirmishTick(room5);
+  ok('전선 영토를 잃으면 자동 종료', player5.skirmish === null);
+}
+
+/* =========================================================================
    3. WebSocket
    ========================================================================= */
 function connect(port) {
@@ -444,6 +594,73 @@ async function networkTests() {
   const back = await next(c, (m) => m.type === 'state' && m.you === -1, 6000);
   ok('관전으로 복귀', back.you === -1);
 
+  // ---- 직접 참전(칼질) 프로토콜 ----
+  console.log('WebSocket · 직접 참전');
+  const arenaJs = await httpGet(port, '/arena.js');
+  ok('GET /arena.js 200 · 아레나 모듈', arenaJs.status === 200 && arenaJs.body.indexOf('TWArena') >= 0);
+  ok('게임 페이지에 참전 버튼 · 아레나 캔버스', home.body.indexOf('칼들고 참전') >= 0 &&
+    home.body.indexOf('arenaCanvas') >= 0 && home.body.indexOf('/arena.js') >= 0);
+
+  const d = await connect(port);
+  send(d, { type: 'create', name: '참전러', sim: true });
+  await next(d, (m) => m.type === 'joined');
+  const dState = await next(d, (m) => m.type === 'state' && m.started, 12000);
+  const slotD = [0, 1, 2, 3].find((i) => dState.regions.some((r) => r.owner === i)) || 0;
+  send(d, { type: 'takeover', slot: slotD });
+  const dState2 = await next(d, (m) => m.type === 'state' && m.you === slotD, 8000);
+
+  let arenaStart = null;
+  let pickRegion = null;
+  for (const r of dState2.regions) {
+    if (r.owner !== slotD || r.troops < 2) continue;
+    const nbId = r.neighbors.find((n) => dState2.regions[n].owner !== slotD &&
+      dState2.regions[n].troops >= 2);
+    if (nbId == null) continue;
+    const foeOwner = dState2.regions[nbId].owner;
+    const atPeace = foeOwner >= 0 && (dState2.treaties || []).some((t) =>
+      (t.a === slotD && t.b === foeOwner) || (t.a === foeOwner && t.b === slotD));
+    if (atPeace) continue;
+    pickRegion = { region: r, target: dState2.regions[nbId] };
+    break;
+  }
+  ok('난입한 나라에 참전할 전선이 있다', !!pickRegion);
+
+  send(d, { type: 'skirmish', kind: 'start', region: pickRegion.region.id });
+  arenaStart = await next(d, (m) => m.type === 'skirmish_start', 6000);
+  ok('참전 시작 · 아레나 설정 수신', !!arenaStart.arena && arenaStart.arena.region.id === pickRegion.region.id &&
+    arenaStart.arena.enemyCount >= 8);
+  ok('아레나 설정에 진영 이름·색·전선 병력', !!arenaStart.arena.me.color && !!arenaStart.arena.enemy.name &&
+    arenaStart.arena.rules.killsPerTroop === SKIRMISH.killsPerTroop);
+  ok('참전 상태가 함께 전달된다', !!arenaStart.skirmish && arenaStart.skirmish.kills === 0 &&
+    arenaStart.skirmish.maxDamage >= 1, arenaStart.skirmish && arenaStart.skirmish.maxDamage);
+
+  const targetBefore = pickRegion.target.troops;
+  send(d, { type: 'skirmish', kind: 'report', kills: 3 });
+  const upd = await next(d, (m) => m.type === 'skirmish_update', 6000);
+  ok('칼질 결과가 서버에 반영된다', upd.delta.damage === 1 && upd.skirmish.kills === 3,
+    [upd.delta.damage, upd.skirmish.kills]);
+  const tickAfter = await next(d, (m) => m.type === 'tick' &&
+    m.regions[pickRegion.target.id][1] <= targetBefore - 1, 6000);
+  ok('지도 병력이 바로 줄어든다', tickAfter.regions[pickRegion.target.id][1] <= targetBefore - 1,
+    [targetBefore, tickAfter.regions[pickRegion.target.id][1]]);
+
+  const overReport = await next(d, (m) => m.type === 'skirmish_update' && m.skirmish.flagged > 0, 4000).catch(() => null);
+  send(d, { type: 'skirmish', kind: 'report', kills: 500 });
+  const clamped = await next(d, (m) => m.type === 'skirmish_update' && m.skirmish.flagged > 0, 4000).catch(() => null);
+  ok('비정상 킬 보고는 서버에서 깎인다', !!clamped && clamped.skirmish.kills < 500, clamped && clamped.skirmish.kills);
+
+  send(d, { type: 'skirmish', kind: 'end', reason: 'win', kills: 20 });
+  const ended = await next(d, (m) => m.type === 'skirmish_end', 6000);
+  ok('참전 종료 · 요약 수신', !!ended.summary && ended.summary.reason === 'win' && ended.summary.kills > 0,
+    ended.summary && ended.summary.kills);
+  const endEvent = await next(d, (m) => m.type === 'event' && m.text.indexOf('전선') >= 0, 6000).catch(() => null);
+  ok('전선 결과가 방 전체에 알려진다', !!endEvent);
+
+  send(d, { type: 'skirmish', kind: 'start', region: pickRegion.region.id });
+  const cooldownErr = await next(d, (m) => m.type === 'error', 4000).catch(() => null);
+  ok('참전 직후 재참전은 숨 고르기', !!cooldownErr && cooldownErr.code === 'COOLDOWN', cooldownErr && cooldownErr.code);
+  d.close();
+
   // 나가기
   send(b, { type: 'leave' });
   ok('나가기 응답', (await next(b, (m) => m.type === 'left', 4000)).type === 'left');
@@ -458,6 +675,7 @@ async function networkTests() {
   try {
     engineTests();
     headlessSimTests();
+    skirmishTests();
     await networkTests();
     console.log('\n모든 테스트 통과 (' + passed + '개)');
     process.exit(0);

@@ -1,8 +1,8 @@
 {
   "name": "territory-war-online",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
-  "description": "한 손으로 즐기는 실시간(RTS) 영토 확장 전략 게임 · Node.js + WebSocket 멀티플레이 · AI 시뮬레이션 난입",
+  "description": "한 손으로 즐기는 실시간(RTS) 영토 확장 전략 게임 · 병사로 직접 참전하는 2D 칼질 액션 · Node.js + WebSocket 멀티플레이",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -18,7 +18,9 @@
     "websocket",
     "strategy",
     "mobile",
-    "korean"
+    "korean",
+    "action",
+    "sword"
   ],
   "license": "MIT",
   "dependencies": {

@@ -1531,3 +1531,294 @@ body {
 }
 #propModal.peek .prop-row { gap: 7px; }
 #propModal.peek .prop-row button { padding: 9px; font-size: 12.5px; }
+
+/* =============================================================================
+   직접 참전 · 칼질 액션 (전선 참전 버튼 + 2D 아레나)
+   ============================================================================= */
+.skirmish-row { display: flex; }
+.skirmish-row.hidden { display: none; }
+.skirmish-btn {
+  flex: 1 1 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-radius: 13px;
+  border: 1px solid rgba(251, 191, 36, 0.55);
+  background:
+    radial-gradient(120% 160% at 12% 0%, rgba(251, 191, 36, 0.28), rgba(185, 28, 28, 0.12) 62%, rgba(15, 23, 38, 0.4) 100%);
+  color: #fde68a;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 8px 22px -16px #f59e0b, inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  animation: skPulse 2.6s ease-in-out infinite;
+}
+.skirmish-btn:active { transform: translateY(1px) scale(0.996); }
+.skirmish-btn:disabled { opacity: 0.45; animation: none; }
+.skirmish-btn .sk-ico { font-size: 21px; line-height: 1; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5)); }
+.skirmish-btn .sk-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.skirmish-btn b { font-size: 14.5px; font-weight: 900; letter-spacing: -0.01em; color: #fef3c7; }
+.skirmish-btn small {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #fcd34d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@keyframes skPulse {
+  0%, 100% { box-shadow: 0 8px 22px -16px #f59e0b, inset 0 0 0 1px rgba(255, 255, 255, 0.05); }
+  50% { box-shadow: 0 10px 26px -12px rgba(251, 191, 36, 0.55), inset 0 0 0 1px rgba(251, 191, 36, 0.35); }
+}
+
+/* ---------- 아레나 ---------- */
+#arena {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: #070b12;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+#arenaCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.ar-top {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 9px);
+  left: 11px;
+  right: 112px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.ar-hp { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; }
+.ar-hpbar {
+  flex: 1 1 auto;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(140, 180, 255, 0.28);
+  overflow: hidden;
+}
+#arHpFill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #16a34a, #84cc16);
+  transition: width 0.14s linear, background 0.2s ease;
+}
+#arHpFill.low { background: linear-gradient(90deg, #dc2626, #f59e0b); }
+#arHpFill.guard { background: linear-gradient(90deg, #2563eb, #93c5fd); }
+#arHpText {
+  font-size: 11px;
+  font-weight: 900;
+  color: #e8eefc;
+  min-width: 20px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ar-score { display: flex; align-items: baseline; gap: 2px; white-space: nowrap; margin-left: 2px; }
+.ar-score b { font-size: 19px; font-weight: 900; color: #fef3c7; font-variant-numeric: tabular-nums; }
+.ar-score small { font-size: 9.5px; font-weight: 800; color: #fcd34d; margin-right: 3px; }
+.ar-combo {
+  font-size: 10px;
+  font-weight: 900;
+  color: #fbbf24;
+  opacity: 0;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.14);
+  transition: opacity 0.18s ease;
+}
+.ar-combo.show { opacity: 1; }
+.ar-enemy {
+  font-size: 11px;
+  font-weight: 800;
+  color: #fecaca;
+  white-space: nowrap;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(127, 29, 29, 0.5);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+.ar-back {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 7px);
+  right: 9px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 38, 0.82);
+  color: #e2ecff;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.ar-back:active { transform: translateY(1px); }
+.ar-title {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 44px);
+  left: 0;
+  right: 0;
+  text-align: center;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.ar-title b {
+  font-size: 13.5px;
+  font-weight: 900;
+  color: #f1f5f9;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+  letter-spacing: -0.01em;
+}
+.ar-title small { font-size: 10.5px; font-weight: 700; color: #cbd5e1; text-shadow: 0 2px 6px #000; }
+.ar-hint {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 78px);
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(203, 213, 225, 0.75);
+  pointer-events: none;
+  padding: 0 12px;
+}
+.ar-joy {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 112px;
+  height: 112px;
+  margin: -56px 0 0 -56px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(147, 197, 253, 0.4);
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.16), rgba(8, 14, 24, 0.42) 70%);
+  pointer-events: none;
+}
+.ar-joy.hidden { display: none !important; }
+.ar-joy i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #bfdbfe, #3b82f6 70%);
+  box-shadow: 0 6px 16px -6px #1d4ed8;
+  transform: translate(-50%, -50%);
+}
+.ar-btns {
+  position: absolute;
+  right: calc(env(safe-area-inset-right, 0px) + 14px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 20px);
+  width: 200px;
+  height: 210px;
+  pointer-events: none;
+}
+.ar-btn {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  color: #fff;
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08), 0 14px 26px -16px #000;
+  transition: transform 0.08s ease, filter 0.12s ease;
+}
+.ar-btn span { font-size: 26px; line-height: 1.05; }
+.ar-btn small { font-size: 10px; font-weight: 900; letter-spacing: -0.01em; opacity: 0.92; }
+.ar-btn:active { transform: scale(0.94); filter: brightness(1.15); }
+.ar-btn.on { filter: brightness(1.25); box-shadow: inset 0 0 0 3px rgba(147, 197, 253, 0.8), 0 0 22px -4px #3b82f6; }
+.ar-btn.slash {
+  right: 0;
+  bottom: 0;
+  width: 104px;
+  height: 104px;
+  background: radial-gradient(circle at 34% 28%, #fbbf24, #dc2626 62%, #7f1d1d 100%);
+}
+.ar-btn.slash span { font-size: 36px; }
+.ar-btn.dash {
+  right: 4px;
+  bottom: 116px;
+  width: 74px;
+  height: 74px;
+  background: radial-gradient(circle at 34% 28%, #7dd3fc, #2563eb 66%, #1e3a8a 100%);
+}
+.ar-btn.guard {
+  right: 104px;
+  bottom: 92px;
+  width: 74px;
+  height: 74px;
+  background: radial-gradient(circle at 34% 28%, #cbd5e1, #475569 66%, #1e293b 100%);
+}
+.ar-down {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  transform: translate(-50%, -50%);
+  padding: 14px 22px;
+  border-radius: 14px;
+  background: rgba(10, 15, 26, 0.9);
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  color: #fecaca;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+  pointer-events: none;
+}
+.ar-down.hidden { display: none !important; }
+.ar-down b { color: #fff; font-size: 17px; }
+.ar-flash {
+  position: absolute;
+  inset: 0;
+  background: rgba(74, 222, 128, 0.2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+.ar-flash.show { opacity: 1; }
+.ar-result {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 18px 30px;
+  border-radius: 18px;
+  background: rgba(9, 14, 24, 0.92);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  box-shadow: 0 20px 50px -20px #000;
+  pointer-events: none;
+}
+.ar-result.hidden { display: none !important; }
+.ar-result b { font-size: 20px; font-weight: 900; color: #fef3c7; }
+.ar-result small { font-size: 12px; font-weight: 700; color: #cbd5e1; }
+body.arena-on { overflow: hidden; }

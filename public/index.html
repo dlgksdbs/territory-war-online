@@ -55,6 +55,15 @@
       <button class="ratio-btn" type="button" data-ratio="1">100%</button>
     </div>
     <div id="hint">내 영토를 탭하고 옆 영토를 탭하면 바로 출정</div>
+    <div id="skirmishRow" class="skirmish-row hidden">
+      <button id="btnSkirmish" class="skirmish-btn" type="button">
+        <span class="sk-ico" aria-hidden="true">⚔️</span>
+        <span class="sk-txt">
+          <b>칼들고 참전</b>
+          <small id="skirmishSub">전선을 찾는 중…</small>
+        </span>
+      </button>
+    </div>
     <div id="actionRow">
       <button id="btnDiplo" type="button">외교</button>
       <button id="btnLog" type="button">전황</button>
@@ -147,6 +156,7 @@
       <li class="diplo"><b>병력 지원 · 조공 · 할양</b> — 병력 6 이상인 내 영토에서 3개를 보내 관계를 크게 올리고 동맹을 맺습니다. 조공은 12초마다 1~2개를 주고받는 대신 휴전합니다. 영토 할양은 관계 +25와 불가침을 얻습니다.</li>
       <li class="net"><b>AI 대응</b> — AI는 1.8~3.2초마다 판단합니다. 약한 곳을 노려 출정하고, 후방 병력을 전선으로 모으며, 들어오는 행군을 보고 수비 병력을 보냅니다. 35% 이상을 차지한 1위 국가가 나오면 다른 나라들과 연합해 견제합니다.</li>
       <li class="net"><b>🤖 AI 시뮬레이션 · 난입</b> — 시작 화면에서 <b>AI 시뮬레이션</b>을 누르면 4개국 AI가 실시간으로 싸웁니다. 관전하다가 마음에 드는 나라를 골라 <b>⚔️ 이 나라로 참전</b>하면 그 나라를 직접 조종합니다. 속도는 <b>×1 · ×2 · ×4</b>.</li>
+      <li class="net"><b>⚔️ 칼들고 참전 (직접 전투)</b> — 지도 아래 <b>칼들고 참전</b>을 누르면 그 전선에 병사로 뛰어듭니다. 왼쪽 화면을 드래그해 움직이고, 오른쪽 탭이나 <b>⚔️ 베기</b>로 벱니다. <b>💨 돌진</b>은 앞으로 파고들며 베고, <b>🛡️ 막기</b>는 공격을 막으며 직전에 누르면 패링합니다. 적 병사 3명을 베면 그 영토 적 병력이 1 줄고, 6명을 베면 우리 전선 병력이 1 늘며 적 수비가 22초 동안 약해집니다. 쓰러져도 2초 뒤 부활하고, <b>🗺️ 지도로 복귀</b>로 언제든 돌아옵니다.</li>
       <li class="net"><b>🤖 AI 위임</b> — 혼자 하는 판(시뮬레이션 포함)에서는 언제든 <b>AI 위임</b>으로 내 나라를 AI에게 맡기고 구경할 수 있고, <b>조종 가져오기</b>로 바로 돌아올 수 있습니다.</li>
       <li class="net"><b>자리 유지</b> — 휴대폰이 앱을 전환해 연결이 끊겨도 페이지를 다시 열면 원래 자리로 돌아옵니다. 25초 넘게 끊기면 AI가 잠시 대신 조종합니다.</li>
     </ul>
@@ -307,6 +317,49 @@
   <p style="padding:24px;color:#e8eefc">이 게임은 자바스크립트가 필요합니다.</p>
 </noscript>
 
+<!-- ==================== 직접 참전 · 칼질 액션 아레나 ==================== -->
+<div id="arena" class="arena hidden" aria-hidden="true" role="application" aria-label="직접 참전 · 칼싸움 아레나">
+  <canvas id="arenaCanvas"></canvas>
+
+  <div class="ar-top">
+    <div class="ar-hp">
+      <div class="ar-hpbar"><i id="arHpFill"></i></div>
+      <span id="arHpText">100</span>
+    </div>
+    <div class="ar-score">
+      <b id="arKills">0</b><small>베기</small>
+      <span id="arCombo" class="ar-combo"></span>
+    </div>
+    <div class="ar-enemy"><span id="arEnemyLeft">적 0</span></div>
+  </div>
+
+  <div class="ar-title">
+    <b id="arBanner">전선</b>
+    <small id="arTargetInfo"></small>
+  </div>
+
+  <button id="arBack" class="ar-back" type="button">🗺️ 지도로 복귀</button>
+
+  <div id="arHint" class="ar-hint">왼쪽 드래그 이동 · 오른쪽 탭/⚔️ 베기</div>
+
+  <div id="arJoy" class="ar-joy hidden" aria-hidden="true"><i id="arJoyKnob"></i></div>
+
+  <div class="ar-btns">
+    <button id="arSlash" class="ar-btn slash" type="button" aria-label="칼 휘두르기"><span>⚔️</span><small>베기</small></button>
+    <button id="arDash" class="ar-btn dash" type="button" aria-label="돌진 베기"><span>💨</span><small>돌진</small></button>
+    <button id="arGuard" class="ar-btn guard" type="button" aria-label="막기"><span>🛡️</span><small>막기</small></button>
+  </div>
+
+  <div id="arDown" class="ar-down hidden">쓰러졌다… <b id="arDownSec">2</b>초 뒤 부활</div>
+  <div id="arFlash" class="ar-flash"></div>
+
+  <div id="arResult" class="ar-result hidden">
+    <b id="arResultTitle">지도로 복귀</b>
+    <small id="arResultLine"></small>
+  </div>
+</div>
+
+<script src="/arena.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

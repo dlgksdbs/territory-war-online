@@ -63,6 +63,31 @@ const DUR = {
   proposal: 30        // 제안 유효 시간
 };
 
+/* 직접 참전(칼질 액션) 스커미시 튜닝 — 아레나 결과는 서버가 검증해 지도에 반영한다 */
+const SKIRMISH = {
+  maxMs: 150000,           // 한 번 참전의 최대 시간
+  cooldownMs: 6000,        // 참전 사이 숨 고르기
+  maxKillsPerSec: 5,       // 서버가 인정하는 초당 최대 킬
+  graceKills: 4,           // 출발 직후 여유
+  killsPerTroop: 3,        // 적 병사 3명 처치 = 적 병력 1 감소
+  maxTroopDamage: 6,       // 한 번 참전으로 깎을 수 있는 최대 병력
+  maxDamageRatio: 0.45,    // 대상 병력의 45%까지만
+  reinforceEvery: 6,       // 6명 베면 전선 영토에 병력 1 합류
+  maxReinforce: 4,
+  defenseBreakKills: 6,    // 6명 이상 베면 대상 영토 수비 약화
+  defenseBreakSec: 22,
+  defenseBreakMul: 0.78,
+  winBonusDamage: 1,       // 전선을 밀어내면(승리) 보너스 피해
+  enemyBase: 7,
+  enemyPerTroop: 2,
+  enemyMax: 30,
+  allyBase: 3,
+  allyPerTroop: 1,
+  allyMax: 10,
+  arenaW: 280,
+  arenaH: 600
+};
+
 /* =============================================================================
    0. 공통 유틸 · 시드 난수
    ============================================================================= */
@@ -684,7 +709,7 @@ const Game = {
         { nextAt: 3000, nextDiploAt: 8000 },
         { nextAt: 3400, nextDiploAt: 10000 }
       ],
-      stats: { battles: 0, captures: 0, dispatches: 0, betrayals: 0 }
+      stats: { battles: 0, captures: 0, dispatches: 0, betrayals: 0, skirmishes: 0, skirmishKills: 0 }
     };
     for (let i = 0; i < NATION_COUNT; i++) {
       if (!active[i]) continue;
@@ -863,7 +888,9 @@ const Game = {
     }
 
     const isCap = defOwner >= 0 && state.capitals[defOwner] === to.id;
-    const defPower = to.troops * (isCap ? SIM.capitalDefBonus : SIM.defBonus);
+    const weakened = !!(to.weakUntil && to.weakUntil > state.time);
+    const defPower = to.troops * (isCap ? SIM.capitalDefBonus : SIM.defBonus) *
+      (weakened ? SKIRMISH.defenseBreakMul : 1);
     const allyBonus = defOwner >= 0 && hasAllyAgainst(state, m.owner, defOwner);
     const atkPower = m.troops * (1 + (allyBonus ? SIM.allyAttackBonus : 0)) * (0.92 + rand() * 0.16);
 
@@ -1959,7 +1986,9 @@ function newPlayer(slot, name, ws, isAI, controlSlot) {
     autoAI: false,
     lastDispatch: 0,
     disconnectedAt: null,
-    dropTimer: null
+    dropTimer: null,
+    skirmish: null,
+    lastSkirmishEnd: 0
   };
 }
 
@@ -2150,6 +2179,7 @@ function armyView(st) {
 function fullState(room, slot) {
   const st = room.game;
   const delegate = slot >= 0 && !st.human[slot];
+  const mePlayer = room.players.find((p) => controlOf(room, p) === slot) || null;
   return {
     type: 'state',
     code: room.code,
@@ -2192,6 +2222,7 @@ function fullState(room, slot) {
     leader: leaderView(st),
     players: playerView(room),
     stats: st.stats,
+    skirmish: mePlayer ? skirmishView(mePlayer.skirmish) : null,
     log: room.log.slice(-24),
     roomLogRev: room.logRev,
     serverTime: Date.now()
@@ -2398,6 +2429,9 @@ function stepRoom(room) {
       defender: ev.defender == null ? null : ev.defender
     });
   }
+
+  // 참전 아레나 시간 초과 · 전선 상실 자동 종료
+  skirmishTick(room);
 
   if (now - room.lastBroadcast >= SIM.tickMs) {
     room.lastBroadcast = now;
@@ -2700,6 +2734,7 @@ function handleControl(room, player, type, msg) {
     if (on && humans > 1) { notify(player.ws, '여러 명이 함께할 때는 위임을 쓸 수 없어요.', 'warn'); return; }
     if (!on && st.human[ctl]) return;
     if (on && !st.human[ctl]) return;
+    if (skirmishActive(player)) endSkirmish(room, player, 'return');
     st.human[ctl] = !on;
     if (on) st.ai[ctl] = { nextAt: st.time + 500, nextDiploAt: st.time + 6000 };
     broadcastEvent(room,
@@ -2731,6 +2766,7 @@ function leaveRoom(ws, explicit) {
   const room = ws.room;
   const player = ws.player;
   if (!room || !player) return;
+  if (skirmishActive(player)) endSkirmish(room, player, 'leave');
   const wasHost = player.slot === room.hostSlot;
 
   if (!room.started) {
@@ -2773,6 +2809,328 @@ function leaveRoom(ws, explicit) {
   if (!anyHuman) {
     room.closed = true;
     rooms.delete(room.code);
+  }
+}
+
+/* =============================================================================
+   3.5 직접 참전 · 칼질 스커미시 ("병사로 참전")
+   - 플레이어가 전선 영토를 골라 2D 탑다운 칼싸움 아레나에 병사로 뛰어든다
+   - 아레나의 실시간 전투는 화면(클라이언트)에서 돌지만, 결과(킬)는 서버가 검증한다:
+     초당 킬 상한 · 대상 병력 45%/6 이하 · 최소 병력 1 유지 · 6초 쿨다운
+   - 검증된 킬은 지도에 바로 반영된다: 적 병력 감소 · 6킬마다 아군 1 합류 · 6킬부터 수비 약화
+   ============================================================================= */
+
+function skirmishTargetOf(st, slot, regionId) {
+  const r = st.regions[regionId];
+  if (!r || r.owner !== slot) return null;
+  let best = null;
+  for (const nb of r.neighbors) {
+    const t = st.regions[nb];
+    if (!t || t.owner === slot) continue;
+    const power = t.troops + (t.owner >= 0 && st.capitals[t.owner] === t.id ? 3 : 0);
+    if (!best || power > best.power || (power === best.power && best.region.owner < 0 && t.owner >= 0)) {
+      best = { region: t, power };
+    }
+  }
+  return best ? best.region : null;
+}
+
+function skirmishActive(player) {
+  const sk = player && player.skirmish;
+  return sk && !sk.ended ? sk : null;
+}
+
+function skirmishAllowedKills(sk, now) {
+  const elapsed = clampNum(now - sk.startedAt, 0, SKIRMISH.maxMs);
+  return SKIRMISH.graceKills + Math.floor((elapsed / 1000) * SKIRMISH.maxKillsPerSec);
+}
+
+function skirmishView(sk) {
+  if (!sk || sk.ended) return null;
+  return {
+    id: sk.id,
+    region: sk.region,
+    regionName: sk.regionName,
+    target: sk.target,
+    targetName: sk.targetName,
+    enemySlot: sk.enemySlot,
+    kills: sk.kills,
+    damage: sk.damage,
+    reinforce: sk.reinforce,
+    maxDamage: sk.maxDamage,
+    defenseBreak: !!sk.defenseBreak,
+    left: Math.max(0, Math.round(SKIRMISH.maxMs - (Date.now() - sk.startedAt))),
+    flagged: sk.flagged || 0
+  };
+}
+
+function skirmishArenaConfig(room, player, sk) {
+  const st = room.game;
+  const region = st.regions[sk.region];
+  const target = st.regions[sk.target];
+  return {
+    id: sk.id,
+    seed: sk.seed,
+    w: SKIRMISH.arenaW,
+    h: SKIRMISH.arenaH,
+    enemyCount: sk.enemyCount,
+    allyCount: sk.allyCount,
+    maxKills: sk.enemyCount,
+    me: {
+      slot: sk.slot,
+      name: player.name,
+      nation: nationLabel(room, sk.slot),
+      color: NATIONS[sk.slot] ? NATIONS[sk.slot].color : '#3b82f6'
+    },
+    enemy: {
+      slot: sk.enemySlot,
+      name: sk.enemySlot >= 0 ? nationLabel(room, sk.enemySlot) : NEUTRAL_NAME,
+      color: sk.enemySlot >= 0 && NATIONS[sk.enemySlot] ? NATIONS[sk.enemySlot].color : '#94a3b8'
+    },
+    region: { id: region.id, name: region.name, troops: region.troops },
+    target: {
+      id: target.id,
+      name: target.name,
+      owner: target.owner,
+      troops: target.troops,
+      enemyName: sk.enemySlot >= 0 ? nationLabel(room, sk.enemySlot) : NEUTRAL_NAME
+    },
+    rules: {
+      killsPerTroop: SKIRMISH.killsPerTroop,
+      reinforceEvery: SKIRMISH.reinforceEvery,
+      defenseBreakKills: SKIRMISH.defenseBreakKills,
+      maxDamage: sk.maxDamage
+    }
+  };
+}
+
+function startSkirmish(room, player, regionId) {
+  const st = room.game;
+  if (!st) return { ok: false, code: 'NO_GAME', message: '아직 게임이 시작되지 않았어요.' };
+  if (st.over) return { ok: false, code: 'OVER', message: '게임이 끝났어요.' };
+  const ctl = controlOf(room, player);
+  if (ctl < 0) return { ok: false, code: 'SPECTATE', message: '관전 중에는 참전할 수 없어요 · 먼저 나라를 고르세요.' };
+  if (!st.human[ctl]) return { ok: false, code: 'DELEGATE', message: 'AI가 대신 싸우는 중이에요 · 조종을 먼저 가져오세요.' };
+  if (Game.countOwned(st, ctl) === 0) return { ok: false, code: 'DEAD', message: '영토를 모두 잃었어요.' };
+  if (skirmishActive(player)) return { ok: false, code: 'BUSY', message: '이미 참전 중이에요.' };
+  const now = Date.now();
+  const wait = SKIRMISH.cooldownMs - (now - (player.lastSkirmishEnd || 0));
+  if (wait > 0) {
+    return { ok: false, code: 'COOLDOWN', message: '숨 고르는 중이에요 · ' + Math.ceil(wait / 1000) + '초 뒤에 다시 참전' };
+  }
+  const idx = Number(regionId);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= st.regions.length) {
+    return { ok: false, code: 'REGION', message: '참전할 영토를 찾을 수 없어요.' };
+  }
+  const region = st.regions[idx];
+  if (region.owner !== ctl) return { ok: false, code: 'REGION', message: '내 영토에서만 참전할 수 있어요.' };
+  const target = skirmishTargetOf(st, ctl, idx);
+  if (!target) return { ok: false, code: 'NO_FRONT', message: '이 영토 옆에 적이 없어요 · 전선 영토에서 참전하세요.' };
+  if (target.owner >= 0 && treatyOf(st, ctl, target.owner)) {
+    return { ok: false, code: 'TREATY', message: '조약 중인 나라와는 싸울 수 없어요 · 먼저 파기하세요.' };
+  }
+
+  const enemyCount = clampNum(SKIRMISH.enemyBase + Math.round(target.troops * SKIRMISH.enemyPerTroop),
+    SKIRMISH.enemyBase + 1, SKIRMISH.enemyMax);
+  const allyCount = clampNum(SKIRMISH.allyBase + Math.round(region.troops * SKIRMISH.allyPerTroop),
+    SKIRMISH.allyBase, SKIRMISH.allyMax);
+  const sk = {
+    id: (room.nextSkirmishId = (room.nextSkirmishId || 0) + 1),
+    slot: ctl,
+    region: idx,
+    regionName: region.name,
+    target: target.id,
+    targetName: target.name,
+    enemySlot: target.owner,
+    startedAt: now,
+    lastReportAt: 0,
+    kills: 0,
+    damage: 0,
+    reinforce: 0,
+    defenseBreak: false,
+    ended: false,
+    flagged: 0,
+    seed: (now ^ (ctl + 7) * 2654435761) >>> 0,
+    baseTroops: Math.max(1, target.troops),
+    maxDamage: Math.min(SKIRMISH.maxTroopDamage,
+      Math.max(1, Math.ceil(Math.max(1, target.troops) * SKIRMISH.maxDamageRatio))),
+    enemyCount,
+    allyCount
+  };
+  player.skirmish = sk;
+  room.lastAt = now;
+  addLog(room, player.name + ' 님이 ' + region.name + ' 전선에 참전했습니다', 'info');
+  return { ok: true, skirmish: sk, arena: skirmishArenaConfig(room, player, sk) };
+}
+
+/** 클라이언트가 보고한 킬 수를 검증해 지도에 반영한다. */
+function applySkirmishProgress(room, player, killsRaw, opts) {
+  const st = room.game;
+  const sk = skirmishActive(player);
+  if (!st || !sk) return null;
+  const now = Date.now();
+  const allowed = skirmishAllowedKills(sk, now);
+  const num = Math.floor(Number(killsRaw));
+  let want = Number.isFinite(num) && num > 0 ? num : sk.kills;
+  if (want < sk.kills) want = sk.kills;          // 되돌림은 무시
+  if (want > allowed) {
+    want = allowed;
+    sk.flagged = (sk.flagged || 0) + 1;
+  }
+  const delta = want - sk.kills;
+  sk.kills = want;
+  sk.lastReportAt = now;
+
+  const target = st.regions[sk.target];
+  const source = st.regions[sk.region];
+  const out = { kills: sk.kills, delta, damage: 0, reinforce: 0, defenseBreak: false };
+
+  if (!target) return out;
+
+  // 적 병력 감소: 3킬 = 1병력, 총 피해는 시작 병력의 45%(최대 6)까지, 병력 1은 남긴다
+  const already = sk.damage;
+  const wanted = Math.min(sk.maxDamage, Math.floor(sk.kills / SKIRMISH.killsPerTroop));
+  if (wanted > already && target.owner === sk.enemySlot && target.troops > 1) {
+    const apply = Math.min(wanted - already, target.troops - 1);
+    if (apply > 0) {
+      target.troops -= apply;
+      sk.damage += apply;
+      out.damage = apply;
+      if (target.troops < 1) target.troops = 1;
+    }
+  }
+
+  // 전선 영토 병력 합류: 6킬마다 1
+  const wantRe = Math.min(SKIRMISH.maxReinforce, Math.floor(sk.kills / SKIRMISH.reinforceEvery));
+  if (wantRe > sk.reinforce && source && source.owner === sk.slot) {
+    const add = wantRe - sk.reinforce;
+    source.troops += add;
+    sk.reinforce += add;
+    out.reinforce = add;
+  }
+
+  // 수비 약화: 6킬을 넘기면 대상 영토 수비 -22% (22초)
+  if (!sk.defenseBreak && sk.kills >= SKIRMISH.defenseBreakKills && target.owner === sk.enemySlot) {
+    sk.defenseBreak = true;
+    target.weakUntil = st.time + SKIRMISH.defenseBreakSec * 1000;
+    out.defenseBreak = true;
+  }
+
+  out.left = Math.max(0, SKIRMISH.maxMs - (now - sk.startedAt));
+  out.region = { id: source ? source.id : sk.region, troops: source ? source.troops : 0 };
+  out.target = { id: target.id, troops: target.troops, owner: target.owner };
+
+  if ((out.damage || out.reinforce || out.defenseBreak) && !(opts && opts.silent) && player.ws) {
+    send(player.ws, { type: 'skirmish_update', skirmish: skirmishView(sk), delta: out });
+  }
+  return out;
+}
+
+function endSkirmish(room, player, reason, killsRaw) {
+  const st = room.game;
+  const sk = skirmishActive(player);
+  if (!sk) return null;
+  if (killsRaw != null) applySkirmishProgress(room, player, killsRaw, { silent: true });
+
+  // 승리(전선 돌파)에는 피해 한도 안에서 보너스 1
+  if (reason === 'win' && st) {
+    const target = st.regions[sk.target];
+    if (target && target.owner === sk.enemySlot && target.troops > 1 && sk.damage < sk.maxDamage) {
+      target.troops -= 1;
+      sk.damage += 1;
+    }
+  }
+
+  sk.ended = true;
+  sk.endedAt = Date.now();
+  player.skirmish = null;
+  player.lastSkirmishEnd = Date.now();
+
+  const summary = {
+    reason: reason || 'return',
+    kills: sk.kills,
+    damage: sk.damage,
+    reinforce: sk.reinforce,
+    defenseBreak: !!sk.defenseBreak,
+    region: { id: sk.region, name: sk.regionName },
+    target: {
+      id: sk.target,
+      name: sk.targetName,
+      owner: st && st.regions[sk.target] ? st.regions[sk.target].owner : sk.enemySlot,
+      troops: st && st.regions[sk.target] ? st.regions[sk.target].troops : 0
+    },
+    seconds: Math.round((sk.endedAt - sk.startedAt) / 1000),
+    flagged: sk.flagged || 0
+  };
+
+  if (st) {
+    st.stats.skirmishes = (st.stats.skirmishes || 0) + 1;
+    st.stats.skirmishKills = (st.stats.skirmishKills || 0) + sk.kills;
+  }
+
+  if (room.game) {
+    const bits = [];
+    if (sk.kills > 0) bits.push(sk.kills + '명 처치');
+    if (sk.damage > 0) bits.push(sk.targetName + ' 적 병력 -' + sk.damage);
+    if (sk.reinforce > 0) bits.push(sk.regionName + ' 아군 +' + sk.reinforce);
+    const text = player.name + ' 님 ' + sk.regionName + ' 전선 ' +
+      (reason === 'win' ? '돌파! ' : reason === 'lost' ? '후퇴 ' : '복귀 ') +
+      (bits.length ? '· ' + bits.join(' · ') : '· 접전 없이 복귀');
+    broadcastEvent(room, text, reason === 'win' ? 'good' : 'info');
+  }
+  // 방 전체 소식보다 내 결과 요약이 마지막에 떠야 한다
+  if (player.ws) send(player.ws, { type: 'skirmish_end', summary });
+  return summary;
+}
+
+/** 참전 시간 초과 · 전선 상실 시 자동 종료 (stepRoom 에서 호출) */
+function skirmishTick(room) {
+  if (!room.game) return;
+  const now = Date.now();
+  for (const p of room.players) {
+    const sk = skirmishActive(p);
+    if (!sk) continue;
+    const src = room.game.regions[sk.region];
+    if (!src || src.owner !== sk.slot) {
+      endSkirmish(room, p, 'lost');
+      continue;
+    }
+    if (now - sk.startedAt >= SKIRMISH.maxMs) endSkirmish(room, p, 'timeout');
+  }
+}
+
+function handleSkirmishMessage(room, player, msg) {
+  const kind = msg.kind;
+  if (kind === 'start') {
+    const out = startSkirmish(room, player, msg.region);
+    if (!out.ok) {
+      send(player.ws, { type: 'error', code: out.code, message: out.message });
+      return;
+    }
+    send(player.ws, {
+      type: 'skirmish_start',
+      arena: out.arena,
+      skirmish: skirmishView(out.skirmish),
+      serverTime: Date.now()
+    });
+    return;
+  }
+  if (kind === 'report') {
+    if (!skirmishActive(player)) {
+      send(player.ws, { type: 'error', code: 'NO_SKIRMISH', message: '참전이 이미 끝났어요.' });
+      return;
+    }
+    applySkirmishProgress(room, player, msg.kills);
+    broadcastTick(room);
+    return;
+  }
+  if (kind === 'end') {
+    if (!skirmishActive(player)) {
+      send(player.ws, { type: 'skirmish_end', summary: null });
+      return;
+    }
+    endSkirmish(room, player, msg.reason, msg.kills);
+    broadcastTick(room);
   }
 }
 
@@ -2897,6 +3255,15 @@ function handleMessage(ws, msg) {
     return;
   }
 
+  if (type === 'skirmish') {
+    if (!room.started || !room.game) {
+      send(ws, { type: 'error', code: 'NOT_STARTED', message: '아직 시작하지 않았어요.' });
+      return;
+    }
+    handleSkirmishMessage(room, player, msg);
+    return;
+  }
+
   if (type === 'speed') {
     setSpeed(room, player, msg.value);
     return;
@@ -2908,6 +3275,7 @@ function handleMessage(ws, msg) {
       return;
     }
     if (!room.game || !room.game.over) return;
+    for (const p of room.players) p.skirmish = null;
     room.started = false;
     room.game = null;
     room.lastStep = 0;
@@ -2939,6 +3307,7 @@ function handleDisconnect(ws) {
   const player = ws.player;
   if (!room || !player) return;
   if (player.ws && player.ws !== ws) return;
+  if (skirmishActive(player)) endSkirmish(room, player, 'disconnect');
   player.connected = false;
   player.ws = null;
   player.disconnectedAt = Date.now();
@@ -3140,6 +3509,7 @@ module.exports = {
   SIM,
   DUR,
   TUNING: SIM,
+  SKIRMISH,
   rooms,
   createServer,
   createRoom,
@@ -3151,6 +3521,13 @@ module.exports = {
   controlOf,
   handleMessage,
   handleAction,
+  startSkirmish,
+  applySkirmishProgress,
+  endSkirmish,
+  skirmishTick,
+  skirmishTargetOf,
+  skirmishAllowedKills,
+  handleSkirmishMessage,
   stepRoom,
   fullState,
   tickState,

@@ -44,6 +44,8 @@
   var marches = {};          // id -> { id, owner, from, to, n, dur, startLocal }
   var flashes = {};          // regionId -> { at, kind }
 
+  var skirmish = { pending: false, region: null, active: null, holdUntil: 0 };
+
   var canvas = null, ctx = null, mapWrap = null;
   var dpr = 1, scale = 1, offX = 0, offY = 0;
   var VW = 1000, VH = 1400;
@@ -91,12 +93,12 @@
     return m + ':' + ('0' + s).slice(-2);
   }
 
-  function toast(msg, kind) {
+  function toast(msg, kind, ms) {
     if (!els.toast) return;
     els.toast.textContent = msg;
     els.toast.className = 'show' + (kind ? ' ' + kind : '');
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { els.toast.className = ''; }, 2200);
+    toastTimer = setTimeout(function () { els.toast.className = ''; }, ms || 2200);
   }
 
   function copyText(text, okMsg) {
@@ -430,12 +432,36 @@
     if (msg.type === 'state') { onState(msg); return; }
     if (msg.type === 'tick') { onTick(msg); return; }
 
+    if (msg.type === 'skirmish_start') {
+      skirmish.pending = false;
+      startArena(msg);
+      return;
+    }
+    if (msg.type === 'skirmish_update') {
+      if (window.TWArena && TWArena.isOpen()) TWArena.applyUpdate(msg);
+      return;
+    }
+    if (msg.type === 'skirmish_end') {
+      var sum = msg.summary;
+      if (window.TWArena && TWArena.isOpen()) TWArena.forceClose(sum);
+      skirmish.active = null;
+      if (sum) {
+        var line = window.TWArena ? TWArena.summaryText(sum) : '';
+        // 방 전체 소식에 밀리지 않도록 결과 요약을 잠깐 붙잡아 둔다
+        skirmish.holdUntil = Date.now() + 2600;
+        toast('전선 결과 · ' + line, sum.damage || sum.reinforce ? 'good' : 'info', 5200);
+      }
+      renderSkirmishRow();
+      return;
+    }
+
     if (msg.type === 'event') {
       if (msg.at != null) flashes[msg.at] = { at: Date.now(), kind: msg.kind === 'good' ? 'good' : 'bad' };
       var kind = msg.kind || 'info';
       var sNow = mySlot();
       var mineHere = sNow >= 0 && (msg.attacker === sNow || msg.defender === sNow);
       if (msg.text && (!msg.battle || mineHere)) {
+        if (Date.now() < skirmish.holdUntil) return;
         if (kind === 'move') {
           if (els.toast && els.toast.className.indexOf('show') < 0) toast(msg.text, 'info');
         } else {
@@ -713,6 +739,9 @@
   function updateHUD() {
     if (!state) return;
     var s = mySlot();
+    if (window.TWArena && TWArena.isOpen() && (state.over || (s >= 0 && countOwned(s) === 0))) {
+      TWArena.finish('return');
+    }
     var owned = s >= 0 ? countOwned(s) : 0;
     var total = state.regions.length;
     var pct = total ? Math.round((owned / total) * 100) : 0;
@@ -743,6 +772,7 @@
     var delegated = s >= 0 && state.delegate;
     els.delegateBar.classList.toggle('hidden', !delegated);
     els.ratioRow.classList.toggle('hidden', s < 0 || delegated || state.over);
+    renderSkirmishRow();
     var deadNow = s >= 0 && !state.over && countOwned(s) === 0 && !delegated;
     els.specChip.classList.toggle('hidden', !deadNow);
     if (deadNow) els.specChip.textContent = state.sim ? '탈락 · 관전 중 (다른 나라 참전 가능)' : '탈락 · 관전 중';
@@ -783,6 +813,102 @@
     var call = callForMe();
     if (call && s >= 0) hint += ' · 🤝 ' + esc(shortName(call.target)) + ' 공동 참전';
     els.hint.innerHTML = hint;
+  }
+
+  /* =========================================================================
+     직접 참전 · 칼질 액션 (⚔️ 칼들고 참전)
+     ========================================================================= */
+  function enemyNeighborOf(r, s) {
+    if (!r || !r.neighbors) return null;
+    var best = null;
+    for (var i = 0; i < r.neighbors.length; i++) {
+      var t = state.regions[r.neighbors[i]];
+      if (!t || t.owner === s) continue;
+      if (t.owner >= 0 && pactBetween(s, t.owner)) continue;
+      if (!best || t.troops > best.troops) best = t;
+    }
+    return best;
+  }
+
+  function frontlinePick() {
+    if (!state || state.over || state.delegate) return null;
+    var s = mySlot();
+    if (s < 0 || countOwned(s) === 0) return null;
+    if (selected != null) {
+      var sr = state.regions[selected];
+      if (sr && sr.owner === s) {
+        var t0 = enemyNeighborOf(sr, s);
+        if (t0) return { region: sr, target: t0 };
+      }
+    }
+    var best = null;
+    for (var i = 0; i < state.regions.length; i++) {
+      var r = state.regions[i];
+      if (r.owner !== s) continue;
+      var t = enemyNeighborOf(r, s);
+      if (!t) continue;
+      if (!best || t.troops > best.target.troops) best = { region: r, target: t };
+    }
+    return best;
+  }
+
+  function renderSkirmishRow() {
+    if (!els.skirmishRow) return;
+    var pick = frontlinePick();
+    var show = !!pick && !!state && !state.over && mySlot() >= 0;
+    els.skirmishRow.classList.toggle('hidden', !show);
+    if (!show) return;
+    els.btnSkirmish.disabled = !!skirmish.pending;
+    els.skirmishSub.textContent = skirmish.pending
+      ? '참전 준비 중…'
+      : pick.region.name + ' ↔ ' + pick.target.name + ' · 적 병력 ' + pick.target.troops;
+  }
+
+  function startArena(msg) {
+    if (!msg || !msg.arena) return;
+    if (!window.TWArena) { toast('아레나를 불러오지 못했어요', 'bad'); return; }
+    closeMenu(); closeDiplo(); closeLog();
+    skirmish.active = msg.skirmish || null;
+    var ok = TWArena.open(msg.arena, {
+      onReport: function (kills) {
+        send({ type: 'skirmish', kind: 'report', kills: kills });
+      },
+      onEnd: function (reason, kills) {
+        send({ type: 'skirmish', kind: 'end', reason: reason, kills: kills });
+        skirmish.active = null;
+      }
+    });
+    if (!ok) {
+      toast('아레나를 열지 못했어요 · 잠시 후 다시', 'bad');
+      send({ type: 'skirmish', kind: 'end', reason: 'return' });
+    }
+  }
+
+  function requestSkirmish() {
+    if (!state || state.over || skirmish.pending) return;
+    if (!canAct()) {
+      if (state.delegate) toast('AI가 대신 싸우는 중 · [조종 가져오기]를 누르세요', 'warn');
+      else toast('지금은 참전할 수 없어요', 'warn');
+      return;
+    }
+    var pick = frontlinePick();
+    if (!pick) {
+      toast('참전할 전선이 없어요 · 적과 맞닿은 내 영토를 고르세요', 'warn');
+      return;
+    }
+    skirmish.pending = true;
+    skirmish.region = pick.region.id;
+    closeMenu(); closeDiplo(); closeLog();
+    var ok = send({ type: 'skirmish', kind: 'start', region: pick.region.id });
+    if (!ok) {
+      skirmish.pending = false;
+      toast('연결이 끊겼어요 · 잠시 후 다시', 'bad');
+      return;
+    }
+    renderSkirmishRow();
+    toast(pick.region.name + ' 전선으로 참전!', 'good');
+    vibrate([12, 26, 12]);
+    setTimeout(function () { skirmish.pending = false; renderSkirmishRow(); }, 4000);
   }
 
   function updateBanner() {
@@ -1951,6 +2077,7 @@
     });
 
     els.btnSpeed.addEventListener('click', cycleSpeed);
+    els.btnSkirmish.addEventListener('click', requestSkirmish);
     els.btnDiplo.addEventListener('click', openDiplo);
     els.btnLog.addEventListener('click', openLog);
     els.btnMenu.addEventListener('click', openMenu);
@@ -2181,6 +2308,7 @@
       'map', 'mapWrap', 'toast', 'liveBanner', 'specChip', 'delegateBar', 'btnTakeBack',
       'spectateBar', 'spPick', 'spNations', 'btnJump',
       'ratioRow', 'hint', 'btnDiplo', 'btnLog', 'btnMenu', 'btnMenu2',
+      'skirmishRow', 'btnSkirmish', 'skirmishSub',
       'rulesModal', 'btnRules', 'btnCloseRules',
       'diploModal', 'diploList', 'diploSub', 'diploFeed', 'btnCloseDiplo',
       'tributeModal', 'tributeTo', 'tributeModeRow', 'tributeNote', 'tributeAmountRow', 'tributeSend', 'tributeClose',
@@ -2242,6 +2370,8 @@
     function tick(ts) {
       requestAnimationFrame(tick);
       if (!state) return;
+      // 아레나에 들어가 있는 동안에는 지도 캔버스를 그리지 않는다 (모바일 발열·배터리)
+      if (window.TWArena && TWArena.isOpen()) return;
       if (ts - last < 33) return;
       last = ts;
       render(ts);
@@ -2262,7 +2392,9 @@
       me: function () { return me; },
       ratio: function () { return ratio; },
       selected: function () { return selected; },
-      marches: function () { return marches; }
+      marches: function () { return marches; },
+      frontline: function () { return frontlinePick(); },
+      skirmishRowShown: function () { return !!(els.skirmishRow && els.skirmishRow.className.indexOf('hidden') < 0); }
     };
   } catch (e) { /* 무시 */ }
 

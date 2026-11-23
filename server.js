@@ -3365,14 +3365,23 @@ function serveStatic(req, res) {
     return;
   }
 
-  if (pathname === '/') pathname = '/index.html';
+  // 디렉터리 경로는 그 안의 index.html 로 (예: / , /classic/ , /classic)
+  if (pathname.endsWith('/')) pathname += 'index.html';
   const rel = pathname.replace(/^\/+/, '');
   const filePath = path.join(PUBLIC_DIR, rel);
   if (filePath !== PUBLIC_DIR && !filePath.startsWith(PUBLIC_DIR + path.sep)) {
     res.writeHead(403); res.end('Forbidden'); return;
   }
 
+  sendFile(filePath, res, 0);
+}
+
+function sendFile(filePath, res, depth) {
   fs.readFile(filePath, (err, data) => {
+    if (err && err.code === 'EISDIR' && depth < 1) {
+      sendFile(path.join(filePath, 'index.html'), res, depth + 1);
+      return;
+    }
     if (err) {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('찾을 수 없는 페이지입니다.');

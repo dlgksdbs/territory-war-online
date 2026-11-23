@@ -2,430 +2,272 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<meta name="theme-color" content="#070b12" />
-<meta name="mobile-web-app-capable" content="yes" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d12" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="description" content="한 손으로 즐기는 실시간 영토 확장 전략 게임 · 친구와 2~4인 웹소켓 멀티플레이 · AI 시뮬레이션 난입" />
-<title>영토 전쟁 ONLINE · 실시간 멀티플레이</title>
-<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-<link rel="manifest" href="/manifest.webmanifest" />
-<link rel="stylesheet" href="/style.css" />
-<link rel="modulepreload" href="/vendor/three.module.min.js" />
+<title>BATTLE ARENA 3D · 기사와 마법사의 전장</title>
+<link rel="stylesheet" href="/src/style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚔️</text></svg>" />
+<script type="importmap">
+{ "imports": { "three": "/vendor/three.module.min.js" } }
+</script>
 </head>
 <body>
+<div id="app">
+  <!-- 로딩 -->
+  <div id="loading">
+    <div class="load-emblem">⚔️</div>
+    <div class="load-title">BATTLE ARENA</div>
+    <div class="load-bar"><i></i></div>
+    <div class="load-note">전장을 짓는 중…</div>
+  </div>
 
-<!-- ============================ 게임 화면 ============================ -->
-<div id="app" class="hidden">
-  <header id="hud">
-    <div class="hud-row">
-      <div class="stat"><span class="k">시간</span><b id="statTime">0:00</b></div>
-      <div class="stat"><span class="k">영토</span><b id="statLand">0/28</b></div>
-      <div class="stat"><span class="k">병력</span><b id="statTroops">0</b></div>
-      <div class="stat"><span class="k">생산</span><b id="statProd">0/s</b></div>
-      <button id="btnSpeed" class="icon-btn speed-btn" type="button" aria-label="게임 속도">×1</button>
-      <button id="btnMenu" class="icon-btn" type="button" aria-label="메뉴">⋯</button>
-    </div>
-    <div id="legend"></div>
-    <div id="delegateBar" class="delegate-bar hidden">
-      <span>🤖 AI가 대신 싸우는 중 · 보고만 있어도 돼요</span>
-      <button id="btnTakeBack" type="button">조종 가져오기</button>
-    </div>
-  </header>
-
-  <main id="mapWrap">
-    <canvas id="map"></canvas>
-    <div id="liveBanner" role="status" aria-live="polite"></div>
-    <div id="toast" role="status" aria-live="polite"></div>
-    <div id="specChip" class="spec-chip hidden">탈락 · 관전 중</div>
-  </main>
-
-  <footer id="bar">
-    <div id="spectateBar" class="spectate-bar hidden">
-      <div class="sp-title">🤖 AI 시뮬레이션 · <b id="spPick">참전할 나라를 탭하세요</b></div>
-      <div id="spNations" class="sp-nations"></div>
-      <button id="btnJump" class="primary" type="button" disabled>⚔️ 이 나라로 참전</button>
-    </div>
-
-    <div id="ratioRow">
-      <span class="ratio-k">보낼 병력</span>
-      <button class="ratio-btn" type="button" data-ratio="0.25">25%</button>
-      <button class="ratio-btn on" type="button" data-ratio="0.5">50%</button>
-      <button class="ratio-btn" type="button" data-ratio="0.75">75%</button>
-      <button class="ratio-btn" type="button" data-ratio="1">100%</button>
-    </div>
-    <div id="hint">내 영토를 탭하고 옆 영토를 탭하면 바로 출정</div>
-    <div id="skirmishRow" class="skirmish-row hidden">
-      <button id="btnSkirmish" class="skirmish-btn" type="button">
-        <span class="sk-ico" aria-hidden="true">⚔️</span>
-        <span class="sk-txt">
-          <b>칼들고 참전</b>
-          <small id="skirmishSub">전선을 찾는 중…</small>
-        </span>
-      </button>
-    </div>
-    <div id="actionRow">
-      <button id="btnDiplo" type="button">외교</button>
-      <button id="btnLog" type="button">전황</button>
-      <button id="btnMenu2" type="button">메뉴</button>
-    </div>
-  </footer>
-</div>
-
-<!-- ============================ 로비 ============================ -->
-<div id="lobby">
-  <div class="lobby-inner">
-    <div class="brand">
-      <div class="kicker">TERRITORY WAR · ONLINE</div>
-      <h1>영토 전쟁</h1>
-      <p>한 손으로, 친구와 실시간</p>
-    </div>
-
-    <section id="homePanel" class="lobby-card">
-      <div class="pick-label" for="nameInput">내 이름</div>
-      <input id="nameInput" class="text-input" type="text" maxlength="12" placeholder="닉네임 (최대 12자)" autocomplete="nickname" autofocus />
-      <button id="btnBigBattle" class="primary big-battle" type="button">
-        <span class="bb-ico" aria-hidden="true">⚔️</span>
-        <span class="bb-txt">
-          <b>대규모 3D 전장 · 바로 싸우기</b>
-          <small id="bbSub">적군 100 · 아군 100 · 1인칭 난전</small>
-        </span>
-      </button>
-      <div id="bigSetup" class="bb-set">
-        <div class="bb-team enemy">
-          <div class="bb-head"><span>⚔️ 적군</span><b id="bigEnemyVal">100</b></div>
-          <input id="bigEnemy" class="bb-range" type="range" min="20" max="1000" step="10" value="100" aria-label="적군 병사 수" />
-          <div id="bigEnemyChips" class="bb-chips">
-            <button type="button" data-count="100" class="on">100</button>
-            <button type="button" data-count="300">300</button>
-            <button type="button" data-count="500">500</button>
-            <button type="button" data-count="1000">1000</button>
+  <!-- 홈 설정 -->
+  <section id="home" class="screen">
+    <div class="home-bg"></div>
+    <div class="home-inner">
+      <header class="home-head">
+        <div class="brand">
+          <div class="brand-mark">⚔</div>
+          <div class="brand-text">
+            <h1>BATTLE ARENA <span>3D</span></h1>
+            <p>기사 · 마법사 · 병사가 벌이는 실시간 대규모 전장</p>
           </div>
         </div>
-        <div class="bb-team ally">
-          <div class="bb-head"><span>🛡️ 아군</span><b id="bigAllyVal">100</b></div>
-          <input id="bigAlly" class="bb-range" type="range" min="0" max="1000" step="10" value="100" aria-label="아군 병사 수" />
-          <div id="bigAllyChips" class="bb-chips">
-            <button type="button" data-count="0">0</button>
-            <button type="button" data-count="100" class="on">100</button>
-            <button type="button" data-count="300">300</button>
-            <button type="button" data-count="500">500</button>
-            <button type="button" data-count="1000">1000</button>
+        <div class="growth-badge" id="growthBadge">
+          <span class="gb-label">영구 성장</span>
+          <strong id="growthKills">0</strong>
+          <span class="gb-unit">킬</span>
+          <em id="growthPct">+0.000%</em>
+        </div>
+      </header>
+
+      <div class="home-scroll">
+        <div class="panel class-panel">
+          <div class="panel-title"><span>클래스</span><em>플레이어로 참전</em></div>
+          <div class="class-cards" id="classCards">
+            <button class="class-card is-on" data-cls="soldier">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">⚔️</div>
+              <div class="cc-body">
+                <div class="cc-name">일반 병사</div>
+                <div class="cc-tag">BALANCED</div>
+                <div class="cc-stats"><b data-stat="hp">100</b> HP · <b data-stat="dmg">12</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">1.0×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="knight">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🔨</div>
+              <div class="cc-body">
+                <div class="cc-name">중갑 기사</div>
+                <div class="cc-tag">HEAVY · AOE 5</div>
+                <div class="cc-stats"><b data-stat="hp">240</b> HP · <b data-stat="dmg">30</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">2.0×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="blademaster">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🌸</div>
+              <div class="cc-body">
+                <div class="cc-name">매화 검객</div>
+                <div class="cc-tag">SWIFT · DASH</div>
+                <div class="cc-stats"><b data-stat="hp">150</b> HP · <b data-stat="dmg">20</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">2.2×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="wizard">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🔮</div>
+              <div class="cc-body">
+                <div class="cc-name">대마법사</div>
+                <div class="cc-tag">GLASS CANNON</div>
+                <div class="cc-stats"><b data-stat="hp">78</b> HP · <b data-stat="dmg">58</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">2.4×</strong></div>
+              </div>
+            </button>
+          </div>
+          <p class="class-note" id="classNote">검과 방패, 민첩한 연속 베기. 모든 전장의 기준.</p>
+        </div>
+
+        <div class="panel army-panel">
+          <div class="panel-title"><span>병력 편성</span><em>아군 · 적군 각 최대 1,000명</em></div>
+          <div class="army-grid">
+            <div class="army-col ally">
+              <div class="army-col-head"><i>◆</i> 아군</div>
+              <div class="row" data-team="ally" data-unit="soldier">
+                <label><span class="ru-icon">⚔️</span> 병사</label>
+                <input type="range" min="0" max="10000" step="100" value="60" />
+                <output>60</output>
+              </div>
+              <div class="row" data-team="ally" data-unit="knight">
+                <label><span class="ru-icon">🔨</span> 기사</label>
+                <input type="range" min="0" max="20" step="1" value="2" />
+                <output>2</output>
+              </div>
+              <div class="row" data-team="ally" data-unit="wizard">
+                <label><span class="ru-icon">🔮</span> 마법사</label>
+                <input type="range" min="0" max="20" step="1" value="1" />
+                <output>1</output>
+              </div>
+              <div class="row" data-team="ally" data-unit="blademaster">
+                <label><span class="ru-icon">🌸</span> 검객</label>
+                <input type="range" min="0" max="20" step="1" value="1" />
+                <output>1</output>
+              </div>
+            </div>
+            <div class="army-col enemy">
+              <div class="army-col-head"><i>◆</i> 적군</div>
+              <div class="row" data-team="enemy" data-unit="soldier">
+                <label><span class="ru-icon">⚔️</span> 병사</label>
+                <input type="range" min="0" max="10000" step="100" value="60" />
+                <output>60</output>
+              </div>
+              <div class="row" data-team="enemy" data-unit="knight">
+                <label><span class="ru-icon">🔨</span> 기사</label>
+                <input type="range" min="0" max="20" step="1" value="2" />
+                <output>2</output>
+              </div>
+              <div class="row" data-team="enemy" data-unit="wizard">
+                <label><span class="ru-icon">🔮</span> 마법사</label>
+                <input type="range" min="0" max="20" step="1" value="1" />
+                <output>1</output>
+              </div>
+              <div class="row" data-team="enemy" data-unit="blademaster">
+                <label><span class="ru-icon">🌸</span> 검객</label>
+                <input type="range" min="0" max="20" step="1" value="1" />
+                <output>1</output>
+              </div>
+            </div>
+          </div>
+          <div class="presets" id="presets">
+            <button data-preset="duel">⚔️ 1:1 결투</button>
+            <button data-preset="clash">🛡️ 균형 60:60</button>
+            <button data-preset="epic">💀 400:400</button>
+            <button data-preset="horde">🌊 3,000:3,000</button>
+            <button data-preset="insane">🔥 10,000:10,000</button>
+            <button data-preset="magic">🔮 마법사 대결</button>
+            <button data-preset="blade">🌸 매화 검객 대결</button>
+            <button data-preset="underdog">🔥 1 vs 1000</button>
+          </div>
+          <div class="count-quick" id="countQuick">
+            <span>병사 수</span>
+            <button data-count="0">0</button>
+            <button data-count="100">100</button>
+            <button data-count="500">500</button>
+            <button data-count="1000">1,000</button>
+            <button data-count="3000">3,000</button>
+            <button data-count="10000">10,000</button>
           </div>
         </div>
       </div>
-      <div class="bb-gen">
-        <div class="bb-gen-head">
-          <span>🔨 큰 망치 중갑 장군</span>
-          <small>피통 500 · 한 방에 안 죽음 · 광역 강타</small>
+
+      <footer class="home-foot">
+        <button id="startBtn" class="start-btn">
+          <span class="sb-icon">⚔</span>
+          <span class="sb-text"><strong>전장으로</strong><em>BATTLE START</em></span>
+        </button>
+        <div class="foot-note">
+          <span>이동 조이스틱 · 시점 드래그 · 공격 버튼</span>
+          <span id="rosterTotal">총 126명 출전</span>
         </div>
-        <div class="bb-team enemy gen">
-          <div class="bb-head"><span>적 장군</span><b id="bigEnemyGenVal">0</b></div>
-          <input id="bigEnemyGen" class="bb-range" type="range" min="0" max="20" step="1" value="0" aria-label="적군 큰 망치 장군 수" />
+      </footer>
+    </div>
+  </section>
+
+  <!-- 전투 HUD -->
+  <section id="battle" class="screen">
+    <canvas id="gl"></canvas>
+    <div class="hud">
+      <div class="hud-top">
+        <div class="strength">
+          <div class="st-row ally"><span class="st-name">아군</span><div class="st-bar"><i id="allyBar"></i></div><b id="allyCount">0</b></div>
+          <div class="st-row enemy"><span class="st-name">적군</span><div class="st-bar"><i id="enemyBar"></i></div><b id="enemyCount">0</b></div>
         </div>
-        <div class="bb-team ally gen">
-          <div class="bb-head"><span>아군 장군</span><b id="bigAllyGenVal">0</b></div>
-          <input id="bigAllyGen" class="bb-range" type="range" min="0" max="20" step="1" value="0" aria-label="아군 큰 망치 장군 수" />
+        <div class="top-right">
+          <div class="kill-chip"><span>누적 처치</span><b id="killCount">0</b><em id="killPct">+0.000%</em></div>
+          <button id="camBtn" class="icon-btn" title="시점">👁️</button>
+          <button id="menuBtn" class="icon-btn" title="메뉴">☰</button>
         </div>
       </div>
-      <div class="bb-class">
-        <div class="bb-class-label">내가 싸울 방식</div>
-        <div class="bb-class-row" id="bigClassRow" role="group" aria-label="플레이어 클래스 선택">
-          <button type="button" class="bb-cls on" data-class="soldier" aria-pressed="true">
-            <span aria-hidden="true">⚔️</span>
-            <b>일반 병사</b>
-            <small>검 · 한 방에 베기</small>
+
+      <div class="reticle" id="reticle"><span></span><i></i></div>
+      <div class="aim-gauge" id="aimGauge"><i></i></div>
+
+      <div class="hud-bottom">
+        <div class="player-status">
+          <div class="ps-class" id="psClass">⚔️</div>
+          <div class="ps-bars">
+            <div class="ps-hp"><i id="hpBar"></i><span id="hpText">100 / 100</span></div>
+            <div class="ps-grow">영구 성장 <b id="psGrow">+0.000%</b></div>
+          </div>
+        </div>
+
+        <div class="joy" id="joy"><div class="joy-ring"></div><div class="joy-knob" id="joyKnob"></div></div>
+
+        <div class="actions" id="actions">
+          <div class="spell-wheel" id="spellWheel">
+            <button class="spell-btn" data-spell="fire">
+              <span class="sp-icon">🔥</span><span class="sp-name">화염구</span>
+              <span class="cd-mask"></span><span class="cd-num"></span>
+            </button>
+            <button class="spell-btn" data-spell="lightning">
+              <span class="sp-icon">⚡</span><span class="sp-name">번개</span>
+              <span class="cd-mask"></span><span class="cd-num"></span>
+            </button>
+            <button class="spell-btn" data-spell="ice">
+              <span class="sp-icon">❄️</span><span class="sp-name">빙결</span>
+              <span class="cd-mask"></span><span class="cd-num"></span>
+            </button>
+          </div>
+          <button class="skill-btn" id="skillBtn">
+            <span class="sk-icon">🌸</span>
+            <span class="sk-label">매화 일섬</span>
+            <span class="cd-mask"></span><span class="cd-num"></span>
           </button>
-          <button type="button" class="bb-cls" data-class="general" aria-pressed="false">
-            <span aria-hidden="true">🔨</span>
-            <b>큰 망치 장군</b>
-            <small>피통 500 · 광역 강타</small>
+          <button class="attack-btn" id="attackBtn">
+            <span class="ab-icon">⚔️</span>
+            <span class="ab-label">베기</span>
+            <span class="ab-ring"></span>
           </button>
         </div>
       </div>
-      <button id="btnCreate" class="primary" type="button">방 만들기</button>
-      <button id="btnSim" class="primary sim" type="button">🤖 AI 시뮬레이션 (관전 + 난입)</button>
-      <div class="or"><span>또는</span></div>
-      <div class="join-row">
-        <input id="joinCode" class="text-input code-input" type="text" maxlength="6" inputmode="text" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="방 코드" aria-label="방 코드" />
-        <button id="btnJoin" class="sbtn join-btn" type="button">참가</button>
-      </div>
-      <p id="homeNote" class="pick-note">친구가 만든 방의 코드를 입력하면 바로 참가할 수 있어요. 혼자라면 AI 시뮬레이션으로 구경하다가 아무 나라에나 난입해 보세요.</p>
-      <div class="lobby-feats">
-        <span>⚔ 실시간 2~4인</span><span>🤖 AI 난전 · 난입</span><span>🤝 외교 · 동맹</span><span>📱 한 손 조작</span>
-      </div>
-    </section>
 
-    <section id="roomPanel" class="lobby-card" hidden>
-      <div class="pick-label">방 코드</div>
-      <div class="room-code-row">
-        <div class="room-code" id="roomCode" role="button" tabindex="0" aria-label="방 코드 복사">----</div>
-        <button id="btnCopyCode" class="sbtn copy-btn" type="button">복사</button>
-        <button id="btnShare" class="sbtn copy-btn" type="button">공유</button>
+      <div class="dead-veil" id="deadVeil"><div>쓰러졌다…</div><span id="respawnT">3</span></div>
+    </div>
+
+    <!-- 관전/일시정지 메뉴 -->
+    <div class="sheet" id="menuSheet">
+      <div class="sheet-card">
+        <h3>전장 메뉴</h3>
+        <button data-act="resume">계속 싸우기</button>
+        <button data-act="restart">다시 싸우기</button>
+        <button data-act="home">병력 설정으로</button>
+        <p class="sheet-note">성장은 전투가 끝나거나 처치할 때마다 자동 저장됩니다.</p>
       </div>
-      <div id="roomPlayers" class="room-players"></div>
-      <label class="switch-row" id="aiRow" for="aiToggle">
-        <span><b>빈 자리 AI로 채우기</b><small>4개국 중 남는 나라는 AI가 맡아요</small></span>
-        <input type="checkbox" id="aiToggle" checked />
-        <i class="switch" aria-hidden="true"></i>
-      </label>
-      <div class="speed-row" id="roomSpeedRow">
-        <span class="pick-label">게임 속도</span>
-        <div class="seg-row" id="roomSpeed">
-          <button class="seg-btn on" type="button" data-speed="1">×1</button>
-          <button class="seg-btn" type="button" data-speed="2">×2</button>
-          <button class="seg-btn" type="button" data-speed="4">×4</button>
+    </div>
+
+    <!-- 결과 -->
+    <div class="result" id="result">
+      <div class="result-card">
+        <div class="res-emblem" id="resEmblem">⚔️</div>
+        <h2 id="resTitle">승리</h2>
+        <p id="resSub">적군을 전멸시켰다</p>
+        <div class="res-stats">
+          <div><span>처치</span><b id="resKills">0</b></div>
+          <div><span>아군 생존</span><b id="resAlive">0</b></div>
+          <div><span>영구 성장</span><b id="resGrow">+0.000%</b></div>
+        </div>
+        <div class="res-btns">
+          <button id="againBtn" class="primary">다시 싸우기</button>
+          <button id="toHomeBtn">병력 설정</button>
         </div>
       </div>
-      <p id="roomNote" class="pick-note"></p>
-      <button id="btnStart" class="primary" type="button">게임 시작</button>
-      <p id="waitHost" class="wait-note" hidden>방장이 시작하기를 기다리는 중</p>
-      <button id="btnLeaveLobby" class="ghost" type="button">방 나가기</button>
-    </section>
-
-    <p class="lobby-foot">친구에게 방 코드를 보내면 같은 판에서 실시간으로 겨룰 수 있어요 · 최대 4명</p>
-  </div>
-</div>
-
-<div id="netBar" role="status" aria-live="assertive">
-  <i class="spin" aria-hidden="true"></i><span id="netText">연결이 끊겼어요 · 다시 연결 중</span>
-</div>
-
-<div id="boot" role="status" aria-live="polite">
-  <div class="boot-card">
-    <div class="boot-spin" aria-hidden="true"></div>
-    <p id="bootText">연결 중…</p>
-  </div>
-</div>
-
-<!-- ============================ 규칙 ============================ -->
-<div id="rulesModal" class="modal" aria-hidden="true">
-  <div class="card">
-    <h2>영토 전쟁 ONLINE · 실시간 규칙</h2>
-    <ul class="rules">
-      <li><b>목표</b> — 지도 위 28개 영토를 모두 차지하거나 마지막까지 살아남으면 승리합니다. 영토를 모두 잃으면 탈락(관전)합니다.</li>
-      <li><b>실시간 · 턴 없음</b> — 차례를 기다리지 않습니다. 내 영토는 저마다 병력을 계속 생산하고(수도는 1.75배 빠름), 전투도 초 단위로 흘러갑니다.</li>
-      <li><b>2탭 출정</b> — 내 영토를 탭해 고르고, 옆 영토를 탭하면 바로 출정합니다. 아래 <b>보낼 병력 25/50/75/100%</b>로 한 번에 보내는 양을 정합니다(100%는 1개 남김).</li>
-      <li><b>행군</b> — 보낸 병력은 <b>1.2초</b> 동안 지도 위를 이동한 뒤 도착해서 합류하거나 싸웁니다. 행군 중인 부대는 지도에 화살표와 숫자로 보입니다.</li>
-      <li><b>전투</b> — 공격력이 수비력보다 크면 영토를 차지하고 남은 병력이 주둔합니다. 수비는 1.15배(수도 1.3배) 유리합니다. 병력 상한은 영토마다 9~14개이고, 상한 근처에서는 생산이 느려집니다.</li>
-      <li><b>병력 상한과 비축</b> — 생산은 상한에서 멈추지만, 뒤쪽 영토에서 보내면 상한을 넘겨 쌓을 수 있습니다. 결정적인 돌파는 여러 영토의 병력을 한곳에 모아 만드세요.</li>
-      <li class="diplo"><b>관계 · 신뢰도</b> — 나라마다 쌍방 <b>관계(-100~+100)</b>와 <b>신뢰도(0~100)</b>가 있습니다. 지원·조공·할양은 관계를 올리고, 공격과 조약 파기는 관계를 떨어뜨립니다. 조약을 배신하면 신뢰도가 크게 떨어집니다.</li>
-      <li class="diplo"><b>외교는 초 단위</b> — 불가침 <b>45초</b>, 정식 동맹 <b>60초</b>, 조공 조약 <b>45초</b>(12초마다 지급), 공동 참전 <b>30초</b>입니다. 남은 시간은 외교 창과 조약 표시에 실시간으로 줄어듭니다.</li>
-      <li class="diplo"><b>동맹 · 공동 참전</b> — 불가침을 맺은 뒤 동맹으로 격상할 수 있습니다. 동맹은 같은 적과 싸울 때 공격력 <b>+12%</b>를 주고, 공동 참전으로 특정 적을 함께 공격하게 합니다.</li>
-      <li class="diplo"><b>병력 지원 · 조공 · 할양</b> — 병력 6 이상인 내 영토에서 3개를 보내 관계를 크게 올리고 동맹을 맺습니다. 조공은 12초마다 1~2개를 주고받는 대신 휴전합니다. 영토 할양은 관계 +25와 불가침을 얻습니다.</li>
-      <li class="net"><b>AI 대응</b> — AI는 1.8~3.2초마다 판단합니다. 약한 곳을 노려 출정하고, 후방 병력을 전선으로 모으며, 들어오는 행군을 보고 수비 병력을 보냅니다. 35% 이상을 차지한 1위 국가가 나오면 다른 나라들과 연합해 견제합니다.</li>
-      <li class="net"><b>🤖 AI 시뮬레이션 · 난입</b> — 시작 화면에서 <b>AI 시뮬레이션</b>을 누르면 4개국 AI가 실시간으로 싸웁니다. 관전하다가 마음에 드는 나라를 골라 <b>⚔️ 이 나라로 참전</b>하면 그 나라를 직접 조종합니다. 속도는 <b>×1 · ×2 · ×4</b>.</li>
-      <li class="net"><b>⚔️ 칼들고 참전 (직접 전투)</b> — 지도 아래 <b>칼들고 참전</b>을 누르면 그 전선에 병사로 뛰어듭니다. 왼쪽 화면을 드래그해 움직이고, 오른쪽 화면은 드래그해 시점만 돌립니다. 공격은 오직 <b>⚔️ 베기</b> 버튼으로 베고(적은 한 방에), <b>💨 돌진</b>은 앞으로 파고들며 베고, <b>🛡️ 막기</b>는 검을 옆으로 가로질러 막으며 직전에 누르면 패링합니다. 적 병사 3명을 베면 그 영토 적 병력이 1 줄고, 6명을 베면 우리 전선 병력이 1 늘며 적 수비가 22초 동안 약해집니다. 쓰러져도 2초 뒤 부활하고, <b>🗺️ 지도로 복귀</b>로 언제든 돌아옵니다.</li>
-      <li class="net"><b>🤖 AI 위임</b> — 혼자 하는 판(시뮬레이션 포함)에서는 언제든 <b>AI 위임</b>으로 내 나라를 AI에게 맡기고 구경할 수 있고, <b>조종 가져오기</b>로 바로 돌아올 수 있습니다.</li>
-      <li class="net"><b>자리 유지</b> — 휴대폰이 앱을 전환해 연결이 끊겨도 페이지를 다시 열면 원래 자리로 돌아옵니다. 25초 넘게 끊기면 AI가 잠시 대신 조종합니다.</li>
-    </ul>
-    <button id="btnCloseRules" class="primary" type="button">알겠어요</button>
-  </div>
-</div>
-
-<!-- ============================ 외교 ============================ -->
-<div id="diploModal" class="modal" aria-hidden="true">
-  <div class="card wide">
-    <div class="sub-head">
-      <h2>외교</h2>
-      <span id="diploSub"></span>
     </div>
-    <div id="diploList"></div>
-    <div class="diplo-feed-head">최근 외교 소식</div>
-    <div id="diploFeed" class="diplo-feed"></div>
-    <button id="btnCloseDiplo" class="primary" type="button">닫기</button>
-  </div>
+
+    <div class="hit-vignette" id="hitVignette"></div>
+  </section>
 </div>
-
-<!-- ============================ 조공 ============================ -->
-<div id="tributeModal" class="modal" aria-hidden="true">
-  <div class="card">
-    <div class="prop-head" id="tributeTo">상대</div>
-    <div class="prop-title">조공 협정</div>
-    <div class="seg-row" id="tributeModeRow">
-      <button class="seg-btn on" type="button" data-mode="demand">조공 요구</button>
-      <button class="seg-btn" type="button" data-mode="offer">조공 제안</button>
-    </div>
-    <p class="pick-note" id="tributeNote">상대가 12초마다 1개를 나에게 바칩니다. 수락하면 45초간 서로 공격할 수 없습니다.</p>
-    <div class="pick-label">12초마다</div>
-    <div class="pick-row" id="tributeAmountRow">
-      <button class="count-btn on" type="button" data-amount="1">1개<small>가볍게</small></button>
-      <button class="count-btn" type="button" data-amount="2">2개<small>강하게</small></button>
-    </div>
-    <div class="prop-row">
-      <button id="tributeSend" class="primary" type="button">보내기</button>
-      <button id="tributeClose" class="ghost" type="button">취소</button>
-    </div>
-  </div>
-</div>
-
-<!-- ============================ 영토 할양 ============================ -->
-<div id="cedeModal" class="modal" aria-hidden="true">
-  <div class="card">
-    <div class="prop-head" id="cedeTo">상대</div>
-    <div class="prop-title">영토 할양</div>
-    <p class="pick-note">내 영토 하나를 넘기면 관계가 크게 좋아지고(+25), 원하면 불가침(45초)까지 얻습니다.</p>
-    <div class="pick-label">넘길 영토</div>
-    <div id="cedeList" class="cede-list"></div>
-    <label class="switch-row compact" for="cedeTruce">
-      <span><b>불가침 45초 포함</b><small>할양과 함께 휴전을 맺습니다</small></span>
-      <input type="checkbox" id="cedeTruce" checked />
-      <i class="switch" aria-hidden="true"></i>
-    </label>
-    <div class="prop-row">
-      <button id="cedeSend" class="primary" type="button">할양 제안</button>
-      <button id="cedeClose" class="ghost" type="button">취소</button>
-    </div>
-  </div>
-</div>
-
-<!-- ============================ 공동 참전 ============================ -->
-<div id="callModal" class="modal" aria-hidden="true">
-  <div class="card">
-    <div class="prop-head" id="callTo">동맹</div>
-    <div class="prop-title">공동 참전 요청</div>
-    <p class="pick-note">동맹이 함께 공격할 적을 고르세요. 동맹은 곧바로 그 나라를 우선 공격합니다.</p>
-    <div id="callList" class="cede-list"></div>
-    <div class="prop-row">
-      <button id="callSend" class="primary" type="button">요청 보내기</button>
-      <button id="callClose" class="ghost" type="button">취소</button>
-    </div>
-  </div>
-</div>
-
-<!-- ============================ 조약 제안 ============================ -->
-<div id="propModal" class="modal" aria-hidden="true">
-  <div class="card">
-    <div class="prop-head" id="propFrom">제안</div>
-    <div class="prop-title">불가침 조약 제안</div>
-    <p class="prop-body" id="propBody"></p>
-    <div class="prop-row">
-      <button id="propAccept" class="primary" type="button">수락</button>
-      <button id="propDecline" class="ghost" type="button">거절</button>
-    </div>
-  </div>
-</div>
-
-<!-- ============================ 메뉴 ============================ -->
-<div id="menuModal" class="modal" aria-hidden="true">
-  <div class="card">
-    <h2>메뉴</h2>
-    <div class="menu-room">
-      <span>방 코드</span>
-      <b id="menuCode">----</b>
-      <button id="btnMenuCopy" class="sbtn" type="button">복사</button>
-    </div>
-    <div id="menuPlayers" class="room-players"></div>
-    <div class="speed-row" id="menuSpeedRow">
-      <span class="pick-label">게임 속도</span>
-      <div class="seg-row" id="menuSpeed">
-        <button class="seg-btn" type="button" data-speed="1">×1</button>
-        <button class="seg-btn" type="button" data-speed="2">×2</button>
-        <button class="seg-btn" type="button" data-speed="4">×4</button>
-      </div>
-    </div>
-    <button id="btnDelegate" class="ghost" type="button">🤖 AI 위임 (자동 전투)</button>
-    <button id="btnSpectateBack" class="ghost" type="button">👁 관전으로 돌아가기</button>
-    <button id="btnRules" class="ghost" type="button">게임 규칙</button>
-    <button id="btnLeaveGame" class="ghost danger" type="button">방 나가기</button>
-    <button id="btnCloseMenu" class="primary" type="button">닫기</button>
-  </div>
-</div>
-
-<!-- ============================ 전황 ============================ -->
-<div id="logModal" class="modal" aria-hidden="true">
-  <div class="card">
-    <div class="sub-head">
-      <h2>전황</h2>
-      <span id="logSub"></span>
-    </div>
-    <div id="logList"></div>
-    <button id="btnCloseLog" class="primary" type="button">닫기</button>
-  </div>
-</div>
-
-<!-- ============================ 탈락 ============================ -->
-<div id="elimModal" class="modal" aria-hidden="true">
-  <div class="card result">
-    <div class="result-title lose">탈락…</div>
-    <p class="result-sub" id="elimSub">모든 영토를 잃었습니다.</p>
-    <p class="spec-note" id="elimNote">관전 모드로 남아 게임이 끝나는 모습을 볼 수 있어요.</p>
-    <button id="btnSpectate" class="primary" type="button">관전하기</button>
-    <button id="btnElimLeave" class="ghost danger" type="button">방 나가기</button>
-  </div>
-</div>
-
-<!-- ============================ 결과 ============================ -->
-<div id="resultOverlay" class="modal" aria-hidden="true">
-  <div class="card result">
-    <div id="resultTitle" class="result-title win">승리!</div>
-    <p id="resultSub" class="result-sub"></p>
-    <p id="resultLine" class="result-line"></p>
-    <div class="result-stats" id="resultStats">
-      <div><b id="rLand">0</b><span>영토</span></div>
-      <div><b id="rTroops">0</b><span>병력</span></div>
-      <div><b id="rTime">0:00</b><span>전투 시간</span></div>
-    </div>
-    <button id="btnRematch" class="primary" type="button">같은 멤버로 다시</button>
-    <p id="rematchNote" class="spec-note" hidden>방장이 다시 시작할 수 있어요.</p>
-    <button id="btnResultLeave" class="ghost danger" type="button">방 나가기</button>
-  </div>
-</div>
-
-<noscript>
-  <p style="padding:24px;color:#e8eefc">이 게임은 자바스크립트가 필요합니다.</p>
-</noscript>
-
-<!-- ==================== 직접 참전 · 칼질 액션 아레나 ==================== -->
-<div id="arena" class="arena hidden" aria-hidden="true" role="application" aria-label="직접 참전 · 칼싸움 아레나">
-  <canvas id="arenaCanvas3d" aria-hidden="true"></canvas>
-  <canvas id="arenaCanvas"></canvas>
-
-  <div class="ar-top">
-    <div class="ar-hp">
-      <div class="ar-hpbar"><i id="arHpFill"></i></div>
-      <span id="arHpText">100</span>
-    </div>
-    <div class="ar-score">
-      <b id="arKills">0</b><small>베기</small>
-      <span id="arCombo" class="ar-combo"></span>
-    </div>
-    <div class="ar-enemy"><span id="arEnemyLeft">적 0</span></div>
-  </div>
-
-  <div class="ar-title">
-    <b id="arBanner">전선</b>
-    <small id="arTargetInfo"></small>
-  </div>
-
-  <button id="arBack" class="ar-back" type="button">🗺️ 지도로 복귀</button>
-  <div class="ar-actions">
-    <button id="arView" class="ar-view" type="button" aria-label="전장을 위에서 관전하기" aria-pressed="false">🎬 관전</button>
-    <button id="arRestart" class="ar-restart hidden" type="button">🔁 다시 싸우기</button>
-  </div>
-
-  <div id="arHint" class="ar-hint">왼쪽 드래그 이동 · 오른쪽 드래그 시점 · ⚔️ 베기로 공격</div>
-
-  <div id="arJoy" class="ar-joy hidden" aria-hidden="true"><i id="arJoyKnob"></i></div>
-
-  <div class="ar-btns">
-    <button id="arSlash" class="ar-btn slash" type="button" aria-label="칼 휘두르기"><span>⚔️</span><small>베기</small></button>
-    <button id="arDash" class="ar-btn dash" type="button" aria-label="돌진 베기"><span>💨</span><small>돌진</small></button>
-    <button id="arGuard" class="ar-btn guard" type="button" aria-label="막기"><span>🛡️</span><small>막기</small></button>
-  </div>
-
-  <div id="arDown" class="ar-down hidden">쓰러졌다… <b id="arDownSec">2</b>초 뒤 부활</div>
-  <div id="arFlash" class="ar-flash"></div>
-
-  <div id="arResult" class="ar-result hidden">
-    <b id="arResultTitle">지도로 복귀</b>
-    <small id="arResultLine"></small>
-  </div>
-</div>
-
-<script type="module" src="/arena3d.js"></script>
-<script src="/arena.js"></script>
-<script src="/app.js"></script>
+<script type="module" src="/src/main.js"></script>
 </body>
 </html>

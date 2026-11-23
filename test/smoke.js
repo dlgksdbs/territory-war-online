@@ -475,7 +475,7 @@ async function networkTests() {
   const health = await httpGet(port, '/healthz');
   ok('GET /healthz 200', health.status === 200 && JSON.parse(health.body).ok === true, health.body);
   const home = await httpGet(port, '/');
-  ok('GET / 200 · 게임 페이지', home.status === 200 && home.body.indexOf('영토 전쟁') >= 0);
+  ok('GET / 200 · 배틀 아레나', home.status === 200 && home.body.indexOf('BATTLE ARENA') >= 0);
 
   const a = await connect(port);
   const b = await connect(port);
@@ -598,26 +598,21 @@ async function networkTests() {
   console.log('WebSocket · 직접 참전');
   const arenaJs = await httpGet(port, '/arena.js');
   ok('GET /arena.js 200 · 아레나 모듈', arenaJs.status === 200 && arenaJs.body.indexOf('TWArena') >= 0);
-  ok('게임 페이지에 참전 버튼 · 아레나 캔버스', home.body.indexOf('칼들고 참전') >= 0 &&
-    home.body.indexOf('arenaCanvas') >= 0 && home.body.indexOf('/arena.js') >= 0);
-
-  // ---- 아레나 HUD·판정 규칙 (정적 검증: 버튼 겹침 · 적 전멸 종료 · 공정 스펙 · 증원) ----
-  console.log('아레나 HUD · 전투 판정 규칙');
-  const css = await httpGet(port, '/style.css');
-  const iv = home.body.indexOf('class="ar-actions"');
-  const ivw = home.body.indexOf('id="arView"');
-  const ivr = home.body.indexOf('id="arRestart"');
-  ok('🎬 관전 · 🔁 다시 싸우기 버튼이 한 칸(.ar-actions)에 함께 들어 있다',
-    iv >= 0 && ivw > iv && ivr > ivw, [iv, ivw, ivr]);
-  const actionsCss = (css.body.match(/\.ar-actions\s*\{[^}]*\}/) || [''])[0];
-  const viewCss = (css.body.match(/\.ar-view\s*\{[^}]*\}/) || [''])[0];
-  const againCss = (css.body.match(/\.ar-restart\s*\{[^}]*\}/) || [''])[0];
-  ok('.ar-actions 는 세로 flex — 두 버튼이 같은 자리에 겹치지 않는다',
-    /display:\s*flex/.test(actionsCss) && /flex-direction:\s*column/.test(actionsCss) && /gap:/.test(actionsCss),
-    actionsCss.replace(/\s+/g, ' ').slice(0, 120));
-  ok('관전·다시 싸우기 버튼은 각자 absolute 좌표(top/right)를 갖지 않는다 (겹침 원인 제거)',
-    /position:\s*static/.test(viewCss) && /position:\s*static/.test(againCss) &&
-    !/\btop:/.test(viewCss) && !/\btop:/.test(againCss), [viewCss.slice(0, 60), againCss.slice(0, 60)]);
+  // ---- 루트(/)는 1차 배틀 아레나를 서빙한다 (2026-11-23 교체) ----
+  ok('루트(/)가 1차 배틀 아레나 페이지', home.body.indexOf('BATTLE ARENA') >= 0 &&
+    home.body.indexOf('/src/main.js') >= 0 && home.body.indexOf('/src/style.css') >= 0);
+  ok('배틀 아레나 importmap · 로컬 three 번들 사용', home.body.indexOf('importmap') >= 0 &&
+    home.body.indexOf('/vendor/three.module.min.js') >= 0);
+  const baMain = await httpGet(port, '/src/main.js');
+  ok('GET /src/main.js 200 · 배틀 아레나 엔트리 모듈', baMain.status === 200 &&
+    baMain.body.indexOf("'./battle.js'") >= 0 && baMain.body.indexOf('buildWorld') >= 0);
+  const baBattle = await httpGet(port, '/src/battle.js');
+  ok('GET /src/battle.js 200 · 전투 엔진 모듈', baBattle.status === 200 && baBattle.body.indexOf('CLASSES') >= 0);
+  const baCss = await httpGet(port, '/src/style.css');
+  ok('GET /src/style.css 200 · 배틀 아레나 스타일', baCss.status === 200 && baCss.body.indexOf('#home') >= 0);
+  const classic = await httpGet(port, '/classic/');
+  ok('GET /classic/ 200 · 기존 영토 전쟁 페이지 보존', classic.status === 200 &&
+    classic.body.indexOf('영토 전쟁') >= 0);
   ok('적 전멸 판정 = "약속한 적을 모두 내보냄 + 살아 있는 적 0" (죽은 병사 잔여물에 막히지 않는다)',
     /function enemiesCleared\(\)/.test(arenaJs.body) && /aliveEnemies\(\) === 0/.test(arenaJs.body) &&
     arenaJs.body.indexOf('S.enemies.length === 0') < 0, arenaJs.body.indexOf('S.enemies.length === 0'));
@@ -639,12 +634,10 @@ async function networkTests() {
     /var GEN_HP = 500;/.test(arenaJs.body) && /var GEN_R = \+\(UNIT_R \* 1\.45\)/.test(arenaJs.body) &&
     /S\.enemyGenSpawned >= S\.enemyGenTotal/.test(arenaJs.body) &&
     /function generalSpec\(\)/.test(arenaJs.body) && /function spawnGenerals\(\)/.test(arenaJs.body));
-  ok('홈 대규모 전장에 장군 수(0~20) 조절 · ⚔️ 병사/🔨 장군 클래스 선택 UI',
-    /id="bigEnemyGen"/.test(home.body) && /id="bigAllyGen"/.test(home.body) &&
-    /id="bigClassRow"/.test(home.body) && /data-class="general"/.test(home.body) &&
-    /max="20"/.test(home.body));
-  ok('장군으로 참전하면 1인칭 워해머 · 막기/돌진 버튼 숨김',
-    /id="arSlash"/.test(home.body) && /\.arena-general \.ar-btn\.guard/.test(css.body) &&
+  ok('배틀 아레나 홈에 클래스 선택 카드 4종', /data-cls="soldier"/.test(home.body) &&
+    /data-cls="knight"/.test(home.body) && /data-cls="wizard"/.test(home.body) &&
+    /data-cls="blademaster"/.test(home.body));
+  ok('기존 아레나 모듈의 장군 워해머 코드 유지',
     /HAMMER_ANIM/.test(arenaJs.body) && /function doSlam\(\)/.test(arenaJs.body));
 
   const d = await connect(port);

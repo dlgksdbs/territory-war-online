@@ -8,7 +8,7 @@
    · 플레이어: 클래스별 AI와 동일 기본 스펙 + 처치당 +0.001% 영구 성장
    ============================================================================= */
 import { CLASSES, SPELLS, SPELL_ORDER, SKILL, CORPSE_TIME, KNEEL_TIME, FALL_TIME, GROWTH_PER_KILL, rosterOf, impactAt } from './config.js';
-import { clamp, angDiff, angLerp, TAU, mulberry32, smoothstep } from './util.js';
+import { clamp, angDiff, angLerp, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 import { makeUnitRig } from './rig.js';
 
 const DEATH_DOWN = 0.20 + KNEEL_TIME + FALL_TIME; // 눕기까지 걸리는 시간
@@ -75,7 +75,7 @@ export class Battle {
     this.player = null;
     this.playerDeadT = 0;
     this.hitStop = 0;
-    this.spawnPoint = { x: 0, z: -21.5 };
+    this.spawnPoint = { x: 0, z: -12 };
     this.total = 0;
     this.arenaR = 46;
     this.stats = { allyKills: 0, enemyKills: 0, playerDeaths: 0, startAt: 0 };
@@ -85,6 +85,8 @@ export class Battle {
     this.spells = [];   // 비행 중인 화염구
     this.spawned = false;
     this.autoPlayer = !!(opts && opts.autoPlayer);
+    this.playerSafe = false;     // 관전 중 — 플레이어 무적
+    this.playerInvuln = 0;       // 참전 직후 잠깐 무적
     this._acquireT = new Map();
     this._separateT = 0;
     this._idleT = 0;
@@ -136,22 +138,22 @@ export class Battle {
       for (let i = 0; i < sN; i++) {
         const row = Math.floor(i / perRow), col = i % perRow;
         const x = (col - (perRow - 1) / 2) * 1.05 + (row % 2) * 0.5 + j(i, 1) * 0.55;
-        const z = 26 + row * 0.92 + j(i, 2) * 0.7;
+        const z = 16 + row * 0.92 + j(i, 2) * 0.7;
         out.push({ cls: 'soldier', x, z, k: i });
       }
       for (let i = 0; i < c.knight; i++) {
         const x = (i - (c.knight - 1) / 2) * 2.6 + j(i, 3) * 1.2;
-        const z = 24 + (i % 3) * 2.4 + j(i, 4) * 1.6;
+        const z = 14 + (i % 3) * 2.4 + j(i, 4) * 1.6;
         out.push({ cls: 'knight', x, z, k: i });
       }
       for (let i = 0; i < (c.blademaster || 0); i++) {
         const x = (i - (c.blademaster - 1) / 2) * 2.8 + j(i, 7) * 1.3;
-        const z = 29 + (i % 4) * 2.2 + j(i, 8) * 1.6;
+        const z = 19 + (i % 4) * 2.2 + j(i, 8) * 1.6;
         out.push({ cls: 'blademaster', x, z, k: i });
       }
       for (let i = 0; i < c.wizard; i++) {
         const x = (i - (c.wizard - 1) / 2) * 3.0 + j(i, 5) * 1.4;
-        const z = 33 + (i % 4) * 2.4 + j(i, 6) * 1.8;
+        const z = 23 + (i % 4) * 2.4 + j(i, 6) * 1.8;
         out.push({ cls: 'wizard', x, z, k: i });
       }
       return out;
@@ -164,8 +166,34 @@ export class Battle {
 
   start() {
     const r = this.roster;
-    const form = this.buildFormation(r.ally);
-    this.total = form.length * 2;
+    /* 편성 병력 = 전장 상한 + 예비. 예비는 앞 병사가 쓰러져 자리가 나면 진영 쪽에서 순차 소환된다. */
+    const soldierCap = (n) => Math.min(n, clamp(Math.ceil(n * 0.6), Math.min(n, 20), 160));
+    const field = {
+      ally: { ...r.ally },
+      enemy: { ...r.enemy }
+    };
+    this.remain = { ally: { soldier: 0, knight: 0, wizard: 0, blademaster: 0 }, enemy: { soldier: 0, knight: 0, wizard: 0, blademaster: 0 } };
+    for (const t of ['ally', 'enemy']) {
+      const n = soldierCap(field[t].soldier);
+      this.remain[t].soldier = Math.max(0, field[t].soldier - n);
+      // 특수 유닛(기사·마법사·검객)은 최대 20명 — 전원 전장에 먼저 선다
+      field[t].soldier = n;
+    }
+    this.fieldCapTotal = {
+      ally: field.ally.soldier + field.ally.knight + field.ally.wizard + field.ally.blademaster,
+      enemy: field.enemy.soldier + field.enemy.knight + field.enemy.wizard + field.enemy.blademaster
+    };
+    this.reinT = { ally: 0, enemy: 0 };
+    this.totalRoster = {
+      ally: r.ally.soldier + r.ally.knight + r.ally.wizard + r.ally.blademaster,
+      enemy: r.enemy.soldier + r.enemy.knight + r.enemy.wizard + r.enemy.blademaster
+    };
+
+    // 진영별 대형을 따로 만든다 — 적군 인원은 적군 설정(로스터)에서만 나온다
+    const formA = this.buildFormation(field.ally);
+    const formE = this.buildFormation(field.enemy);
+    const form = formA;
+    this.total = formA.length + formE.length;
     this.arenaR = clamp(42 + Math.sqrt(Math.max(0, this.total)) * 1.05, 46, 100);
     this.crowd = this.total > 900;
     this.grid = new Grid(this.crowd ? 4.2 : 3.6);
@@ -184,8 +212,8 @@ export class Battle {
       const u = this.newUnit(f.cls, 'ally', f.x, -f.z, false, seed);
       u.mirror = i;
     }
-    for (let i = 0; i < form.length; i++) {
-      const f = form[i];
+    for (let i = 0; i < formE.length; i++) {
+      const f = formE[i];
       const seed = this.unitSeed(i);
       const u = this.newUnit(f.cls, 'enemy', f.x, f.z, false, seed);
       u.mirror = i;
@@ -210,7 +238,79 @@ export class Battle {
     this.stats.startAt = 0;
     this.rosterTotal = form.length;
     this.buildOrder();
+
+    /* 승패 판정 기준값 — 스폰이 끝난 이 시점의 실제 인원을 기록한다.
+       적군이 0명인 편성은 '연습 모드'로 두고 승리로 끝내지 않는다. */
+    this.initialAlly = this.countAlive('ally');
+    this.initialEnemy = this.countAlive('enemy');
+    this.initialTotalAlly = this.totalRoster.ally === 0 ? 1 : this.totalRoster.ally;   // 플레이어가 한 자리를 차지
+    this.initialTotalEnemy = this.totalRoster.enemy;
+    this.practice = this.totalRoster.enemy === 0;
+    this.endGraceT = 0.75;   // 스폰 직후 첫 프레임에 판정하지 않는다
     return this;
+  }
+
+  /* 사라진 유닛 정리 */
+  prune() {
+    if (!this.units.some((u) => u.removed)) return;
+    this.units = this.units.filter((u) => !u.removed);
+    this.byId = new Map(this.units.map((u) => [u.id, u]));
+    this.buildOrder();
+  }
+
+  /* 남은 예비 병력 (아직 전장에 나오지 않은 병사) */
+  reserveTotal(team) {
+    const r = this.remain && this.remain[team];
+    if (!r) return 0;
+    return r.soldier + r.knight + r.wizard + r.blademaster;
+  }
+
+  /* 전장에 남아 있는 병사 수 (살아 있거나 시체로 남아 있는 것 모두 = 자리 차지) */
+  fieldCount(team) {
+    let n = 0;
+    for (const u of this.units) if (u.team === team && !u.removed) n++;
+    return n;
+  }
+
+  /* 빈자리만큼 진영 쪽에서 다음 병사를 순차 소환 */
+  reinforce(dt) {
+    if (!this.remain) return;
+    for (const team of ['ally', 'enemy']) {
+      const rem = this.remain[team];
+      if (!rem || this.reserveTotal(team) <= 0) continue;
+      this.reinT[team] = (this.reinT[team] || 0) + dt;
+      const interval = this.crowd ? 0.32 : 0.6;
+      if (this.reinT[team] < interval) continue;
+      this.reinT[team] = 0;
+      const cap = this.fieldCapTotal[team] || 0;
+      let onField = this.fieldCount(team);
+      if (team === 'ally' && this.player && !this.player.removed) onField -= 1;  // 플레이어는 예비와 무관
+      let slots = cap - onField;
+      if (slots <= 0) continue;
+      let n = Math.min(slots, this.crowd ? 4 : 2);
+      const born = [];
+      while (n > 0) {
+        let cls = null;
+        if (rem.soldier > 0) cls = 'soldier';
+        else if (rem.blademaster > 0) cls = 'blademaster';
+        else if (rem.knight > 0) cls = 'knight';
+        else if (rem.wizard > 0) cls = 'wizard';
+        if (!cls) break;
+        rem[cls]--; n--;
+        const zSign = team === 'ally' ? -1 : 1;
+        const span = 8 + Math.sqrt(cap) * 1.7;
+        const x = (this.rng() - 0.5) * span;
+        const z = zSign * (23 + this.rng() * 9);
+        const u = this.newUnit(cls, team, x, z, false);
+        u.yaw = team === 'ally' ? 0 : Math.PI;
+        u.mirror = 0;
+        born.push(u);
+      }
+      if (born.length) {
+        for (const u of born) this.emit({ type: 'spawn', unit: u, cls: u.cls });
+        this.buildOrder();
+      }
+    }
   }
 
   /* 양 팀을 번갈아 처리하는 순서 — 한쪽이 먼저 때리는 편향을 없앤다 */
@@ -250,7 +350,7 @@ export class Battle {
     p.damage = CLASSES[p.cls].damage * mult;
     p.x = this.spawnPoint.x; p.z = this.spawnPoint.z; p.vx = p.vz = 0;
     p.yaw = 0; p.attackT = -1; p.cooldown = 0.4; p.staggerT = 0; p.freezeT = 0;
-    p.cd = { fire: 0, lightning: 0, ice: 0 };
+    p.cd = { fire: 0, lightning: 0, ice: 0, petal: 0 };
     p._tier = -1;
     this.emit({ type: 'respawn', unit: p });
   }
@@ -303,6 +403,8 @@ export class Battle {
 
   damage(target, amount, source, kind) {
     if (target.dead) return 0;
+    // 🎬 관전 중인 플레이어는 맞지 않는다 (관전하다 죽어서 리스폰되는 일 방지)
+    if (target.isPlayer && (this.playerSafe || this.playerInvuln > 0)) return 0;
     const dmg = amount * (1 - target.armor);
     target.hp -= dmg;
     target.lastHitBy = source ? source.id : 0;
@@ -369,15 +471,18 @@ export class Battle {
   /* 접촉 프레임 — 실제 사거리·부채꼴 안의 적을 벤다 */
   resolveMelee(u) {
     const spec = CLASSES[u.cls];
-    const list = this.grid.query(u.x, u.z, spec.reach + 1.2, this.tmp);
+    // 플레이어의 손맛 — 화면에 보이는 칼끝이 닿았는데 안 들어가는 일이 없도록 사거리·각도 여유를 둔다
+    const reach = spec.reach + (u.isPlayer ? 0.45 : 0);
+    const arc = spec.arc + (u.isPlayer ? 0.3 : 0);
+    const list = this.grid.query(u.x, u.z, reach + 1.2, this.tmp);
     const hits = [];
     for (const o of list) {
       if (o.team === u.team || o.dead) continue;
       const dx = o.x - u.x, dz = o.z - u.z;
       const d = Math.hypot(dx, dz);
-      if (d > spec.reach + o.radius) continue;
+      if (d > reach + o.radius) continue;
       const ang = Math.atan2(dx, dz);
-      if (Math.abs(angDiff(ang, u.yaw)) > spec.arc) continue;
+      if (Math.abs(angDiff(ang, u.yaw)) > arc) continue;
       hits.push({ o, d });
     }
     hits.sort((a, b) => a.d - b.d);
@@ -553,6 +658,7 @@ export class Battle {
   /* 프레임 갱신 */
   update(dt, input) {
     this.time += dt;
+    if (this.playerInvuln > 0) this.playerInvuln = Math.max(0, this.playerInvuln - dt);
     this.grid.build(this.units);
 
     // 플레이어 입력 (카메라 기준 이동)
@@ -563,8 +669,9 @@ export class Battle {
       if (len > 0.04) {
         const nx = mx / Math.max(1, len), nz = mz / Math.max(1, len);
         const yaw = input.yaw || 0;
-        let wx = Math.sin(yaw) * nz + Math.cos(yaw) * nx;
-        let wz = Math.cos(yaw) * nz - Math.sin(yaw) * nx;
+        // 조이스틱 방향 = 화면(시선) 기준 전후좌우. 부호가 뒤집혀 있지 않은지 util.joyToWorld 하나로 모았다.
+        const dir = joyToWorld(yaw, nx, nz);
+        let wx = dir.x, wz = dir.z;
         const sp = CLASSES[p.cls].speed * clamp(len, 0, 1);
         // 앞을 막는 적/아군이 있으면 그 방향 성분을 지운다 (몸으로 밀고 들어가지 못함)
         const nx2 = p.x + wx * sp * dt, nz2 = p.z + wz * sp * dt;
@@ -803,12 +910,26 @@ export class Battle {
     }
 
     // 승패
+    // · 스폰 직후(endGraceT)에는 판정하지 않는다 — 첫 프레임에 '적 0명'으로 읽혀 바로 승리가 뜨던 문제.
+    // · 시작할 때 적이 0명이었으면 연습 모드: 아무리 시간이 지나도 승리/패배로 끝내지 않는다.
+    // · 예비 병력이 남아 있으면 전멸이 아니다 (다음 병사가 계속 들어온다).
+    this.reinforce(dt);
+    // 가끔 시체로 끝난 유닛을 목록에서 덜어낸다 (장기전에서 루프가 길어지지 않게)
+    this._pruneT = (this._pruneT || 0) + dt;
+    if (this._pruneT > 4) { this._pruneT = 0; this.prune(); }
     const allyAlive = this.countAlive('ally');
     const enemyAlive = this.countAlive('enemy');
-    if (!this.over && (enemyAlive === 0 || allyAlive === 0)) {
-      this.over = true;
-      this.winner = enemyAlive === 0 && allyAlive === 0 ? 'draw' : (enemyAlive === 0 ? 'ally' : 'enemy');
-      this.emit({ type: 'end', winner: this.winner });
+    const graceDone = this.spawned && (this.time || 0) >= (this.endGraceT || 0.75);
+    if (!this.over && graceDone && !this.practice) {
+      const playerBack = !!(p && p.dead && !p.removed && !this.autoPlayer);  // 부활 대기 중이면 아군 전멸이 아니다
+      const allyUp = allyAlive > 0 || playerBack;
+      const enemyWiped = enemyAlive === 0 && this.reserveTotal('enemy') === 0 && (this.initialTotalEnemy || 0) > 0;
+      const allyWiped = !allyUp && this.reserveTotal('ally') === 0 && (this.initialTotalAlly || 0) > 0;
+      if (enemyWiped || allyWiped) {
+        this.over = true;
+        this.winner = enemyWiped && allyWiped ? 'draw' : (enemyWiped ? 'ally' : 'enemy');
+        this.emit({ type: 'end', winner: this.winner });
+      }
     }
     return this;
   }
@@ -885,6 +1006,9 @@ export class Battle {
       playerKills: this.playerKills,
       over: this.over,
       winner: this.winner,
+      practice: !!this.practice,
+      field: { ally: this.countAlive('ally'), enemy: this.countAlive('enemy') },
+      reserve: { ally: this.reserveTotal('ally'), enemy: this.reserveTotal('enemy') },
       player: this.player ? {
         x: this.player.x, z: this.player.z, yaw: this.player.yaw,
         hp: this.player.hp, maxHp: this.player.maxHp, cls: this.player.cls,

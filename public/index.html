@@ -97,46 +97,46 @@
               <div class="army-col-head"><i>◆</i> 아군</div>
               <div class="row" data-team="ally" data-unit="soldier">
                 <label><span class="ru-icon">⚔️</span> 병사</label>
-                <input type="range" min="0" max="10000" step="100" value="60" />
-                <output>60</output>
+                <input type="range" min="0" max="10000" step="1" value="60" />
+                <input class="num" type="number" inputmode="numeric" min="0" max="10000" step="1" value="60" aria-label="직접 입력" />
               </div>
               <div class="row" data-team="ally" data-unit="knight">
                 <label><span class="ru-icon">🔨</span> 기사</label>
                 <input type="range" min="0" max="20" step="1" value="2" />
-                <output>2</output>
+                <input class="num" type="number" inputmode="numeric" min="0" max="20" step="1" value="2" aria-label="직접 입력" />
               </div>
               <div class="row" data-team="ally" data-unit="wizard">
                 <label><span class="ru-icon">🔮</span> 마법사</label>
                 <input type="range" min="0" max="20" step="1" value="1" />
-                <output>1</output>
+                <input class="num" type="number" inputmode="numeric" min="0" max="20" step="1" value="1" aria-label="직접 입력" />
               </div>
               <div class="row" data-team="ally" data-unit="blademaster">
                 <label><span class="ru-icon">🌸</span> 검객</label>
                 <input type="range" min="0" max="20" step="1" value="1" />
-                <output>1</output>
+                <input class="num" type="number" inputmode="numeric" min="0" max="20" step="1" value="1" aria-label="직접 입력" />
               </div>
             </div>
             <div class="army-col enemy">
               <div class="army-col-head"><i>◆</i> 적군</div>
               <div class="row" data-team="enemy" data-unit="soldier">
                 <label><span class="ru-icon">⚔️</span> 병사</label>
-                <input type="range" min="0" max="10000" step="100" value="60" />
-                <output>60</output>
+                <input type="range" min="0" max="10000" step="1" value="60" />
+                <input class="num" type="number" inputmode="numeric" min="0" max="10000" step="1" value="60" aria-label="직접 입력" />
               </div>
               <div class="row" data-team="enemy" data-unit="knight">
                 <label><span class="ru-icon">🔨</span> 기사</label>
                 <input type="range" min="0" max="20" step="1" value="2" />
-                <output>2</output>
+                <input class="num" type="number" inputmode="numeric" min="0" max="20" step="1" value="2" aria-label="직접 입력" />
               </div>
               <div class="row" data-team="enemy" data-unit="wizard">
                 <label><span class="ru-icon">🔮</span> 마법사</label>
                 <input type="range" min="0" max="20" step="1" value="1" />
-                <output>1</output>
+                <input class="num" type="number" inputmode="numeric" min="0" max="20" step="1" value="1" aria-label="직접 입력" />
               </div>
               <div class="row" data-team="enemy" data-unit="blademaster">
                 <label><span class="ru-icon">🌸</span> 검객</label>
                 <input type="range" min="0" max="20" step="1" value="1" />
-                <output>1</output>
+                <input class="num" type="number" inputmode="numeric" min="0" max="20" step="1" value="1" aria-label="직접 입력" />
               </div>
             </div>
           </div>
@@ -181,8 +181,10 @@
     <div class="hud">
       <div class="hud-top">
         <div class="strength">
-          <div class="st-row ally"><span class="st-name">아군</span><div class="st-bar"><i id="allyBar"></i></div><b id="allyCount">0</b></div>
-          <div class="st-row enemy"><span class="st-name">적군</span><div class="st-bar"><i id="enemyBar"></i></div><b id="enemyCount">0</b></div>
+          <div class="st-row ally"><span class="st-name">아군</span><div class="st-bar"><i id="allyBar"></i></div><b id="allyCount">0</b><em class="st-res" id="allyReserve">+0</em></div>
+          <div class="st-row enemy"><span class="st-name">적군</span><div class="st-bar"><i id="enemyBar"></i></div><b id="enemyCount">0</b><em class="st-res" id="enemyReserve">+0</em></div>
+          <div class="st-note"><span>전장</span><em>예비</em></div>
+          <div class="practice-tag" id="practiceTag">연습 모드 · 적군 0명</div>
         </div>
         <div class="top-right">
           <div class="kill-chip"><span>누적 처치</span><b id="killCount">0</b><em id="killPct">+0.000%</em></div>
@@ -192,6 +194,12 @@
       </div>
 
       <div class="reticle" id="reticle"><span></span><i></i></div>
+      <div class="aim-info" id="aimInfo">
+        <div class="ai-top"><b id="aiName">적 병사</b><span id="aiHp">100 / 100</span></div>
+        <div class="ai-bar"><i id="aiBar"></i></div>
+      </div>
+      <div class="hit-mark" id="hitMark"><span class="hm-x"></span><b class="hm-dmg" id="hitDmg"></b></div>
+      <div class="spec-hint" id="specHint">🎬 관전 중 · 조이스틱으로 이동 · 드래그로 시점 · 👁️ 로 참전</div>
       <div class="aim-gauge" id="aimGauge"><i></i></div>
 
       <div class="hud-bottom">

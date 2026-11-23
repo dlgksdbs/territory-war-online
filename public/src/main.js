@@ -13,10 +13,18 @@ import { FX } from './fx.js';
 import { ViewModel } from './viewmodel.js';
 import { Sfx } from './sfx.js';
 import { loadProgress, saveProgress, rosterOf, rosterTotal, growthMult, growthLabel, playerSpec } from './config.js';
-import { clamp, lerp, damp, angLerp, angDiff, TAU, mulberry32, smoothstep } from './util.js';
+import { clamp, lerp, damp, angLerp, angDiff, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+/* 시점 감도 — 예전보다 조금 더 민첩하게 (1.4배) */
+const LOOK_SENS = 0.0063;        // 화면 드래그 1px 당 좌우 회전(rad)
+const LOOK_PITCH_SENS = 0.0049;  // 화면 드래그 1px 당 상하 회전(rad)
+const SPEC_SENS = 0.0072;        // 관전 카메라 좌우
+const SPEC_PITCH_SENS = 0.0056;  // 관전 카메라 상하
+const _aimDir = new THREE.Vector3();
+const UNIT_KR = { soldier: '병사', knight: '기사', wizard: '마법사', blademaster: '검객' };
 
 class App {
   constructor() {
@@ -48,7 +56,12 @@ class App {
     this.sfx = new Sfx();
     this.last = 0;
     this.autoSpectate = false;
-    this.spectateAngle = 0;
+    this.spectate = null;
+    this._spectateIdle = 0;
+    this._aimOn = false;
+    this._aimKey = '';
+    this.qualityStep = 2;      // 2 = 최고, 1 = 중간(그림자 끔), 0 = 절약(해상도 낮춤)
+    this._ftSamples = [];
     this._raf = null;
     this._hudCache = {};
     this._bindUI();
@@ -71,12 +84,12 @@ class App {
       alpha: false,
       stencil: false
     });
-    r.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio || 1, 1.85));
+    r.setPixelRatio(low ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 0.94;
     r.shadowMap.enabled = !low;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.type = THREE.PCFShadowMap;
     r.autoClear = false;
     r.info.autoReset = false;
     this.renderer = r;
@@ -127,11 +140,13 @@ class App {
     $$('.row').forEach((row) => {
       const team = row.dataset.team, unit = row.dataset.unit;
       const key = team + unit[0].toUpperCase() + unit.slice(1) + 's';
-      const input = row.querySelector('input');
+      const input = row.querySelector('input[type=range]');
+      const num = row.querySelector('input.num');
       const out = row.querySelector('output');
       const v = this.cfg[key];
       input.value = v;
-      out.textContent = v;
+      if (num) num.value = v;
+      if (out) out.textContent = v;
       const pct = unit === 'soldier' ? (v / MAX_SOLDIERS) * 100 : (v / MAX_SPECIALS) * 100;
       input.style.setProperty('--p', Math.max(2, pct) + '%');
     });
@@ -162,17 +177,32 @@ class App {
         this._beep();
       });
     });
+    const applyRowValue = (row, raw) => {
+      const unit = row.dataset.unit, team = row.dataset.team;
+      const key = team + unit[0].toUpperCase() + unit.slice(1) + 's';
+      const range = row.querySelector('input[type=range]');
+      const num = row.querySelector('input.num');
+      const max = Number(range.max) || MAX_SOLDIERS;
+      const v = Math.max(0, Math.min(max, Math.round(Number(raw) || 0)));
+      this.cfg[key] = v;
+      if (range.value !== String(v)) range.value = v;
+      if (num && num.value !== String(v)) num.value = v;
+      const pct = unit === 'soldier' ? (v / MAX_SOLDIERS) * 100 : (v / MAX_SPECIALS) * 100;
+      range.style.setProperty('--p', Math.max(2, pct) + '%');
+      $('#rosterTotal').textContent = `총 ${rosterTotal(rosterOf(this.cfg)).toLocaleString()}명 출전`;
+    };
     $$('.row input[type=range]').forEach((input) => {
       input.addEventListener('input', () => {
-        const row = input.closest('.row');
-        const unit = row.dataset.unit, team = row.dataset.team;
-        const key = team + unit[0].toUpperCase() + unit.slice(1) + 's';
-        this.cfg[key] = Number(input.value);
-        row.querySelector('output').textContent = input.value;
-        const pct = unit === 'soldier' ? (Number(input.value) / MAX_SOLDIERS) * 100 : (Number(input.value) / MAX_SPECIALS) * 100;
-        input.style.setProperty('--p', Math.max(2, pct) + '%');
-        $('#rosterTotal').textContent = `총 ${rosterTotal(rosterOf(this.cfg)).toLocaleString()}명 출전`;
+        applyRowValue(input.closest('.row'), input.value);
       });
+    });
+    // 숫자 직접 입력칸 — 슬라이더와 양방향 연동
+    $$('.row input.num').forEach((input) => {
+      const commit = () => applyRowValue(input.closest('.row'), input.value);
+      input.addEventListener('input', commit);
+      input.addEventListener('change', commit);
+      input.addEventListener('blur', commit);
+      input.addEventListener('focus', () => input.select());
     });
     $('#presets').addEventListener('click', (e) => {
       const b = e.target.closest('button');
@@ -272,10 +302,11 @@ class App {
     };
     joy.addEventListener('pointerdown', (e) => {
       if (id !== null) return;
+      e.preventDefault();
       id = e.pointerId;
       const rect = joy.getBoundingClientRect();
       cx = rect.left + rect.width / 2; cy = rect.top + rect.height / 2;
-      joy.setPointerCapture(id);
+      try { joy.setPointerCapture(id); } catch (err) { /* 합성 이벤트 */ }
       move(e);
     });
     joy.addEventListener('pointermove', (e) => { if (e.pointerId === id) move(e); });
@@ -293,24 +324,24 @@ class App {
     const canvas = $('#gl');
     let id = null, lx = 0, ly = 0;
     canvas.addEventListener('pointerdown', (e) => {
-      if (this.camMode === 'spectate') {
-        id = e.pointerId; lx = e.clientX; ly = e.clientY;
-        canvas.setPointerCapture(id);
-        return;
-      }
       id = e.pointerId; lx = e.clientX; ly = e.clientY;
-      canvas.setPointerCapture(id);
+      try { canvas.setPointerCapture(id); } catch (err) { /* noop */ }
     });
     canvas.addEventListener('pointermove', (e) => {
       if (e.pointerId !== id) return;
       const dx = e.clientX - lx, dy = e.clientY - ly;
       lx = e.clientX; ly = e.clientY;
       if (this.camMode === 'spectate') {
-        this.spectate.yaw -= dx * 0.005;
-        this.spectate.pitch = clamp(this.spectate.pitch - dy * 0.004, -0.2, 1.2);
+        if (!this.spectate) this._enterSpectate();
+        const s = this.spectate;
+        s.yaw += dx * SPEC_SENS;
+        s.pitch = clamp(s.pitch - dy * SPEC_PITCH_SENS, -1.42, 0.62);
+        this._spectateIdle = 0;
+        this.autoSpectate = false;      // 손으로 돌리면 자동 회전은 멈춘다
       } else {
-        this.camYaw -= dx * 0.0045;
-        this.camPitch = clamp(this.camPitch - dy * 0.0035, -1.15, 0.9);
+        // 1·3인칭 — 화면을 민 방향으로 고개가 돈다
+        this.camYaw -= dx * LOOK_SENS;
+        this.camPitch = clamp(this.camPitch - dy * LOOK_PITCH_SENS, -1.15, 0.9);
       }
     });
     const end = (e) => { if (e.pointerId === id) id = null; };
@@ -372,12 +403,24 @@ class App {
       buckets[u.cls].push(u);
     }
     this.unitRenderer = new UnitRenderer(this.scene, { shadowUnits: this.quality !== 'low' && this.battle.units.length <= 160 });
-    this.unitRenderer.build(buckets);
+    // 예비 병력이 나중에 들어와도 그릴 자리가 있도록 클래스별 수용량을 미리 잡아둔다
+    const caps = {};
+    for (const cls of ['soldier', 'knight', 'wizard', 'blademaster']) {
+      caps[cls] = (this.battle.roster.ally[cls] || 0) + (this.battle.roster.enemy[cls] || 0) + (cls === this.cfg.playerClass ? 1 : 0);
+    }
+    this.unitRenderer.build(buckets, caps);
     this.fx.buildShadows(this.battle.units.length <= 900 ? this.battle.units : null);
-    this._initialAlly = this.battle.countAlive('ally');
-    this._initialEnemy = this.battle.countAlive('enemy');
+    this._initialAlly = this.battle.initialTotalAlly || this.battle.countAlive('ally');
+    this._initialEnemy = this.battle.initialTotalEnemy || this.battle.countAlive('enemy');
+    // 적 0명 편성 = 연습 모드 (승리로 끝나지 않음을 화면에 알린다)
+    const practice = !!this.battle.practice;
+    const tag = $('#practiceTag');
+    if (tag) tag.classList.toggle('is-on', practice);
+    if (practice) this._toast('연습 모드 · 적군 0명');
     this.vm.setClass(this.cfg.playerClass);
     this.camMode = 'fp';
+    this.spectate = null;
+    $('#battle').classList.remove('is-spectate');
     // 시작 첫 프레임부터 자기 몸이 1인칭 시야를 가리지 않도록
     if (this.battle.player) this.battle.player.hideModel = true;
     this.camYaw = Math.PI;
@@ -388,6 +431,11 @@ class App {
     this._hudCache = {};
     $('#deadVeil').classList.remove('is-on');
     $('#hitVignette').style.opacity = 0;
+    $('#hitVignette').classList.remove('is-strong');
+    const ai = document.getElementById('aimInfo'); if (ai) ai.classList.remove('is-on');
+    const hm = document.getElementById('hitMark'); if (hm) hm.classList.remove('is-on', 'is-kill');
+    this._aimOn = false; this._aimKey = '';
+    const sh = document.getElementById('specHint'); if (sh) sh.classList.remove('is-on');
     this._syncHUD(true);
     if (this.audio) { try { this.audio.resume(); } catch (e) { /* noop */ } }
     if (!this._raf) this.loop();
@@ -396,26 +444,55 @@ class App {
   toHome() {
     this.state = 'home';
     this.paused = true;
+    this.camMode = 'fp';
+    this.spectate = null;
+    $('#battle').classList.remove('is-spectate');
     if (this.unitRenderer) { this.unitRenderer.dispose(); this.unitRenderer = null; }
     if (this.fx) this.fx.clear();
     $('#battle').classList.remove('is-active');
     $('#result').classList.remove('is-on');
     $('#menuSheet').classList.remove('is-on');
     $('#home').classList.add('is-active');
+    const tag = $('#practiceTag');
+    if (tag) tag.classList.remove('is-on');
+    const ai = document.getElementById('aimInfo'); if (ai) ai.classList.remove('is-on');
+    const hm = document.getElementById('hitMark'); if (hm) hm.classList.remove('is-on', 'is-kill');
+    this._aimOn = false;
     this._syncHome();
   }
 
   cycleCamera() {
     if (!this.battle) return;
     this.camMode = this.camMode === 'fp' ? 'tp' : this.camMode === 'tp' ? 'spectate' : 'fp';
-    if (this.camMode === 'spectate') {
-      this.spectate = { yaw: Math.PI, pitch: 0.55, dist: 30, tx: 0, tz: 0 };
-      this.autoSpectate = true;
-    }
+    if (this.camMode === 'spectate') this._enterSpectate(); else this._exitSpectate();
     const b = $('#camBtn');
     b.textContent = this.camMode === 'fp' ? '👁️' : this.camMode === 'tp' ? '🎥' : '🎬';
     b.title = this.camMode === 'fp' ? '1인칭' : this.camMode === 'tp' ? '3인칭' : '관전';
-    this._toast(this.camMode === 'fp' ? '1인칭 참전' : this.camMode === 'tp' ? '3인칭 참전' : '관전 카메라');
+    this._toast(this.camMode === 'fp' ? '1인칭 참전' : this.camMode === 'tp' ? '3인칭 참전' : '🎬 관전 — 조이스틱 이동 · 드래그 시점');
+  }
+
+  /* 🎬 관전 — 공중에서 자유롭게 돌아다니며 전장을 본다 */
+  _enterSpectate() {
+    const p = this.battle && this.battle.player;
+    const span = this.battle ? Math.sqrt(this.battle.units.length || 1) : 1;
+    this.spectate = {
+      x: p ? p.x : 0,
+      z: p ? p.z : 0,
+      y: clamp(9 + span * 3.4, 12, 34),
+      yaw: this.camYaw + Math.PI,     // 지금 보던 방향 그대로
+      pitch: -0.55
+    };
+    this._spectateIdle = 0;
+    this.autoSpectate = true;          // 입력이 없을 때만 천천히 전장을 훑는다
+    if (this.battle) { this.battle.playerSafe = true; this.battle.playerInvuln = 0; }
+    const el = $('#battle');
+    if (el) el.classList.add('is-spectate');
+  }
+
+  _exitSpectate() {
+    if (this.battle) { this.battle.playerSafe = false; this.battle.playerInvuln = 0.8; }
+    const el = $('#battle');
+    if (el) el.classList.remove('is-spectate');
   }
 
   _toast(msg) {
@@ -430,6 +507,102 @@ class App {
     t.style.opacity = '1';
     clearTimeout(this._toastT);
     this._toastT = setTimeout(() => { t.style.opacity = '0'; }, 900);
+  }
+
+  /* 🎯 조준점 아래 적 체력 — 크로스헤어가 적 위에 오면 즉시 표시 */
+  _updateAimInfo() {
+    const b = this.battle;
+    const el = document.getElementById('aimInfo');
+    if (!b || !el) return;
+    const p = b.player;
+    const show = this.state === 'battle' && p && !p.dead && this.camMode !== 'spectate' && !this.debugCam;
+    let best = null, bestT = 42;
+    let blocker = null;
+    if (show) {
+      this.cam.getWorldDirection(_aimDir);
+      const cx = this.cam.position.x, cy = this.cam.position.y, cz = this.cam.position.z;
+      const units = b.units;
+      for (let i = 0; i < units.length; i++) {
+        const u = units[i];
+        if (u.dead || u === p) continue;
+        const dx = u.x - cx, dz = u.z - cz;
+        if (dx * dx + dz * dz > 50 * 50) continue;      // 멍리 적은 계산도 건너봄다
+        const uy = 1.05 * (u.cls === 'knight' ? 1.12 : 1) + (u.y || 0);
+        const vy = uy - cy;
+        const t = dx * _aimDir.x + vy * _aimDir.y + dz * _aimDir.z;
+        if (t <= 0.5) continue;
+        const px = dx - _aimDir.x * t, py = vy - _aimDir.y * t, pz = dz - _aimDir.z * t;
+        const perp2 = px * px + py * py + pz * pz;
+        const lim = 0.38 + t * 0.042 + (u.radius || 0.4);
+        if (perp2 > lim * lim) continue;
+        if (t < bestT) { bestT = t; best = u; }   // 시선에 걸리는 가장 가까운 유닛
+      }
+      // 가장 가까운 것이 아군이면 적은 가려져 있다 → 체력을 띄우지 않는다
+      if (best && best.team === p.team) { blocker = best; best = null; }
+    }
+    if (!best) {
+      if (this._aimOn) { el.classList.remove('is-on'); this._aimOn = false; this._aimKey = ''; }
+      return;
+    }
+    if (!this._aimOn) { el.classList.add('is-on'); this._aimOn = true; }
+    const hp = Math.max(0, Math.ceil(best.hp));
+    const mx = Math.max(1, Math.ceil(best.maxHp));
+    const key = best.id + ':' + hp;
+    if (key !== this._aimKey) {
+      this._aimKey = key;
+      const nEl = document.getElementById('aiName');
+      const hEl = document.getElementById('aiHp');
+      const bar = document.getElementById('aiBar');
+      if (nEl) nEl.textContent = '적 ' + (UNIT_KR[best.cls] || '병사');
+      if (hEl) hEl.textContent = hp + ' / ' + mx;
+      if (bar) {
+        bar.style.width = clamp((hp / mx) * 100, 0, 100) + '%';
+        bar.classList.toggle('is-low', hp / mx < 0.3);
+      }
+    }
+  }
+
+  /* 크로스헤어 히트 마커 — 맞았을 때만 뜨다 */
+  _hitMark(dmg, kill) {
+    const el = document.getElementById('hitMark');
+    if (!el) return;
+    el.classList.remove('is-on', 'is-kill');
+    void el.offsetWidth;                 // 애니메이션 재시작
+    el.classList.add('is-on');
+    if (kill) el.classList.add('is-kill');
+    const d = document.getElementById('hitDmg');
+    if (d) d.textContent = dmg ? String(Math.round(dmg)) : '';
+    clearTimeout(this._hitT);
+    this._hitT = setTimeout(() => el.classList.remove('is-on', 'is-kill'), kill ? 280 : 150);
+  }
+
+  /* 프레임 시간으로 품질을 자동 조절한다 (폰에서 먼저 부드러움을 지킨다) */
+  _perfTick(dtMs) {
+    if (this.quality === 'low') return;
+    const s = this._ftSamples;
+    s.push(dtMs);
+    if (s.length < 90) return;
+    s.sort((a, b) => a - b);
+    const med = s[s.length >> 1];
+    s.length = 0;
+    this._slowTicks = 0;
+    if (med > 26 && this.qualityStep > 0) this._setQuality(this.qualityStep - 1, med);
+    else if (med < 11 && this.qualityStep < 2 && (this._fastTicks = (this._fastTicks || 0) + 1) >= 3) {
+      this._fastTicks = 0; this._setQuality(this.qualityStep + 1, med);
+    }
+  }
+
+  _setQuality(step, medMs) {
+    this.qualityStep = step;
+    const r = this.renderer;
+    if (!r) return;
+    const dpr = window.devicePixelRatio || 1;
+    /* 해상도만 부드럽게 낮춘다 — 그림자 토글은 셰이더를 전부 재컴파일해서 순간 멈춤을 만든다.
+       그림자는 시작할 때 한 번만 결정하고(품질 옵션), 여기서는 건드리지 않는다. */
+    if (step >= 2) r.setPixelRatio(Math.min(dpr, 1.5));
+    else if (step === 1) r.setPixelRatio(Math.min(dpr, 1.15));
+    else r.setPixelRatio(1);
+    if (medMs) console.log('PERF quality=' + step + ' median=' + medMs.toFixed(1) + 'ms dpr=' + r.getPixelRatio().toFixed(2));
   }
 
   _aimAssist() {
@@ -516,7 +689,7 @@ class App {
     if (this.debugCam) { this.vm.enabled = false; p.hideModel = true; return; }
     let shakeX = 0, shakeY = 0, shakeZ = 0;
     if (this.fx && this.fx.shake > 0.001) {
-      const s = this.fx.shake * this.fx.shake * 0.55;
+      const s = this.fx.shake * this.fx.shake * 0.20;
       const t = this.time * 46;
       shakeX = Math.sin(t * 1.7) * s * 0.5;
       shakeY = Math.cos(t * 2.3) * s * 0.45;
@@ -528,16 +701,16 @@ class App {
       const eye = spec.viewEye;
       const mv = p.moveAmt || 0;
       const ph = p.walkPhase || 0;
-      // 걸음 리듬 — 위아래 2박자, 좌우 1박자
-      const bobY = Math.sin(ph * 2) * 0.032 * mv;
-      const bobX = Math.cos(ph) * 0.024 * mv;
+      // 걸음 리듬 — 위아래 2박자, 좌우 1박자 (예전보다 절반 이하로 잔잔하게)
+      const bobY = Math.sin(ph * 2) * 0.014 * mv;
+      const bobX = Math.cos(ph) * 0.011 * mv;
       // 호흡 (정지 시에도 사람처럼 미세하게)
-      const breathe = Math.sin(this.time * 1.55) * 0.007 + Math.sin(this.time * 0.61 + 1.7) * 0.0035;
+      const breathe = Math.sin(this.time * 1.55) * 0.005 + Math.sin(this.time * 0.61 + 1.7) * 0.0025;
       // 방향 전환 시 시선 롤
       const dYaw = angDiff(this.camYaw, this._prevYaw === undefined ? this.camYaw : this._prevYaw);
       this._prevYaw = this.camYaw;
       const yawRate = dYaw / Math.max(0.001, dt);
-      const targetRoll = clamp(-yawRate * 0.040, -0.075, 0.075) + Math.sin(ph) * 0.011 * mv;
+      const targetRoll = clamp(-yawRate * 0.020, -0.038, 0.038) + Math.sin(ph) * 0.005 * mv;
       this.camRoll = damp(this.camRoll || 0, targetRoll, dt, 110);
       // 공격 반동 — 예비동작에서 살짝 젖히고, 타격 순간 확 밀렸다가 회수와 함께 안착
       let rp = 0, rr = 0, fovPunch = 0;
@@ -555,14 +728,14 @@ class App {
       // 피격 반동
       const kick = this.fx.hitFlash;
       const shakeAmt = (this.fx.shake || 0);
-      const sx = Math.sin(this.time * 47.3) * shakeAmt * 0.42 + (Math.sin(this.time * 31) * kick * 0.03);
-      const sy = Math.cos(this.time * 39.1) * shakeAmt * 0.34 + (Math.cos(this.time * 27) * kick * 0.02);
-      const sz = Math.sin(this.time * 33.7) * shakeAmt * 0.18;
+      const sx = Math.sin(this.time * 47.3) * shakeAmt * 0.13 + (Math.sin(this.time * 31) * kick * 0.008);
+      const sy = Math.cos(this.time * 39.1) * shakeAmt * 0.10 + (Math.cos(this.time * 27) * kick * 0.006);
+      const sz = Math.sin(this.time * 33.7) * shakeAmt * 0.05;
       this.cam.position.set(p.x + bobX + sx * 0.35, (p.dead ? 0.5 : eye) + bobY + breathe + sy * 0.4, p.z + sz * 0.35);
       this.camYaw = p.yaw + Math.PI;
-      const roll = this.camRoll + rr + shakeAmt * 0.02 + kick * 0.015;
-      this.cam.rotation.set(this.camPitch + rp + sy * 0.022 + kick * 0.02, this.camYaw + sx * 0.02, roll, 'YXZ');
-      this.cam.fov = clamp(62 + mv * 3.4 + fovPunch + shakeAmt * 2.0, 58, 76);
+      const roll = this.camRoll + rr * 0.6 + shakeAmt * 0.005 + kick * 0.005;
+      this.cam.rotation.set(this.camPitch + rp * 0.7 + sy * 0.022 + kick * 0.006, this.camYaw + sx * 0.02, roll, 'YXZ');
+      this.cam.fov = clamp(62 + mv * 1.8 + fovPunch * 0.6 + shakeAmt * 0.8, 58, 76);
       this.cam.updateProjectionMatrix();
       this.vm.enabled = !p.dead;
     } else if (this.camMode === 'tp') {
@@ -575,16 +748,32 @@ class App {
       this.camYaw = p.yaw + Math.PI;
       this.vm.enabled = false;
     } else {
-      // 관전 — 살짝 궤도를 그리며 전장을 훑는다
-      if (!this.spectate) this.spectate = { yaw: Math.PI, pitch: 0.55, dist: 34, tx: 0, tz: 0 };
-      if (this.autoSpectate) this.spectate.yaw += dt * 0.055;
+      // 🎬 관전 — 공중 자유 시점: 왼쪽 조이스틱으로 돌아다니고 드래그로 시선을 돌린다
+      if (!this.spectate) this._enterSpectate();
       const s = this.spectate;
-      const cx = Math.sin(s.yaw) * Math.cos(s.pitch) * s.dist;
-      const cz = Math.cos(s.yaw) * Math.cos(s.pitch) * s.dist;
-      const cy = 2 + Math.sin(s.pitch) * s.dist;
-      this.cam.position.set(s.tx + cx, Math.max(2, cy), s.tz + cz);
-      this.cam.lookAt(s.tx, 1.6, s.tz);
-      this.camYaw = p.yaw + Math.PI;
+      const mx = this.input.mx || 0, mz = this.input.mz || 0;
+      const mag = Math.min(1, Math.hypot(mx, mz));
+      if (mag > 0.06) {
+        this._spectateIdle = 0;
+        this.autoSpectate = false;
+        const spd = 20 * mag * (s.pitch > -0.9 ? 1 : 0.6);
+        const d = joyToWorld(s.yaw, mx, mz);
+        s.x += d.x * spd * dt;
+        s.z += d.z * spd * dt;
+        // 위로 들어올리면 높이도 살짝 오르며 멀리 본다
+        s.y = clamp(s.y - s.pitch * mag * 3.2 * dt, 4, 92);
+      } else {
+        this._spectateIdle += dt;
+        if (this.autoSpectate && this._spectateIdle > 2.2) s.yaw += dt * 0.055;
+      }
+      const bound = (b.arenaR || 60) + 26;
+      s.x = clamp(s.x, -bound, bound);
+      s.z = clamp(s.z, -bound, bound);
+      const cp = Math.cos(s.pitch), sp2 = Math.sin(s.pitch);
+      this.cam.position.set(s.x + shakeX, s.y + shakeY, s.z + shakeZ);
+      this.cam.lookAt(s.x + Math.sin(s.yaw) * cp * 60, s.y + sp2 * 60, s.z + Math.cos(s.yaw) * cp * 60);
+      this.cam.fov = 66;
+      this.cam.updateProjectionMatrix();
       this.vm.enabled = false;
     }
     if (shakeX || shakeY) this.cam.position.y += shakeY * 0.15;
@@ -611,30 +800,32 @@ class App {
     }
 
     const p = this.battle.player;
+    const spectating = this.camMode === 'spectate';
     // 입력 → 전투
     if (!this.paused && !this.debugLock) {
       this.input.mx = this.input.mx || 0;
       if (this.attackHeld && p.cooldown <= 0 && p.attackT < 0) {
-        if (this.camMode !== 'spectate') this._aimAssist();
+        if (!spectating) this._aimAssist();
       }
       this.battle.update(dt * scale, {
-        mx: this.input.mx, mz: this.input.mz, yaw: p.yaw, attack: this.input.attack || this.attackHeld
+        mx: spectating ? 0 : this.input.mx,
+        mz: spectating ? 0 : this.input.mz,
+        yaw: p.yaw,
+        attack: spectating ? false : (this.input.attack || this.attackHeld)
       });
       this.input.attack = false;
       // 키보드 이동
-      if (this.keys && (this.keys.KeyW || this.keys.KeyA || this.keys.KeyS || this.keys.KeyD)) {
+      if (!spectating && this.keys && (this.keys.KeyW || this.keys.KeyA || this.keys.KeyS || this.keys.KeyD)) {
         const kx = (this.keys.KeyD ? 1 : 0) - (this.keys.KeyA ? 1 : 0);
         const kz = (this.keys.KeyW ? 1 : 0) - (this.keys.KeyS ? 1 : 0);
-        const yaw = p.yaw;
-        const wx = Math.sin(yaw) * kz + Math.cos(yaw) * kx;
-        const wz = Math.cos(yaw) * kz - Math.sin(yaw) * kx;
+        const d = joyToWorld(p.yaw, kx, kz);
         const sp = CLASSES[p.cls].speed;
-        p.x += wx * sp * dt; p.z += wz * sp * dt;
+        p.x += d.x * sp * dt; p.z += d.z * sp * dt;
         p.moveAmt = Math.min(1, Math.hypot(kx, kz));
         p.walkPhase += dt * 6.4;
       }
       // 카메라 시점 → 플레이어 방향 (1인칭/3인칭)
-      if (this.camMode !== 'spectate') {
+      if (!spectating) {
         p.yaw = this.camYaw + Math.PI;
         p.pitch = this.camPitch;
       }
@@ -726,6 +917,10 @@ class App {
     // HUD
     this._syncHUD(false);
     this._syncInputUI();
+    this._updateAimInfo();
+
+    // 자동 품질 조절 (폰 발열·끊김 완화)
+    this._perfTick(dt * 1000);
 
     // 렌더
     const r = this.renderer;
@@ -741,8 +936,17 @@ class App {
   _onEvent(e) {
     const cam = this.cam ? this.cam.position : null;
     const dOf = (x, z) => (cam ? Math.hypot(cam.x - x, cam.z - z) : 0);
+    if (e.type === 'spawn' && e.unit && this.unitRenderer) {
+      this.unitRenderer.addUnit(e.unit, e.unit.cls);   // 증원병도 화면에 그린다
+      return;
+    }
     if (e.type === 'hit') {
       this.sfx.hit(e.kind, dOf(e.hx, e.hz), !!(e.source && e.source.isPlayer));
+      // 내가 친 타격만 화면에 표시한다 (안 맞았을 땐 아무것도 안 뜬다)
+      if (e.source && e.source.isPlayer) {
+        this._hitMark(e.dmg, e.lethal);
+        this.fx.addShake(0.05);
+      }
     } else if (e.type === 'slam') {
       this.sfx.hit('hammer', dOf(e.x, e.z), true);
     } else if (e.type === 'explode') {
@@ -781,6 +985,7 @@ class App {
 
   _finish(winner) {
     const b = this.battle;
+    if (this._aimOn) { const el = document.getElementById('aimInfo'); if (el) el.classList.remove('is-on'); this._aimOn = false; }
     const won = winner === 'ally';
     $('#resEmblem').textContent = won ? '🏆' : '💀';
     $('#resTitle').textContent = won ? '승리' : '패배';
@@ -801,13 +1006,25 @@ class App {
     if (!b) return;
     const p = b.player;
     const ally = b.countAlive('ally'), enemy = b.countAlive('enemy');
+    const aRes = b.reserveTotal ? b.reserveTotal('ally') : 0;
+    const eRes = b.reserveTotal ? b.reserveTotal('enemy') : 0;
     const totalA = Math.max(1, this._initialAlly || 1);
     const totalE = Math.max(1, this._initialEnemy || 1);
     const cache = this._hudCache;
     if (force || cache.ally !== ally) { $('#allyCount').textContent = ally; cache.ally = ally; }
     if (force || cache.enemy !== enemy) { $('#enemyCount').textContent = enemy; cache.enemy = enemy; }
-    $('#allyBar').style.width = clamp((ally / Math.max(1, this._initialAlly || ally)) * 100, 0, 100) + '%';
-    $('#enemyBar').style.width = clamp((enemy / Math.max(1, this._initialEnemy || enemy)) * 100, 0, 100) + '%';
+    if (force || cache.aRes !== aRes) {
+      const el = $('#allyReserve'); if (el) el.textContent = '+' + aRes;
+      const row = $('#allyCount').parentElement; if (row) row.title = '전장 ' + ally + '명 · 예비 ' + aRes + '명 (합계 ' + (ally + aRes) + '명)';
+      cache.aRes = aRes;
+    }
+    if (force || cache.eRes !== eRes) {
+      const el = $('#enemyReserve'); if (el) el.textContent = '+' + eRes;
+      const row = $('#enemyCount').parentElement; if (row) row.title = '전장 ' + enemy + '명 · 예비 ' + eRes + '명 (합계 ' + (enemy + eRes) + '명)';
+      cache.eRes = eRes;
+    }
+    $('#allyBar').style.width = clamp(((ally + aRes) / totalA) * 100, 0, 100) + '%';
+    $('#enemyBar').style.width = clamp(((enemy + eRes) / totalE) * 100, 0, 100) + '%';
     const hpPct = clamp((p.hp / Math.max(1, p.maxHp)) * 100, 0, 100);
     $('#hpBar').style.width = hpPct + '%';
     $('#hpText').textContent = `${Math.max(0, Math.ceil(p.hp))} / ${Math.ceil(p.maxHp)}`;
@@ -888,9 +1105,11 @@ class App {
       veil.classList.add('is-on');
       $('#respawnT').textContent = Math.max(0, Math.ceil(3.6 - b.playerDeadT));
     } else veil.classList.remove('is-on');
-    // 피격 비네트
+    // 피격 비네트 — 맞으면 가장자리가 확 붉게 번지고 빠르게 깜포다
     const hv = $('#hitVignette');
-    hv.style.opacity = String(clamp(this.fx ? this.fx.hitFlash * 0.8 : 0, 0, 1));
+    const hf = this.fx ? this.fx.hitFlash : 0;
+    hv.style.opacity = String(clamp(hf * 1.15, 0, 0.92));
+    hv.classList.toggle('is-strong', hf > 0.72);
   }
 
   _syncInputUI() {
@@ -939,6 +1158,10 @@ window.BA = {
       ctxLost: app.renderer ? app.renderer.getContext().isContextLost() : null,
       glError: app.renderer ? app.renderer.getContext().getError() : null,
       hitStop: b.hitStop,
+      practice: !!b.practice,
+      field: { ally: b.countAlive('ally'), enemy: b.countAlive('enemy') },
+      reserve: { ally: b.reserveTotal('ally'), enemy: b.reserveTotal('enemy') },
+      totals: { ally: b.initialTotalAlly, enemy: b.initialTotalEnemy },
       over: b.over
     };
   },
@@ -1090,12 +1313,21 @@ window.BA = {
       if (!b) return 0;
       const n = Math.max(1, Math.round(sec * 60));
       for (let i = 0; i < n; i++) {
-        b.update(1 / 60, { mx: 0, mz: 0, yaw: b.player ? b.player.yaw : 0, attack: false });
+        b.update(1 / 60, {
+          mx: app.input.mx || 0, mz: app.input.mz || 0,
+          yaw: b.player ? b.player.yaw : 0,
+          attack: !!(app.input.attack || app.attackHeld)
+        });
         for (let k = 0; k < b.units.length; k++) computePose(b.units[k], app.time + i / 60, 1 / 60);
+        // 실제 루프와 같은 순서로 이벤트·카메라를 처리한다 (증원·히트마커·관전도 검증 가능)
+        const evs = b.drain();
+        if (app.fx) app.fx.handle(evs, b);
+        for (const e of evs) app._onEvent(e);
+        if (app.cam) app.updateCamera(1 / 60);
         if (b.over) break;
       }
       app.time += n / 60;
-      b.drain();
+      if (app._syncHUD) app._syncHUD(true);
       return n;
     },
     perf() { return { calls: app.renderer.info.render.calls, tris: app.renderer.info.render.triangles, mem: app.renderer.info.memory }; }

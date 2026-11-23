@@ -622,7 +622,7 @@ void main(){
       scene.add(f);
       out.flames.push({ s: f, base: s, ph: rng() * TAU, x: f.position.x, y: gy + 2.15, z: t.z });
     }
-    if (i < 2) {
+    if (i < 1) {
       const light = new THREE.PointLight(0xff8a3a, 22, 17, 2);
       light.position.set(t.x, gy + 2.3, t.z);
       scene.add(light);

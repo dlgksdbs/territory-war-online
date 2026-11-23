@@ -218,17 +218,17 @@ function unitGeo(kind) {
   let g;
   switch (kind) {
     case 'box': g = new THREE.BoxGeometry(1, 1, 1); break;
-    case 'cyl': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 14, 1); break;
+    case 'cyl': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 10, 1); break;
     case 'cyl6': g = new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1); break;
-    case 'cone': g = new THREE.ConeGeometry(0.5, 1, 14, 1); break;
+    case 'cone': g = new THREE.ConeGeometry(0.5, 1, 10, 1); break;
     case 'cone6': g = new THREE.ConeGeometry(0.5, 1, 6, 1); break;
-    case 'sph': g = new THREE.SphereGeometry(0.5, 16, 12); break;
-    case 'sphLow': g = new THREE.SphereGeometry(0.5, 10, 8); break;
-    case 'dome': g = new THREE.SphereGeometry(0.5, 16, 10, 0, TAU, 0, Math.PI * 0.55); break;
-    case 'cap': g = new THREE.CapsuleGeometry(0.5, 1, 5, 12); break;
+    case 'sph': g = new THREE.SphereGeometry(0.5, 12, 8); break;
+    case 'sphLow': g = new THREE.SphereGeometry(0.5, 8, 6); break;
+    case 'dome': g = new THREE.SphereGeometry(0.5, 12, 7, 0, TAU, 0, Math.PI * 0.55); break;
+    case 'cap': g = new THREE.CapsuleGeometry(0.5, 1, 3, 8); break;
     case 'plane': g = new THREE.PlaneGeometry(1, 1); break;
     case 'planeV': g = new THREE.PlaneGeometry(1, 1, 6, 8); break;
-    case 'torus': g = new THREE.TorusGeometry(0.5, 0.09, 8, 18); break;
+    case 'torus': g = new THREE.TorusGeometry(0.5, 0.09, 6, 12); break;
     default: g = new THREE.BoxGeometry(1, 1, 1);
   }
   GEO[kind] = g;
@@ -881,11 +881,12 @@ export class UnitRenderer {
     this.detailSet = null;
   }
 
-  build(buckets) {
+  build(buckets, caps) {
     for (const cls of Object.keys(this.buckets)) {
       const units = buckets[cls] || [];
-      if (!units.length) continue;
-      const cap = units.length;
+      const want = Math.max(units.length, (caps && caps[cls]) || 0);
+      if (!want) continue;
+      const cap = want;
       const dcap = Math.min(cap, this.detailCap);
       this.buckets[cls] = units;
       const defs = PART_BUILDERS[cls]();
@@ -929,7 +930,10 @@ export class UnitRenderer {
       this.scene.add(sil);
       const free = [];
       for (let i = dcap - 1; i >= 0; i--) free.push(i);
-      this.classes[cls] = { cap, dcap, parts, silhouette: sil, units, free, next: 0 };
+      // 예비 병력이 나중에 들어올 자리 (실루엣 슬롯)
+      const freeSil = [];
+      for (let i = cap - 1; i >= units.length; i--) freeSil.push(i);
+      this.classes[cls] = { cap, dcap, parts, silhouette: sil, units, free, freeSil, next: 0 };
       for (let i = 0; i < units.length; i++) {
         const u = units[i];
         u.slot = i;
@@ -945,11 +949,13 @@ export class UnitRenderer {
   addUnit(u, cls) {
     const c = this.classes[cls];
     if (!c) return false;
-    u.slot = c.cap;      // 실루엣 슬롯은 남는 자리 사용 불가 → 새 단위는 상세 전용
+    u.slot = c.freeSil && c.freeSil.length ? c.freeSil.pop() : -1;   // 남은 실루엣 자리
+    u.dslot = -1; u._tier = -1; u._slotFreed = false;
+    u.rootMat = u.rootMat || new THREE.Matrix4();
+    if (u.slot >= 0) c.silhouette.setMatrixAt(u.slot, _hiddenM);
     c.units.push(u);
     this.buckets[cls].push(u);
-    u.dslot = -1; u._tier = -1;
-    u.rootMat = u.rootMat || new THREE.Matrix4();
+    this.paintSilhouette(u, cls);
     return true;
   }
 
@@ -1061,19 +1067,39 @@ export class UnitRenderer {
     for (const cls of Object.keys(this.buckets)) {
       const c = this.classes[cls];
       if (!c) continue;
-      const list = this.buckets[cls];
+      let list = this.buckets[cls];
+      // 가끔 사라진 유닛을 목록에서 덜어낸다 (증원이 계속 들어와도 루프 길이 유지)
+      if ((this.frame & 127) === 0 && list.length > 64) {
+        list = list.filter((u) => !u.removed);
+        this.buckets[cls] = list;
+        c.units = list;
+      }
       for (let i = 0; i < list.length; i++) {
         const u = list[i];
         if (u.removed || u.hideModel) {
           if (u._tier !== -2) {
             this.releaseDetail(u);
-            if (u.slot != null) c.silhouette.setMatrixAt(u.slot, _hiddenM);
+            if (u.slot != null && u.slot >= 0) c.silhouette.setMatrixAt(u.slot, _hiddenM);
             u._tier = -2;
+          }
+          // 시체가 완전히 사라진 뒤에는 실루엣 자리를 다음 병사에게 넘긴다
+          if (u.removed && !u._slotFreed) {
+            u._slotFreed = true;
+            if (u.slot != null && u.slot >= 0) { c.freeSil.push(u.slot); u.slot = -1; }
           }
           continue;
         }
         const dx = u.x - camPos.x, dz = u.z - camPos.z;
         const d2 = dx * dx + dz * dz;
+        // 바로 코앞의 아군 몸이 1인칭 시야를 가리지 않게 잠깐 숨긴다 (적은 1.5m 이내만)
+        if (!u.isPlayer && (d2 < 2.25 || (u.team === 'ally' && d2 < 9))) {
+          if (u._tier !== -2) {
+            this.releaseDetail(u);
+            if (u.slot != null && u.slot >= 0) c.silhouette.setMatrixAt(u.slot, _hiddenM);
+            u._tier = -2;
+          }
+          continue;
+        }
         let tier;
         if (u.isPlayer) tier = 0;
         else if (d2 < 15 * 15) tier = 0;

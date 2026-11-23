@@ -127,10 +127,19 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 .army-col.ally .army-col-head { color: #8fd0ff; }
 .army-col.enemy .army-col-head { color: #ff9d8c; }
 .army-col-head i { font-style: normal; font-size: 8px; vertical-align: 1px; }
-.row { display: grid; grid-template-columns: 46px 1fr 30px; align-items: center; gap: 5px; margin: 5px 0; }
+.row { display: grid; grid-template-columns: 44px 1fr 46px; align-items: center; gap: 5px; margin: 5px 0; }
 .row label { font-size: 9.5px; color: #c9d2e0; white-space: nowrap; display: flex; align-items: center; gap: 3px; }
 .ru-icon { font-size: 10px; }
 .row output { font-size: 11px; text-align: right; color: #ffe6b8; font-variant-numeric: tabular-nums; font-weight: 600; }
+.row input.num {
+  width: 100%; height: 20px; padding: 0 3px; text-align: center;
+  font-size: 10.5px; font-weight: 600; color: #ffe6b8; font-variant-numeric: tabular-nums;
+  background: rgba(10, 14, 20, .62); border: 1px solid rgba(232, 194, 122, .32); border-radius: 5px;
+  outline: none; -moz-appearance: textfield;
+}
+.row input.num::-webkit-outer-spin-button,
+.row input.num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.row input.num:focus { border-color: rgba(255, 220, 150, .8); box-shadow: 0 0 0 1px rgba(255,220,150,.28); }
 .row input[type=range] { width: 100%; height: 18px; }
 .row input[type=range]::-webkit-slider-runnable-track {
   height: 4px; border-radius: 3px;
@@ -184,7 +193,12 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   position: absolute; top: calc(8px + env(safe-area-inset-top)); left: 10px; right: 10px;
   display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
 }
-.strength { display: flex; flex-direction: column; gap: 4px; width: 138px; }
+.strength { display: flex; flex-direction: column; gap: 4px; width: 168px; }
+.st-row { display: flex; align-items: center; gap: 5px; font-size: 9px; }
+.st-res { width: 26px; text-align: right; font-size: 8.5px; font-style: normal; color: #9fb4c8; font-variant-numeric: tabular-nums; }
+.st-note { display: flex; justify-content: flex-end; gap: 6px; padding-right: 30px; margin-top: -2px; font-size: 7px; letter-spacing: .04em; color: rgba(200,214,230,.5); }
+.st-note span { margin-right: 24px; }
+.st-note em { font-style: normal; }
 .st-row { display: flex; align-items: center; gap: 5px; font-size: 9px; }
 .st-name { width: 20px; color: var(--muted); }
 .st-bar { flex: 1; height: 5px; border-radius: 3px; background: rgba(0,0,0,.5); overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
@@ -192,6 +206,13 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 .ally .st-bar i { background: linear-gradient(90deg, #2f7fc4, #7fd0ff); }
 .enemy .st-bar i { background: linear-gradient(90deg, #a4352a, #ff8a70); }
 .st-row b { width: 30px; text-align: right; font-size: 9.5px; font-weight: 600; color: #dbe5f2; font-variant-numeric: tabular-nums; }
+.practice-tag {
+  display: none; align-self: flex-start; margin-top: 2px;
+  padding: 2px 7px; border-radius: 7px; font-size: 8.5px; letter-spacing: .04em;
+  color: #ffe6b4; background: rgba(232,194,122,.14); border: 1px solid rgba(232,194,122,.34);
+  white-space: nowrap;
+}
+.practice-tag.is-on { display: block; }
 
 .top-right { display: flex; align-items: center; gap: 6px; }
 .kill-chip {
@@ -226,6 +247,66 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 .reticle { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; opacity: .55; }
 .reticle span { position: absolute; inset: 8px; border: 1px solid rgba(255,255,255,.85); border-radius: 50%; }
 .reticle i { position: absolute; left: 50%; top: 50%; width: 2px; height: 2px; margin: -1px; background: #fff; border-radius: 50%; }
+
+/* 에임 위 적 체력 — 크로스헤어가 적에 올라갔을 때만 */
+.aim-info {
+  position: absolute; left: 50%; top: calc(50% + 34px); transform: translateX(-50%);
+  min-width: 128px; padding: 4px 8px 5px; border-radius: 8px;
+  background: rgba(10, 12, 17, .72); border: 1px solid rgba(255, 120, 90, .38);
+  box-shadow: 0 3px 12px rgba(0,0,0,.45); pointer-events: none;
+  opacity: 0; transition: opacity .1s ease;
+}
+.aim-info.is-on { opacity: 1; }
+.aim-info .ai-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.aim-info b { font-size: 10px; font-weight: 700; color: #ffd9c4; letter-spacing: .02em; }
+.aim-info span { font-size: 9px; color: #e7eef8; font-variant-numeric: tabular-nums; }
+.aim-info .ai-bar { margin-top: 3px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.16); overflow: hidden; }
+.aim-info .ai-bar i { display: block; height: 100%; width: 100%; border-radius: 2px; background: linear-gradient(90deg, #b93b2c, #ff7a60); transition: width .1s linear; }
+.aim-info .ai-bar i.is-low { background: linear-gradient(90deg, #7a1f14, #ff4a32); }
+
+/* 크로스헤어 히트 마커 — 맞았을 때만 X자가 번짝 */
+.hit-mark {
+  position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px;
+  pointer-events: none; opacity: 0; transform: scale(.6);
+}
+.hit-mark.is-on { animation: hitPop .16s ease-out forwards; }
+.hit-mark.is-kill { animation: hitPop .3s ease-out forwards; }
+.hit-mark .hm-x::before, .hit-mark .hm-x::after {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 16px; height: 2.5px;
+  margin: -1.25px 0 0 -8px; border-radius: 2px; background: #fff;
+  box-shadow: 0 0 7px rgba(255, 230, 190, .95), 0 0 2px #fff;
+}
+.hit-mark .hm-x::before { transform: rotate(45deg); }
+.hit-mark .hm-x::after { transform: rotate(-45deg); }
+.hit-mark.is-kill .hm-x::before, .hit-mark.is-kill .hm-x::after { background: #ffd76a; box-shadow: 0 0 10px rgba(255, 190, 80, .95); }
+.hit-mark .hm-dmg {
+  position: absolute; left: 50%; top: 100%; transform: translateX(-50%);
+  font-size: 11px; font-weight: 700; color: #fff2cd; text-shadow: 0 1px 4px rgba(0,0,0,.8);
+  font-variant-numeric: tabular-nums;
+}
+@keyframes hitPop {
+  0% { opacity: 1; transform: scale(1.35); }
+  60% { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 0; transform: scale(.92); }
+}
+
+/* 관전 안내 */
+.spec-hint {
+  display: none; position: absolute; left: 50%; top: calc(8px + env(safe-area-inset-top));
+  transform: translateX(-50%); padding: 4px 9px; border-radius: 8px;
+  font-size: 8.5px; letter-spacing: .02em; color: #ffe6b4; white-space: nowrap;
+  background: rgba(12, 14, 20, .7); border: 1px solid rgba(232,194,122,.32); pointer-events: none;
+}
+#battle.is-spectate .spec-hint { display: block; }
+#battle.is-spectate .hud-bottom .actions,
+#battle.is-spectate .player-status,
+#battle.is-spectate .aim-gauge,
+#battle.is-spectate .reticle,
+#battle.is-spectate .aim-info,
+#battle.is-spectate .hit-mark { display: none; }
+#battle.is-spectate .joy { opacity: 1; }
+#battle.is-spectate .hud-top { opacity: .92; }
+.hit-vignette.is-strong { background: radial-gradient(circle at 50% 55%, transparent 34%, rgba(190, 16, 12, .72) 100%); }
 
 /* 에임 아래 공속 게이지 */
 .aim-gauge {

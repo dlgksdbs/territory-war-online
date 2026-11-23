@@ -354,12 +354,13 @@ export class FX {
     this.debrisData = [];
 
     /* 불빛 번쩍임 */
+    // 점광원은 1개만, 항상 켜 둔 채 밝기만 조절한다.
+    // (visible 토글 = three가 셰이더를 다시 컴파일 → 폭발 때마다 멈칫하던 원인)
     this.lights = [];
-    for (let i = 0; i < 3; i++) {
+    {
       const l = new THREE.PointLight(0xffb070, 0, 26, 2);
-      l.visible = false;
       scene.add(l);
-      this.lights.push({ l, life: 0, max: 0.3, peak: 40 });
+      this.lights.push({ l, life: 1, max: 0.3, peak: 40 });
     }
 
     /* 검기 리본 (플레이어 + 근접 AI) */
@@ -1037,10 +1038,9 @@ export class FX {
   }
 
   lightFlash(x, y, z, color, life, peak) {
-    const l = this.lights.find((o) => o.life <= 0) || this.lights[0];
+    const l = this.lights.find((o) => o.life > o.max) || this.lights[0];
     l.l.position.set(x, y, z);
     l.l.color.setHex(color);
-    l.l.visible = true;
     l.life = 0; l.max = life; l.peak = peak;
   }
 
@@ -1276,11 +1276,10 @@ export class FX {
 
     /* 점광원 번쩍임 */
     for (const l of this.lights) {
-      if (l.life > l.max) { l.l.visible = false; continue; }
+      if (l.life > l.max) { if (l.l.intensity !== 0) l.l.intensity = 0; continue; }
       l.life += dt;
-      const k = 1 - l.life / l.max;
+      const k = Math.max(0, 1 - l.life / l.max);
       l.l.intensity = l.peak * k * k;
-      if (l.life > l.max) l.l.visible = false;
     }
 
     /* 검기 리본 — 근접 공격 중인 유닛 */
@@ -1382,7 +1381,7 @@ export class FX {
     this.debrisData.length = 0;
     this.playerTrail.clear();
     for (const t of this.trailPool) t.clear();
-    for (const l of this.lights) { l.l.visible = false; l.life = 0; }
+    for (const l of this.lights) { l.l.intensity = 0; l.life = 1e9; }
     this.shake = 0;
   }
 }

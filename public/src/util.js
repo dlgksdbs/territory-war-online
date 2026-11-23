@@ -64,3 +64,11 @@ export function rgbOf(hex) { return { r: ((hex >> 16) & 255) / 255, g: ((hex >> 
 
 /* 시작/끝 시각을 가진 스케줄을 진행도로 평가 */
 export function seg(t, a, b) { return clamp((t - a) / Math.max(0.0001, b - a), 0, 1); }
+
+/* 조이스틱 입력(nx=오른쪽, nz=앞) → 세계 좌표 이동 벡터
+   yaw 는 '바라보는 방향'( sin(yaw), cos(yaw) = 정면 ). 화면 기준 전후좌우가
+   그대로 월드에 대응하도록 오른쪽 축은 (-cos, sin) 이다. */
+export function joyToWorld(yaw, nx, nz) {
+  const s = Math.sin(yaw), c = Math.cos(yaw);
+  return { x: s * (nz || 0) - c * (nx || 0), z: c * (nz || 0) + s * (nx || 0) };
+}

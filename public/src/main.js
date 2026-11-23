@@ -378,6 +378,8 @@ class App {
     this._initialEnemy = this.battle.countAlive('enemy');
     this.vm.setClass(this.cfg.playerClass);
     this.camMode = 'fp';
+    // 시작 첫 프레임부터 자기 몸이 1인칭 시야를 가리지 않도록
+    if (this.battle.player) this.battle.player.hideModel = true;
     this.camYaw = Math.PI;
     this.camPitch = -0.05;
     this.cam.fov = 62;
@@ -689,8 +691,35 @@ class App {
       if (this.camMode === 'fp' && this.vm.enabled && !this.debugCam) {
         if (p.attackT >= 0) {
           const base = _v1, tip = _v2;
-          if (this.vm.bladePoints(base, tip)) this.fx.playerBlade(base, tip, 1.25);
+          if (this.vm.bladePoints(base, tip)) {
+            this.fx.playerBlade(base, tip, 1.55);
+            this.fx.spawnBladeSparks(base, tip, p.cls);
+          }
         }
+        // 타격 순간 전방에 선명한 초승달 검기를 그린다
+        const atkNow = p.attackT;
+        if (atkNow < 0 || atkNow < (this._prevAtk || 0)) this._arcSpawned = false;
+        if (atkNow >= 0 && !this._arcSpawned && atkNow >= impactAt(p.cls) - 0.03) {
+          this._arcSpawned = true;
+          const petal = p.cls === 'blademaster';
+          const d = p.cls === 'knight' ? 3.6 : 3.2;
+          const ax = p.x + Math.sin(p.yaw) * d;
+          const az = p.z + Math.cos(p.yaw) * d;
+          this.fx.spawnArc(ax, 1.12, az, p.yaw, p.cls === 'knight' ? 0.86 : petal ? 0.62 : 0.56,
+            'blade', 0.17, petal ? 0xffd0e6 : 0xeaf9ff, 0.06);
+          if (petal) {
+            for (let i = 0; i < 12; i++) {
+              const a = this.fx.rng() * TAU;
+              this.fx.petals.spawn({
+                x: ax + Math.cos(a) * 0.6, y: 1.0 + (this.fx.rng() - 0.5) * 1.2, z: az + Math.sin(a) * 0.6,
+                vx: Math.cos(a) * (0.8 + this.fx.rng() * 2.2), vy: 0.5 + this.fx.rng() * 2.0, vz: Math.sin(a) * (0.8 + this.fx.rng() * 2.2),
+                life: 0.7 + this.fx.rng() * 0.8, size: 0.06 + this.fx.rng() * 0.07,
+                r: 1, g: 0.82, b: 0.93, alpha: 0.95, gravity: -3.0, drag: 1.3, grow: 0.04, fade: 1.1
+              });
+            }
+          }
+        }
+        this._prevAtk = atkNow;
       }
     }
 

@@ -82,65 +82,243 @@ export function buildWorld(scene, renderer) {
   sunSprite.renderOrder = -9;
   scene.add(sunSprite);
 
-  /* 구름 — 하늘에 떠서 아주 느리게 흐른다 */
+  /* 구름 — 지평선에 낮게 깔린 구름층 + 높이 떠 있는 권운, 아주 느리게 흐른다 */
   const cloudMap = cloudTexture();
+  const cloudMapHi = cloudTexture(true);
   const clouds = [];
-  for (let i = 0; i < 16; i++) {
+  // 지평선 구름층: 크고 낮게, 노을빛을 받아 아래쪽이 붉게 물든다
+  for (let i = 0; i < 26; i++) {
+    const a = (i / 26) * TAU + rng() * 0.18;
+    const r = 250 + rng() * 120;
+    const low = rng() < 0.62;
     const m = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: cloudMap, transparent: true, opacity: 0.25 + rng() * 0.4,
-      depthWrite: false, fog: false, color: i % 3 === 0 ? 0xffd8b0 : 0xd8e4f4
+      map: low ? cloudMap : cloudMapHi, transparent: true,
+      opacity: low ? 0.42 + rng() * 0.34 : 0.16 + rng() * 0.2,
+      depthWrite: false, fog: false,
+      color: low ? (rng() < 0.5 ? 0xffcfa8 : 0xf0c6bc) : 0xa9b8d4
     }));
-    const a = rng() * TAU, r = 200 + rng() * 160;
-    m.position.set(Math.cos(a) * r, 46 + rng() * 90, Math.sin(a) * r);
-    const s = 90 + rng() * 170;
-    m.scale.set(s, s * 0.55, 1);
+    m.position.set(Math.cos(a) * r, low ? 22 + rng() * 26 : 78 + rng() * 70, Math.sin(a) * r);
+    const s = low ? 150 + rng() * 210 : 190 + rng() * 260;
+    m.scale.set(s, s * (low ? 0.4 : 0.28), 1);
     m.renderOrder = -8;
     scene.add(m);
-    clouds.push({ m, speed: 0.55 + rng() * 0.9, a, r });
+    clouds.push({ m, speed: 0.35 + rng() * 0.7, a, r });
   }
 
   /* ------------------------------------------------------ 원경 산맥 */
-  const ridgeMat = new THREE.MeshBasicMaterial({ color: 0x6a6f86, fog: true, transparent: true, opacity: 0.9 });
-  const ridgeMat2 = new THREE.MeshBasicMaterial({ color: 0x4a5068, fog: true, transparent: true, opacity: 0.75 });
-  for (let layer = 0; layer < 2; layer++) {
-    const group = new THREE.Group();
-    const R = 240 + layer * 90;
-    for (let i = 0; i < 26; i++) {
-      const a = (i / 26) * TAU + layer * 0.11;
-      const h = 34 + rng() * 70 + layer * 26;
-      const w = 40 + rng() * 70;
-      const geo = new THREE.ConeGeometry(w, h, 4 + ((i + layer) % 3), 1);
-      // 뾰족한 산이 아니라 봉우리 능선처럼: 윗부분을 눌러 비스듬히
-      const m = new THREE.Mesh(geo, layer === 0 ? ridgeMat : ridgeMat2);
-      m.position.set(Math.cos(a) * R, h * 0.5 - 8, Math.sin(a) * R);
-      m.rotation.y = rng() * TAU;
-      m.scale.z = 0.55 + rng() * 0.5;
-      group.add(m);
+  // 원기 원근: 먼 능선일수록 하늘색에 가깝게, 봉우리에는 눈·안개 하이라이트
+  const ridgeShaders = [];
+  const makeRidgeMat = (base, top, haze) => {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uBase: { value: new THREE.Color(base) },
+        uTop: { value: new THREE.Color(top) },
+        uHaze: { value: haze },
+        uY0: { value: -10 }, uY1: { value: 120 }
+      },
+      vertexShader: `
+varying vec3 vW;
+void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+      fragmentShader: `
+uniform vec3 uBase; uniform vec3 uTop; uniform float uHaze;
+varying vec3 vW;
+void main(){
+  float h = clamp((vW.y + 6.0) / 96.0, 0.0, 1.0);
+  vec3 col = mix(uBase, uTop, pow(h, 0.75));
+  // 지평선 쪽은 더 뿌옇게(대기 원근)
+  col = mix(col, vec3(0.86, 0.66, 0.55), clamp(uHaze * (1.0 - h * 0.85), 0.0, 1.0));
+  gl_FragColor = vec4(col, 1.0);
+}`,
+      fog: false,
+      side: THREE.DoubleSide
+    });
+    ridgeShaders.push(mat);
+    return mat;
+  };
+  const ridgeMats = [
+    makeRidgeMat(0xa08d87, 0xd3b29a, 0.55),   // 가장 먼 능선 — 안개에 잠김
+    makeRidgeMat(0x8a8195, 0xb99fa4, 0.32),   // 중간 능선
+    makeRidgeMat(0x5b5470, 0x877a8f, 0.12)    // 가까운 능선
+  ];
+  // 봉우리 능선을 이어 붙인 한 장의 산맥 띠 — 종이 삼각형이 아니라 부드러운 실루엣
+  const buildRidge = (layer) => {
+    const R = 300 + layer * 62;
+    const segs = 240;
+    const pos = new Float32Array((segs + 1) * 2 * 3);
+    const idx = [];
+    const baseY = -26;
+    for (let i = 0; i <= segs; i++) {
+      const a = (i / segs) * TAU;
+      const nx = Math.cos(a), nz = Math.sin(a);
+      // 여러 주기의 fbm으로 봉우리·고개를 만든다
+      const n1 = fbm(nx * 2.3 + layer * 7.1, nz * 2.3 - layer * 3.7, 4);
+      const n2 = fbm(nx * 6.1 - layer * 2.3, nz * 6.1 + layer * 5.3, 3);
+      const peak = Math.pow(clamp(n1 * 0.85 + n2 * 0.35, 0, 1), 1.15);
+      const h = 20 + peak * (layer === 0 ? 128 : layer === 1 ? 104 : 78) + Math.sin(a * 3 + layer) * 5;
+      const p0Y = layer === 2 ? baseY : baseY - layer * 6;
+      pos[i * 6 + 0] = nx * R; pos[i * 6 + 1] = p0Y; pos[i * 6 + 2] = nz * R;
+      pos[i * 6 + 3] = nx * R; pos[i * 6 + 4] = h; pos[i * 6 + 5] = nz * R;
+      if (i < segs) {
+        const b = i * 2;
+        idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2);
+      }
     }
-    scene.add(group);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    const m = new THREE.Mesh(g, ridgeMats[layer]);
+    m.frustumCulled = false;
+    m.renderOrder = -7 + layer;
+    return m;
+  };
+  for (let layer = 0; layer < 3; layer++) scene.add(buildRidge(layer));
+
+  /* 원경 성채 — 돌로 쌓은 성곽: 주성·원형 탑·성가퀴·불빛 창·횃불·깃발 */
+  const castle = new THREE.Group();
+  const castleStone = stoneMaps(512);
+  const cTex = castleStone.albedo.clone();
+  cTex.wrapS = cTex.wrapT = THREE.RepeatWrapping;
+  cTex.repeat.set(7, 5);
+  cTex.needsUpdate = true;
+  const cNor = castleStone.normal.clone();
+  cNor.wrapS = cNor.wrapT = THREE.RepeatWrapping;
+  cNor.repeat.set(7, 5);
+  cNor.needsUpdate = true;
+  const castleMat = new THREE.MeshStandardMaterial({
+    map: cTex, normalMap: cNor, normalScale: new THREE.Vector2(1.1, 1.1),
+    color: 0xbdb0a1, emissive: 0x2e231b, emissiveIntensity: 0.9,
+    roughness: 0.94, metalness: 0.02, envMapIntensity: 0.45
+  });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x353039, roughness: 0.7, metalness: 0.1, envMapIntensity: 0.6 });
+  const darkStoneMat = new THREE.MeshStandardMaterial({ map: cTex, color: 0x93887c, emissive: 0x201812, emissiveIntensity: 0.85, roughness: 0.95, metalness: 0.02 });
+
+  // 성벽 + 성가퀴(흉벽)
+  const curtain = new THREE.Mesh(new THREE.BoxGeometry(150, 24, 16), castleMat);
+  curtain.position.set(0, 11, 0);
+  castle.add(curtain);
+  const merlonGeo = new THREE.BoxGeometry(3.0, 2.6, 17.6);
+  const merlons = new THREE.InstancedMesh(merlonGeo, castleMat, 46);
+  const mm = new THREE.Matrix4();
+  for (let i = 0; i < 46; i++) {
+    mm.makeTranslation(-72 + i * 3.2, 24.2, 0);
+    merlons.setMatrixAt(i, mm);
+  }
+  merlons.instanceMatrix.needsUpdate = true;
+  castle.add(merlons);
+  // 벽 하단 어깨(경사면)
+  const batter = new THREE.Mesh(new THREE.BoxGeometry(154, 4.4, 20), darkStoneMat);
+  batter.position.set(0, -0.2, 0);
+  castle.add(batter);
+
+  // 주성(키프)
+  const keep = new THREE.Mesh(new THREE.BoxGeometry(46, 44, 38), castleMat);
+  keep.position.set(-4, 21, -12);
+  castle.add(keep);
+  const keepMerlon = new THREE.InstancedMesh(new THREE.BoxGeometry(3.0, 2.8, 4.2), castleMat, 28);
+  for (let i = 0; i < 28; i++) {
+    if (i < 14) mm.makeTranslation(-26 + i * 3.4, 44, -12 + 17);   // 앞쪽 흉벽
+    else mm.makeTranslation(-26 + (i - 14) * 3.4, 44, -12 - 17);   // 뒤쪽 흉벽
+    keepMerlon.setMatrixAt(i, mm);
+  }
+  keepMerlon.instanceMatrix.needsUpdate = true;
+  castle.add(keepMerlon);
+
+  // 원형 탑 — 기단이 넓고 위로 좁아지는 성벽 탑
+  const towerPos = [-78, -54, 46, 70, -4];
+  towerPos.forEach((tx, ti) => {
+    const zz = ti === 4 ? -34 : 2;
+    const h = ti === 4 ? 72 : 50 + rng() * 12;
+    const rad = ti === 4 ? 9.5 : 7 + rng() * 2;
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.88, rad * 1.12, h, 12), castleMat);
+    t.position.set(tx, h / 2 - 1, zz);
+    castle.add(t);
+    const ring = new THREE.Mesh(new THREE.CylinderGeometry(rad * 1.02, rad * 1.02, 1.8, 12), darkStoneMat);
+    ring.position.set(tx, h - 4, zz);
+    castle.add(ring);
+    // 성가퀴
+    for (let k = 0; k < 10; k++) {
+      const a = (k / 10) * TAU;
+      const b = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.2, 1.2), castleMat);
+      b.position.set(tx + Math.cos(a) * rad * 1.05, h + 0.6, zz + Math.sin(a) * rad * 1.05);
+      b.rotation.y = -a;
+      castle.add(b);
+    }
+    // 뾰족 지붕 + 깃대
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(rad * 1.14, 26 + ti * 2, 12), roofMat);
+    roof.position.set(tx, h + 14, zz);
+    castle.add(roof);
+    if (ti < 3) {
+      const poleM = new THREE.MeshBasicMaterial({ color: 0x2a2622 });
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 12, 6), poleM);
+      pole.position.set(tx, h + 30, zz);
+      castle.add(pole);
+    }
+  });
+  // 성문 — 거대한 아치와 철문
+  const gate = new THREE.Mesh(new THREE.BoxGeometry(18, 20, 3), new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: 0.8, metalness: 0.35 }));
+  gate.position.set(0, 8, 8.6);
+  castle.add(gate);
+  const gateArch = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 3, 16, 1, false, 0, Math.PI), castleMat);
+  gateArch.rotation.z = 0; gateArch.rotation.x = Math.PI / 2;
+  gateArch.position.set(0, 18, 8.6); castle.add(gateArch);
+
+  // 불빛 창 (인스턴스) — 따뜻한 등불
+  const winGeo = new THREE.PlaneGeometry(1.9, 3.0);
+  const winMat = new THREE.MeshBasicMaterial({ color: 0xffb469, transparent: true, opacity: 0.95 });
+  const wins = new THREE.InstancedMesh(winGeo, winMat, 90);
+  let wi = 0;
+  for (let row = 0; row < 4; row++) {
+    for (let i = 0; i < 7; i++) {
+      mm.makeTranslation(-24 + i * 6.4, 14 + row * 11, -12 + 19.1);
+      if (wi < 90) wins.setMatrixAt(wi++, mm);
+    }
+  }
+  for (let i = 0; i < 9; i++) {
+    mm.makeTranslation(-66 + i * 15.5, 12 + (i % 3) * 4, 8.1);
+    if (wi < 90) wins.setMatrixAt(wi++, mm);
+  }
+  for (; wi < 90; wi++) wins.setMatrixAt(wi, new THREE.Matrix4().makeScale(0, 0, 0));
+  wins.instanceMatrix.needsUpdate = true;
+  castle.add(wins);
+  out.castleWindows = wins;
+  out.castleWindowMat = winMat;
+
+  // 성벽 위 횃불 불빛
+  const cFlame = flameTexture();
+  for (let i = 0; i < 8; i++) {
+    const fx0 = -60 + i * 17;
+    const f = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: cFlame, color: 0xffa452, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, opacity: 0.85, fog: false
+    }));
+    f.position.set(fx0, 26.6, 8.6);
+    f.scale.set(3.4, 5.0, 1);
+    castle.add(f);
+    const gl = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTex, color: 0xff8b3a, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, opacity: 0.34, fog: false
+    }));
+    gl.position.copy(f.position);
+    gl.scale.set(13, 13, 1);
+    castle.add(gl);
   }
 
-  /* 원경 성채 — 안개 속 실루엣 + 불빛 창 */
-  const castle = new THREE.Group();
-  const castleMat = new THREE.MeshBasicMaterial({ color: 0x3c3a4b, fog: true });
-  const keep = new THREE.Mesh(new THREE.BoxGeometry(48, 54, 40), castleMat);
-  keep.position.y = 27; castle.add(keep);
-  for (let i = 0; i < 9; i++) {
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(6 + rng() * 4, 7 + rng() * 4, 40 + rng() * 46, 8), castleMat);
-    t.position.set(-46 + i * 12 + rng() * 4, 26 + rng() * 16, (rng() - 0.5) * 28);
-    castle.add(t);
-    const roof = new THREE.Mesh(new THREE.ConeGeometry(9, 22, 8), new THREE.MeshBasicMaterial({ color: 0x2a2738, fog: true }));
-    roof.position.set(t.position.x, t.position.y + 20 + 11, t.position.z);
-    castle.add(roof);
-  }
-  const winMat = new THREE.MeshBasicMaterial({ color: 0xffb060, fog: true });
-  for (let i = 0; i < 34; i++) {
-    const w = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2.6), winMat);
-    w.position.set(-40 + rng() * 90, 10 + rng() * 52, 20.4);
-    castle.add(w);
-  }
-  castle.position.set(-20, -3, 158);
-  castle.rotation.y = 0.06;
+  // 탑 위에 나부끼는 깃발
+  const castleFlagTex = bannerTexture(0x8f2b2b, 'KING');
+  out.castleFlags = [];
+  [[-78, 52], [46, 56], [-4, 74]].forEach(([tx, ty], i) => {
+    const fg = new THREE.PlaneGeometry(9, 14, 8, 10);
+    const cloth = new THREE.Mesh(fg, new THREE.MeshStandardMaterial({
+      map: castleFlagTex, side: THREE.DoubleSide, roughness: 0.9, metalness: 0.02, envMapIntensity: 0.3
+    }));
+    cloth.position.set(tx + 4.6, ty + 21, i === 2 ? -34 : 2);
+    castle.add(cloth);
+    out.castleFlags.push({ cloth, base: fg.attributes.position.array.slice(), ph: rng() * TAU });
+  });
+
+  castle.position.set(-26, -6, 232);
+  castle.rotation.y = 0.04;
+  castle.scale.setScalar(1.06);
   scene.add(castle);
 
   /* ---------------------------------------------- PMREM 환경 반사맵 */
@@ -414,9 +592,10 @@ export function buildWorld(scene, renderer) {
 
   /* ------------------------------------------------------- 횃불 */
   const flameMap = flameTexture();
+  // 스폰 지점(0, -21.5) 정면 시야를 가리지 않도록 중앙 축에서 비켜 배치한다
   const torchSpots = [
     { x: 14.5, z: -10 }, { x: -14.5, z: -10 }, { x: 14.5, z: 10 }, { x: -14.5, z: 10 },
-    { x: 0, z: -17 }, { x: 0, z: 17 }
+    { x: 9.5, z: -16.5 }, { x: -9.5, z: -16.5 }
   ];
   torchSpots.forEach((t, i) => {
     const gy = terrainHeight(t.x, t.z);
@@ -507,6 +686,27 @@ export function buildWorld(scene, renderer) {
       }
       b.cloth.geometry.attributes.position.needsUpdate = true;
       b.cloth.geometry.computeVertexNormals();
+    }
+    // 성벽 깃발도 같은 바람에 나부낀다
+    if (out.castleFlags) {
+      for (const b of out.castleFlags) {
+        const arr = b.cloth.geometry.attributes.position.array;
+        const base = b.base;
+        const n = arr.length / 3;
+        for (let i = 0; i < n; i++) {
+          const x = base[i * 3], y = base[i * 3 + 1];
+          const w = (x + 4.5) / 9;
+          arr[i * 3 + 2] = (Math.sin(t * 2.1 + b.ph + y * 0.9 + w * 2.6) * 0.5 + Math.sin(t * 3.7 + b.ph + x * 1.7) * 0.16) * w;
+          arr[i * 3 + 1] = y - w * w * 0.5;
+        }
+        b.cloth.geometry.attributes.position.needsUpdate = true;
+        b.cloth.geometry.computeVertexNormals();
+      }
+    }
+    // 창문 등불이 느리게 흔들린다
+    if (out.castleWindowMat) {
+      out.castleWindowMat.opacity = 0.82 + Math.sin(t * 1.7) * 0.07 + Math.sin(t * 3.9 + 1.2) * 0.05;
+      if (out.castleWindows) out.castleWindows.material.color.setHSL(0.075, 0.85, 0.52 + Math.sin(t * 0.9) * 0.05);
     }
     runeMat.opacity = 0.34 + Math.sin(t * 1.6) * 0.1;
     rune.rotation.z = t * 0.06;

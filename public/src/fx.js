@@ -6,7 +6,7 @@
    · 접지 그림자 · 피 묻은 자국 · 땅이 갈라지는 충격파
    ============================================================================= */
 import * as THREE from 'three';
-import { glowTexture, smokeTexture, arcTexture, woundTexture, flameTexture, blobTexture, petalTexture } from './textures.js';
+import { glowTexture, smokeTexture, arcTexture, woundTexture, flameTexture, blobTexture, petalTexture, scorchTexture } from './textures.js';
 import { clamp, lerp, mulberry32, TAU, easeOutCubic } from './util.js';
 import { CLASSES, SPELLS, SKILL, impactAt } from './config.js';
 import { J } from './rig.js';
@@ -250,12 +250,12 @@ export class FX {
 
     /* 검기 섬광 (초승달) */
     this.arcs = [];
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 26; i++) {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
         map: this.arcTex.blade, transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
         depthWrite: false, side: THREE.DoubleSide, color: 0xffffff
       }));
-      m.matrixAutoUpdate = false;
+      m.matrixAutoUpdate = true;   // 위치·회전·스케일이 매 프레임 반영되어야 검기가 제자리에 그려진다
       m.visible = false;
       m.renderOrder = 7;
       scene.add(m);
@@ -371,6 +371,48 @@ export class FX {
     this.playerTrail = new Trail(scene, 0xbfe6ff, 14);
     this.playerTrail.k = 1.4;
 
+    /* 불꽃 덩어리 · 연기 기둥 (폭발용 스프라이트 풀) */
+    this.puffs = [];
+    for (let i = 0; i < 46; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.flameTex, transparent: true, blending: THREE.AdditiveBlending,
+        depthWrite: false, opacity: 0, fog: false
+      }));
+      s.visible = false;
+      s.renderOrder = 7;
+      scene.add(s);
+      this.puffs.push({ s, life: 0, max: 0.5, v: new THREE.Vector3(), grow: 1, spin: 0, a0: 1 });
+    }
+    this.puffIdx = 0;
+    this.smokePuffs = [];
+    for (let i = 0; i < 30; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: smokeTexture(), transparent: true, depthWrite: false, opacity: 0, fog: false
+      }));
+      s.visible = false;
+      s.renderOrder = 5;
+      scene.add(s);
+      this.smokePuffs.push({ s, life: 0, max: 1.5, v: new THREE.Vector3(), grow: 1, a0: 0.5 });
+    }
+    this.smokeIdx = 0;
+
+    /* 바닥 그을음 · 균열 데칼 */
+    this.scorches = [];
+    const scTex = scorchTexture();
+    for (let i = 0; i < 14; i++) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
+        map: scTex, transparent: true, opacity: 0, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -3, color: 0xffffff, fog: true
+      }));
+      m.rotation.x = -Math.PI / 2;
+      m.position.y = 0.035;
+      m.renderOrder = 2;
+      m.visible = false;
+      scene.add(m);
+      this.scorches.push({ m, life: 0, max: 9, r: 3 });
+    }
+    this.scorchIdx = 0;
+
     /* 접지 그림자 */
     this.shadowMesh = null;
 
@@ -439,16 +481,17 @@ export class FX {
     // 상흔
     this.spawnWound(t, heavy ? 'crush' : 'blade', e.angle);
     if (petal) {
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0; i < 22; i++) {
         const a2 = this.rng() * TAU;
         this.petals.spawn({
           x: px, y: py, z: pz,
-          vx: Math.cos(a2) * (0.5 + this.rng() * 2.2), vy: 0.4 + this.rng() * 1.8, vz: Math.sin(a2) * (0.5 + this.rng() * 2.2),
-          life: 0.7 + this.rng() * 0.7, size: 0.10 + this.rng() * 0.12,
+          vx: Math.cos(a2) * (0.5 + this.rng() * 3.0), vy: 0.4 + this.rng() * 2.4, vz: Math.sin(a2) * (0.5 + this.rng() * 3.0),
+          life: 0.7 + this.rng() * 0.9, size: 0.07 + this.rng() * 0.08,
           r: 1, g: 0.82, b: 0.92, alpha: 0.95, gravity: -3.2, drag: 1.4, grow: 0.05, fade: 1.1
         });
       }
-      this.spawnArc(px, py, pz, e.angle || 0, 1.8, 'blade', 0.16);
+      this.spawnArc(px, py, pz, e.angle || 0, 2.1, 'blade', 0.16, 0xffb4d8);
+      this.flash(px, py, pz, 0.8, 0xffd0e8, 0.1);
     }
     // 불꽃
     const n = near ? (heavy ? 30 : 18) : (heavy ? 12 : 7);
@@ -483,7 +526,7 @@ export class FX {
     this.flash(px, py, pz, heavy ? 1.5 : 0.85, heavy ? 0xffcf80 : 0xffffff, 0.10);
     // 검기 섬광
     if (!heavy && near) {
-      this.spawnArc(px, py, pz, e.angle || (s ? s.yaw : 0), 1.5 + rng() * 0.3, 'blade', 0.15);
+      this.spawnArc(px, py, pz, e.angle || (s ? s.yaw : 0), 1.5 + rng() * 0.3, 'blade', 0.15, petal ? 0xffb4d8 : undefined);
     }
     if (heavy && near) {
       this.ring(px, 0.06, pz, 2.4, 0xc9a06a, 0.35);
@@ -567,54 +610,112 @@ export class FX {
   onExplode(e, battle) {
     const x = e.x, z = e.z, r = e.radius || 3.5;
     const dist = this.camera.position.distanceTo(_v1.set(x, 0, z));
-    this.addShake(dist < 30 ? 0.6 : 0.18);
-    // 팽창 구체
-    const b = this.blasts[this.blastIdx++ % this.blasts.length];
-    b.mesh.position.set(x, 1.1, z);
-    b.mesh.scale.setScalar(r * 0.35);
-    b.mesh.material.color.setHex(0xffb070);
-    b.mesh.material.opacity = 0.95;
-    b.mesh.visible = true;
-    b.life = 0; b.max = 0.42; b.r = r;
-    // 불꽃 + 연기 + 재
-    for (let i = 0; i < 60; i++) {
+    const near = dist < 34;
+    this.addShake(dist < 30 ? 0.72 : 0.22);
+
+    /* 1) 충격 명편 — 바닥을 훑는 두 겹의 파동 + 밀려나는 먼지 */
+    this.ring(x, 0.07, z, r * 1.75, 0xffd8a0, 0.5);
+    this.ring(x, 0.11, z, r * 1.05, 0xfff4d0, 0.32);
+    for (let i = 0; i < 30; i++) {
       const a = this.rng() * TAU;
-      const sp = 1 + this.rng() * 8;
-      this.sparks.spawn({
-        x: x + Math.cos(a) * 0.3, y: 0.5 + this.rng() * 0.8, z: z + Math.sin(a) * 0.3,
-        vx: Math.cos(a) * sp, vy: 0.4 + this.rng() * 5.5, vz: Math.sin(a) * sp,
-        life: 0.3 + this.rng() * 0.6, size: 0.08 + this.rng() * 0.18,
-        r: 1, g: 0.35 + this.rng() * 0.5, b: 0.1, gravity: -7, drag: 1.6, fade: 1.3
-      });
-    }
-    for (let i = 0; i < 26; i++) {
-      const a = this.rng() * TAU;
-      const sp = 1 + this.rng() * 4;
       this.dust.spawn({
-        x: x + Math.cos(a) * 0.4, y: 0.4 + this.rng() * 0.9, z: z + Math.sin(a) * 0.4,
-        vx: Math.cos(a) * sp, vy: 0.6 + this.rng() * 2.6, vz: Math.sin(a) * sp,
-        life: 0.7 + this.rng() * 0.9, size: 0.5 + this.rng() * 0.9,
-        r: 0.28, g: 0.24, b: 0.22, alpha: 0.5, gravity: 0.8, drag: 1.4, grow: 1.4, fade: 1.2
+        x: x + Math.cos(a) * 0.5, y: 0.12, z: z + Math.sin(a) * 0.5,
+        vx: Math.cos(a) * (3 + this.rng() * 5), vy: 0.3 + this.rng() * 1.2, vz: Math.sin(a) * (3 + this.rng() * 5),
+        life: 0.55 + this.rng() * 0.7, size: 0.45 + this.rng() * 0.8,
+        r: 0.66, g: 0.56, b: 0.44, alpha: 0.42, gravity: 0.3, drag: 2.2, grow: 1.3, fade: 1.2
       });
     }
-    this.ring(x, 0.1, z, r * 1.6, 0xffa050, 0.5);
-    this.ring(x, 0.2, z, r * 1.05, 0xfff0c0, 0.35);
-    for (let i = 0; i < 10; i++) {
+
+    /* 2) 다층 발광 코어 — 흰 중심 → 주황 불기둥 → 붉은 잔열 */
+    const b0 = this.blasts[this.blastIdx++ % this.blasts.length];
+    b0.mesh.position.set(x, 1.05, z);
+    b0.mesh.scale.setScalar(r * 0.32);
+    b0.mesh.material.color.setHex(0xfff2d0);
+    b0.mesh.material.opacity = 1;
+    b0.mesh.visible = true;
+    b0.life = 0; b0.max = 0.2; b0.r = r * 0.52;
+    const b1 = this.blasts[this.blastIdx++ % this.blasts.length];
+    b1.mesh.position.set(x, 1.25, z);
+    b1.mesh.scale.setScalar(r * 0.28);
+    b1.mesh.material.color.setHex(0xff8c2e);
+    b1.mesh.material.opacity = 0.92;
+    b1.mesh.visible = true;
+    b1.life = 0; b1.max = 0.34; b1.r = r * 0.72;
+
+    /* 3) 솟구치는 불꽃 덩어리 — 공 모양이 아니라 위로 피어오르는 혀 모양 */
+    const tongues = near ? 16 : 8;
+    for (let i = 0; i < tongues; i++) {
+      const a = this.rng() * TAU;
+      const rad = Math.pow(this.rng(), 0.6) * r * 0.75;
+      const p = this.puffs[this.puffIdx++ % this.puffs.length];
+      p.s.position.set(x + Math.cos(a) * rad, 0.35 + this.rng() * 0.7, z + Math.sin(a) * rad);
+      const sc = 1.1 + this.rng() * 2.3;
+      p.s.scale.set(sc * 0.9, sc * 1.35, 1);
+      p.s.material.color.setHSL(0.045 + this.rng() * 0.045, 0.98, 0.46 + this.rng() * 0.1);
+      p.s.material.rotation = this.rng() * TAU;
+      p.s.visible = true;
+      p.life = 0; p.max = 0.34 + this.rng() * 0.45;
+      p.v.set(Math.cos(a) * (0.8 + this.rng() * 2.0), 1.4 + this.rng() * 3.4, Math.sin(a) * (0.8 + this.rng() * 2.0));
+      p.grow = 2.6 + this.rng() * 2.4;
+      p.a0 = 0.62;
+    }
+
+    /* 4) 불티 파티클 */
+    for (let i = 0; i < 84; i++) {
+      const a = this.rng() * TAU;
+      const sp = 1.5 + this.rng() * 9;
+      this.sparks.spawn({
+        x: x + Math.cos(a) * 0.35, y: 0.5 + this.rng() * 1.0, z: z + Math.sin(a) * 0.35,
+        vx: Math.cos(a) * sp, vy: 0.8 + this.rng() * 7, vz: Math.sin(a) * sp,
+        life: 0.35 + this.rng() * 0.75, size: 0.05 + this.rng() * 0.14,
+        r: 1, g: 0.45 + this.rng() * 0.5, b: 0.12, gravity: -6.5, drag: 1.35, fade: 1.25
+      });
+    }
+    /* 타는 재 — 어둡게 날아 올랐다가 천천히 흩어진다 */
+    for (let i = 0; i < 18; i++) {
+      const a = this.rng() * TAU;
+      this.dust.spawn({
+        x: x + Math.cos(a) * 0.4, y: 1.2 + this.rng(), z: z + Math.sin(a) * 0.4,
+        vx: Math.cos(a) * (1 + this.rng() * 2.6), vy: 1.4 + this.rng() * 3.4, vz: Math.sin(a) * (1 + this.rng() * 2.6),
+        life: 0.9 + this.rng() * 1.1, size: 0.16 + this.rng() * 0.28,
+        r: 0.16, g: 0.14, b: 0.13, alpha: 0.55, gravity: -0.4, drag: 1.1, grow: 0.6
+      });
+    }
+
+    /* 5) 상승 연기 기둥 */
+    const smokeN = near ? 16 : 8;
+    for (let i = 0; i < smokeN; i++) {
+      const sp = this.smokePuffs[this.smokeIdx++ % this.smokePuffs.length];
+      const a = this.rng() * TAU, rad = Math.pow(this.rng(), 0.5) * r * 0.55;
+      sp.s.position.set(x + Math.cos(a) * rad, 1.0 + this.rng() * 0.8, z + Math.sin(a) * rad);
+      const sc = 1.4 + this.rng() * 2.2;
+      sp.s.scale.set(sc, sc * 0.85, 1);
+      sp.s.material.color.setHSL(0.05, 0.35, 0.10 + this.rng() * 0.07);
+      sp.s.material.rotation = this.rng() * TAU;
+      sp.s.material.opacity = 0;
+      sp.s.visible = true;
+      sp.life = 0; sp.max = 1.3 + this.rng() * 1.1;
+      sp.v.set(Math.cos(a) * (0.5 + this.rng() * 1.2), 1.1 + this.rng() * 1.5, Math.sin(a) * (0.5 + this.rng() * 1.2));
+      sp.grow = 1.5 + this.rng() * 1.1;
+      sp.a0 = 0.34 + this.rng() * 0.16;
+    }
+
+    /* 6) 바닥 균열 · 그을음 데칼 */
+    const sc = this.scorches[this.scorchIdx++ % this.scorches.length];
+    sc.m.position.set(x, 0.035, z);
+    sc.m.scale.setScalar(r * 2.3);
+    sc.m.material.opacity = 0;
+    sc.m.visible = true;
+    sc.life = 0; sc.max = 9; sc.r = r;
+
+    /* 7) 재 · 돌 조각 · 섬광 */
+    for (let i = 0; i < 12; i++) {
       const a = this.rng() * TAU;
       this.spawnDebris(x, 0.3, z, Math.cos(a) * (3 + this.rng() * 6), 4 + this.rng() * 5, Math.sin(a) * (3 + this.rng() * 6), 1.2);
     }
-    this.flash(x, 1.2, z, r * 2.4, 0xffa050, 0.32);
-    this.flashGround(x, z, r * 1.1);
-    this.lightFlash(x, 1.4, z, 0xff9a40, 0.35, 70);
-    // 지면 그을음
-    for (let i = 0; i < 16; i++) {
-      const a = this.rng() * TAU, rr = this.rng() * r;
-      this.dust.spawn({
-        x: x + Math.cos(a) * rr, y: 0.06, z: z + Math.sin(a) * rr,
-        vx: 0, vy: 0.2 + this.rng() * 0.5, vz: 0, life: 0.9 + this.rng() * 1.2,
-        size: 0.5 + this.rng() * 0.9, r: 0.1, g: 0.09, b: 0.08, alpha: 0.5, gravity: 0.3, drag: 1, grow: 0.8
-      });
-    }
+    this.flash(x, 1.1, z, r * 0.5, 0xffc07a, 0.12);
+    this.flashGround(x, z, r * 0.95);
+    this.lightFlash(x, 1.5, z, 0xff9a40, 0.42, 62);
   }
 
   onLightning(e, battle) {
@@ -745,11 +846,17 @@ export class FX {
         vx: Math.cos(a) * (0.6 + this.rng() * 1.8) + Math.sin(u.yaw) * 2.2,
         vy: 0.6 + this.rng() * 2.0,
         vz: Math.sin(a) * (0.6 + this.rng() * 1.8) + Math.cos(u.yaw) * 2.2,
-        life: 0.8 + this.rng() * 0.8, size: 0.10 + this.rng() * 0.14,
+        life: 0.8 + this.rng() * 0.8, size: 0.07 + this.rng() * 0.08,
         r: 1, g: 0.8, b: 0.92, alpha: 0.95, gravity: -3.0, drag: 1.2, grow: 0.04, fade: 1.1
       });
     }
     this.ring(u.x, 0.06, u.z, 2.2, 0xff9ec8, 0.45);
+    // 돌진 궤적을 따라 초승달 검기가 연달아 피어난다
+    for (let i = 0; i < 3; i++) {
+      const d = 0.9 + i * 1.5;
+      this.spawnArc(u.x + Math.sin(u.yaw) * d, 0.75 + i * 0.12, u.z + Math.cos(u.yaw) * d, u.yaw, 1.9 + i * 0.35, 'blade', 0.2, 0xffb4d8);
+    }
+    this.flashGround(u.x + Math.sin(u.yaw) * 1.4, u.z + Math.cos(u.yaw) * 1.4, 2.4);
   }
 
   onLevelUp(e, battle) {
@@ -781,16 +888,53 @@ export class FX {
     a.mode = 'flash';
   }
 
-  spawnArc(x, y, z, yaw, size, kind, life) {
+  spawnArc(x, y, z, yaw, size, kind, life, colorHex, roll) {
+    // 1) 칼날처럼 선명한 코어
     const a = this.arcs[this.arcIdx++ % this.arcs.length];
     a.mesh.material.map = this.arcTex[kind] || this.arcTex.blade;
-    a.mesh.material.color.setHex(kind === 'ice' ? 0xbfefff : 0xdfefff);
-    a.mesh.material.opacity = 0.85;
+    a.mesh.material.color.setHex(colorHex || (kind === 'ice' ? 0xbfefff : 0xf2fbff));
+    a.mesh.material.opacity = 0.95;
     a.mesh.position.set(x, y, z);
-    a.mesh.rotation.set(0, yaw, this.rng() * Math.PI, 'YXZ');
-    a.mesh.scale.setScalar(size * 1.3);
+    a.mesh.rotation.set(0, yaw, roll === undefined ? (this.rng() - 0.5) * 1.1 : roll, 'YXZ');
+    a.mesh.scale.setScalar(size * 1.6);
     a.mesh.visible = true;
-    a.life = 0; a.max = life || 0.16; a.scale = size; a.mode = 'arc';
+    a.life = 0; a.max = (life || 0.16) * 1.9; a.scale = size; a.mode = 'arc';
+    // 2) 뒤로 번지는 빛무리 — 궤적이 공간에 남아 있게
+    const gl = this.arcs[this.arcIdx++ % this.arcs.length];
+    gl.mesh.material.map = this.arcTex[kind] || this.arcTex.blade;
+    gl.mesh.material.color.setHex(colorHex || (kind === 'ice' ? 0x8fd6ff : 0xffe6b8));
+    gl.mesh.material.opacity = 0.3;
+    gl.mesh.position.set(x, y, z);
+    gl.mesh.rotation.set(0, yaw, a.mesh.rotation.z + 0.1, 'YXZ');
+    gl.mesh.scale.setScalar(size * 1.1);
+    gl.mesh.visible = true;
+    gl.life = 0; gl.max = (life || 0.16) * 3.4; gl.scale = size * 1.25; gl.mode = 'arcGlow';
+  }
+
+  /* 플레이어 베기 순간 — 칼날 끝에서 흩날리는 빛가루 */
+  spawnBladeSparks(base, tip, cls) {
+    const dx = tip.x - base.x, dy = tip.y - base.y, dz = tip.z - base.z;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    const petal = cls === 'blademaster';
+    for (let i = 0; i < 2; i++) {
+      this.sparks.spawn({
+        x: tip.x + (this.rng() - 0.5) * 0.1, y: tip.y + (this.rng() - 0.5) * 0.1, z: tip.z + (this.rng() - 0.5) * 0.1,
+        vx: (dx / l) * (1.2 + this.rng() * 2.6) + (this.rng() - 0.5) * 1.2,
+        vy: (dy / l) * (1.2 + this.rng() * 2.2) + 0.5,
+        vz: (dz / l) * (1.2 + this.rng() * 2.6) + (this.rng() - 0.5) * 1.2,
+        life: 0.14 + this.rng() * 0.2, size: 0.03 + this.rng() * 0.05,
+        r: petal ? 1 : 0.85, g: petal ? 0.75 : 0.95, b: petal ? 0.9 : 1,
+        gravity: -1.2, drag: 3.2, fade: 1.3
+      });
+    }
+    if (petal && this.rng() < 0.7) {
+      this.petals.spawn({
+        x: tip.x, y: tip.y, z: tip.z,
+        vx: (this.rng() - 0.5) * 2, vy: 0.3 + this.rng() * 1.2, vz: (this.rng() - 0.5) * 2,
+        life: 0.6 + this.rng() * 0.5, size: 0.07 + this.rng() * 0.07,
+        r: 1, g: 0.82, b: 0.94, alpha: 0.95, gravity: -3, drag: 1.4, grow: 0.02, fade: 1.1
+      });
+    }
   }
 
   ring(x, y, z, r, color, life) {
@@ -888,7 +1032,7 @@ export class FX {
     g.m.position.set(x, 0.05, z);
     g.m.scale.setScalar(r * 2.4);
     g.m.visible = true;
-    g.m.material.opacity = 0.85;
+    g.m.material.opacity = 0.55;
     g.life = 0; g.max = 0.45;
   }
 
@@ -935,9 +1079,19 @@ export class FX {
       if (a.life > a.max) { a.mesh.visible = false; continue; }
       a.life += dt;
       const k = clamp(1 - a.life / a.max, 0, 1);
-      a.mesh.material.opacity = a.mode === 'flash' ? 0.9 * k * k : 0.8 * k;
-      const sc = a.scale * (a.mode === 'arc' ? (1.0 + (1 - k) * 0.25) : (0.4 + (1 - k) * 0.9));
-      a.mesh.scale.set(sc * 1.6, sc * (a.mode === 'arc' ? 0.9 : 1.6), 1);
+      if (a.mode === 'flash') {
+        a.mesh.material.opacity = 0.9 * k * k;
+        const sc = a.scale * (0.4 + (1 - k) * 0.9);
+        a.mesh.scale.set(sc * 1.6, sc * 1.6, 1);
+      } else if (a.mode === 'arcGlow') {
+        a.mesh.material.opacity = 0.3 * k * k;
+        const sc = a.scale * (1.0 + (1 - k) * 0.55);
+        a.mesh.scale.set(sc * 1.6, sc * 1.02, 1);
+      } else {
+        a.mesh.material.opacity = 0.95 * Math.pow(k, 0.6);
+        const sc = a.scale * (1.0 + (1 - k) * 0.3);
+        a.mesh.scale.set(sc * 1.6, sc * 0.92, 1);
+      }
     }
 
     /* 링 */
@@ -965,6 +1119,43 @@ export class FX {
       const k = clamp(b.life / b.max, 0, 1);
       b.mesh.scale.setScalar(b.r * (0.3 + easeOutCubic(k) * 1.05));
       b.mesh.material.opacity = 0.95 * (1 - k) * (1 - k);
+    }
+
+    /* 불꽃 덩어리 */
+    for (const p of this.puffs) {
+      if (p.life > p.max) { if (p.s.visible) p.s.visible = false; continue; }
+      p.life += dt;
+      const k = clamp(p.life / p.max, 0, 1);
+      p.v.multiplyScalar(Math.max(0, 1 - dt * 2.4));
+      p.v.y += dt * 2.6;
+      p.s.position.addScaledVector(p.v, dt);
+      const sc0 = p.s.scale.x;
+      p.s.scale.set(sc0 + dt * p.grow * 0.35, sc0 * 1.06 + dt * p.grow * 0.6, 1);
+      // 흰 중심 → 주황 → 검붉은 잔열
+      const h = 0.09 - k * 0.06;
+      p.s.material.color.setHSL(h, 0.95, 0.55 - k * 0.28);
+      p.s.material.opacity = p.a0 * (1 - k) * (1 - k * 0.35);
+      p.s.material.rotation += dt * 0.6 * (p.spin || 1);
+    }
+    /* 연기 기둥 */
+    for (const sp of this.smokePuffs) {
+      if (sp.life > sp.max) { if (sp.s.visible) sp.s.visible = false; continue; }
+      sp.life += dt;
+      const k = clamp(sp.life / sp.max, 0, 1);
+      sp.v.multiplyScalar(Math.max(0, 1 - dt * 0.9));
+      sp.v.y += dt * 0.5;
+      sp.s.position.addScaledVector(sp.v, dt);
+      const sc0 = sp.s.scale.x;
+      sp.s.scale.set(sc0 + dt * sp.grow * 0.5, sc0 * 0.9 + dt * sp.grow * 0.4, 1);
+      sp.s.material.rotation += dt * 0.18;
+      sp.s.material.opacity = sp.a0 * Math.min(1, k * 5) * (1 - k);
+    }
+    /* 그을음 데칼 */
+    for (const sc of this.scorches) {
+      if (sc.life > sc.max) { if (sc.m.visible) sc.m.visible = false; continue; }
+      sc.life += dt;
+      const k = clamp(sc.life / sc.max, 0, 1);
+      sc.m.material.opacity = Math.min(1, sc.life / 0.12) * (0.92 - k * 0.55) * clamp((1 - k) * 4, 0, 1);
     }
 
     /* 화염구 (전투 시뮬의 투사체를 그림) */
@@ -1183,6 +1374,9 @@ export class FX {
     for (const a of this.arcs) a.mesh.visible = false;
     for (const g of this.rings) g.mesh.visible = false;
     for (const b of this.blasts) b.mesh.visible = false;
+    for (const p of this.puffs) { p.life = p.max + 1; p.s.visible = false; }
+    for (const p of this.smokePuffs) { p.life = p.max + 1; p.s.visible = false; }
+    for (const s of this.scorches) { s.life = s.max + 1; s.m.visible = false; }
     for (const s of this.shells) { s.unit = null; s.mesh.visible = false; }
     this.shards.length = 0;
     this.debrisData.length = 0;

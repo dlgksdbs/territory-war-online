@@ -321,37 +321,69 @@ export function woundTexture(kind) {
   return texFrom(c, { srgb: true });
 }
 
-/* 검기 — 초승달 그라디언트 (가산 합성용, 흰색 기준) */
+/* 검기 — 초승달 그라디언트 (가산 합성용, 흰색 기준)
+   넓은 잔광 → 부드러운 몸통 → 칼날 같은 하이라이트 코어 → 날리는 잔불 순으로 겹친다 */
 export function arcTexture(kind) {
   const W = 512, H = 256;
   const c = makeCanvas(W, H);
   const x = c.getContext('2d');
   x.clearRect(0, 0, W, H);
-  const cx = W / 2, cy = H * 1.5, rx = W * 0.52, ry = H * 1.35;
+  // 초승달이 캔버스 안에 꽉 차도록: 아래에 둔 큰 원의 윗호를 그린다
+  const cx = W / 2, cy = H * 1.06, rx = W * 0.45, ry = H * 0.96;
   const a0 = Math.PI * 1.06, a1 = Math.PI * 1.94;
-  const N = 120;
-  const pack = (w0, w1, alpha) => {
+  const N = 160;
+  const pack = (w0, w1, alpha, blur) => {
+    x.save();
+    x.filter = `blur(${blur || 0}px)`;
     x.beginPath();
     for (let i = 0; i <= N; i++) {
       const t = i / N, a = a0 + (a1 - a0) * t;
-      const w = (w0 + (w1 - w0) * Math.pow(Math.sin(Math.PI * t), 0.7));
+      const w = (w0 + (w1 - w0) * Math.pow(Math.sin(Math.PI * t), 0.62));
       x.lineTo(cx + Math.cos(a) * rx, cy + Math.sin(a) * ry - w);
     }
     for (let i = N; i >= 0; i--) {
       const t = i / N, a = a0 + (a1 - a0) * t;
-      const w = (w0 + (w1 - w0) * Math.pow(Math.sin(Math.PI * t), 0.7));
+      const w = (w0 + (w1 - w0) * Math.pow(Math.sin(Math.PI * t), 0.62));
       x.lineTo(cx + Math.cos(a) * rx, cy + Math.sin(a) * ry + w);
     }
     x.closePath();
     x.fillStyle = `rgba(255,255,255,${alpha})`;
     x.fill();
+    x.restore();
   };
   if (kind === 'ice') {
-    pack(3, 20, 0.16); pack(1, 9, 0.34); pack(0, 3, 0.9);
+    pack(6, 30, 0.10, 10); pack(3, 16, 0.20, 4); pack(1, 7, 0.55, 1); pack(0, 2.4, 1);
   } else if (kind === 'heavy') {
-    pack(4, 34, 0.12); pack(2, 15, 0.3); pack(0, 5, 0.85);
+    pack(10, 46, 0.09, 14); pack(5, 26, 0.18, 6); pack(2, 12, 0.45, 2); pack(0, 4.6, 0.95, 0.6);
   } else {
-    pack(2, 24, 0.13); pack(1, 10, 0.32); pack(0, 3.4, 0.95);
+    pack(8, 30, 0.10, 9); pack(4, 17, 0.19, 4); pack(1.2, 8, 0.5, 1.2); pack(0, 3.0, 1, 0.5);
+  }
+  // 가는 잔광 가닥 — 궁률 궤적을 따라 뻗는 빛살
+  const rng = mulberry32(kind === 'heavy' ? 71 : kind === 'ice' ? 73 : 77);
+  for (let i = 0; i < 14; i++) {
+    const t = 0.14 + rng() * 0.72;
+    const a = a0 + (a1 - a0) * t;
+    const w = 0.5 + Math.pow(Math.sin(Math.PI * t), 0.7) * (kind === 'heavy' ? 20 : 11);
+    const len = 5 + rng() * (kind === 'heavy' ? 12 : 8);
+    const px = cx + Math.cos(a) * rx, py = cy + Math.sin(a) * ry;
+    x.strokeStyle = `rgba(255,255,255,${0.08 + rng() * 0.16})`;
+    x.lineWidth = 0.6 + rng() * 1.8;
+    x.beginPath();
+    x.moveTo(px, py - w);
+    x.lineTo(px + (rng() - 0.5) * 6, py - w - len);
+    x.stroke();
+  }
+  // 궤적 끝의 불티
+  for (let i = 0; i < 14; i++) {
+    const t = rng();
+    const a = a0 + (a1 - a0) * t;
+    const w = Math.pow(Math.sin(Math.PI * t), 0.7) * (kind === 'heavy' ? 24 : 12);
+    const px = cx + Math.cos(a) * rx, py = cy + Math.sin(a) * ry - w * (0.4 + rng());
+    const rr = 1 + rng() * 3.2;
+    const g = x.createRadialGradient(px, py, 0, px, py, rr * 3);
+    g.addColorStop(0, 'rgba(255,255,255,0.85)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(px, py, rr * 3, 0, 7); x.fill();
   }
   return texFrom(c, { srgb: true });
 }
@@ -390,24 +422,90 @@ export function smokeTexture() {
   return texFrom(c, { srgb: true });
 }
 
-/* 뭉게구름 */
-export function cloudTexture() {
+/* 뭉게구름 / 높이 뜬 권운 */
+export function cloudTexture(high) {
   const W = 256, H = 160;
   const c = makeCanvas(W, H);
   const x = c.getContext('2d');
-  const rng = mulberry32(19);
-  for (let i = 0; i < 40; i++) {
-    const px = 128 + (rng() - 0.5) * 190;
-    const py = 96 + (rng() - 0.5) * 60;
-    const rr = 18 + rng() * 44;
-    const g = x.createRadialGradient(px, py - rr * 0.3, rr * 0.1, px, py, rr);
-    g.addColorStop(0, 'rgba(255,255,255,0.9)');
-    g.addColorStop(0.55, 'rgba(248,250,255,0.55)');
-    g.addColorStop(1, 'rgba(240,246,255,0)');
+  const rng = mulberry32(high ? 23 : 19);
+  if (high) {
+    // 하늘 높이 흐르는 얇은 실구름 — 길게 늘어진 가닥
+    for (let i = 0; i < 26; i++) {
+      const yy = 30 + rng() * 100;
+      const x0 = 10 + rng() * 120, x1 = x0 + 70 + rng() * 120;
+      const g = x.createLinearGradient(x0, yy, x1, yy + (rng() - 0.5) * 26);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.45, `rgba(255,248,242,${0.22 + rng() * 0.24})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.strokeStyle = g;
+      x.lineWidth = 6 + rng() * 20;
+      x.lineCap = 'round';
+      x.beginPath();
+      x.moveTo(x0, yy);
+      x.bezierCurveTo(x0 + 40, yy - 14 + rng() * 28, x1 - 50, yy + 12 - rng() * 24, x1, yy - 6 + rng() * 12);
+      x.stroke();
+    }
+    return texFrom(c, { srgb: true });
+  }
+  // 뭉게구름 — 위는 밝고 아래는 노을빛 그늘
+  for (let i = 0; i < 46; i++) {
+    const px = 128 + (rng() - 0.5) * 196;
+    const py = 92 + (rng() - 0.5) * 56;
+    const rr = 16 + rng() * 46;
+    const g = x.createRadialGradient(px, py - rr * 0.45, rr * 0.1, px, py, rr);
+    g.addColorStop(0, 'rgba(255,252,248,0.92)');
+    g.addColorStop(0.45, 'rgba(255,240,232,0.6)');
+    g.addColorStop(0.78, 'rgba(244,206,196,0.28)');
+    g.addColorStop(1, 'rgba(232,190,186,0)');
     x.fillStyle = g; x.beginPath(); x.arc(px, py, rr, 0, 7); x.fill();
   }
   return texFrom(c, { srgb: true });
 }
+
+/* 그을음 · 균열 지면 데칼 (폭발 뒤 바닥에 남는다) */
+export function scorchTexture() {
+  const S = 256;
+  const c = makeCanvas(S, S);
+  const x = c.getContext('2d');
+  x.clearRect(0, 0, S, S);
+  const rng = mulberry32(83);
+  // 중심 그을음
+  const g = x.createRadialGradient(S / 2, S / 2, 2, S / 2, S / 2, S * 0.48);
+  g.addColorStop(0, 'rgba(12,10,9,0.94)');
+  g.addColorStop(0.42, 'rgba(22,17,14,0.82)');
+  g.addColorStop(0.72, 'rgba(38,28,22,0.42)');
+  g.addColorStop(1, 'rgba(50,38,30,0)');
+  x.fillStyle = g; x.beginPath(); x.arc(S / 2, S / 2, S * 0.48, 0, 7); x.fill();
+  // 불규칙한 그을음 자국
+  for (let i = 0; i < 90; i++) {
+    const a = rng() * Math.PI * 2, r = Math.sqrt(rng()) * S * 0.46;
+    const rr = 4 + rng() * 26;
+    const px = S / 2 + Math.cos(a) * r, py = S / 2 + Math.sin(a) * r;
+    const dg = x.createRadialGradient(px, py, 0, px, py, rr);
+    dg.addColorStop(0, `rgba(10,8,7,${0.18 + rng() * 0.25})`);
+    dg.addColorStop(1, 'rgba(10,8,7,0)');
+    x.fillStyle = dg; x.beginPath(); x.arc(px, py, rr, 0, 7); x.fill();
+  }
+  // 바닥 균열 — 중심에서 뻗어 나가는 갈라진 선
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2 + rng() * 0.3;
+    let px = S / 2, py = S / 2, ang = a;
+    x.beginPath(); x.moveTo(px, py);
+    const len = S * (0.16 + rng() * 0.3);
+    for (let k = 0; k < 6; k++) {
+      ang += (rng() - 0.5) * 0.5;
+      px += Math.cos(ang) * (len / 6); py += Math.sin(ang) * (len / 6);
+      x.lineTo(px, py);
+    }
+    x.strokeStyle = `rgba(6,5,4,${0.55 + rng() * 0.4})`;
+    x.lineWidth = 1 + rng() * 3.4; x.stroke();
+    // 균열 안쪽 잔불 빛
+    x.strokeStyle = `rgba(255,120,40,${0.10 + rng() * 0.16})`;
+    x.lineWidth = 0.8 + rng() * 1.4; x.stroke();
+  }
+  return texFrom(c, { srgb: true });
+}
+
 
 /* 깃발 — 진영 문양 */
 export function bannerTexture(hex, emblem) {

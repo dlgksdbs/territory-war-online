@@ -21,10 +21,15 @@
   var RATIO_KEY = 'tw_online_ratio';
   var BIG_ENEMY_KEY = 'tw_online_big_enemy';
   var BIG_ALLY_KEY = 'tw_online_big_ally';
+  var BIG_GEN_A_KEY = 'tw_online_big_gen_ally';
+  var BIG_GEN_E_KEY = 'tw_online_big_gen_enemy';
+  var BIG_CLASS_KEY = 'tw_online_big_class';
   var BIG_MIN = 20;
   var BIG_ALLY_MIN = 0;         // 아군은 0명까지 — 혼자(1 vs 1000) 싸울 수 있다
   var BIG_MAX = 1000;
-  var bigForce = { enemy: 100, ally: 100 };
+  var BIG_GEN_MAX = 20;         // 큰 망치 중갑 장군은 한쪽 최대 20명
+  var bigForce = { enemy: 100, ally: 100, genAlly: 0, genEnemy: 0 };
+  var bigClass = 'soldier';     // 'soldier' = ⚔️ 일반 병사 · 'general' = 🔨 큰 망치 장군
 
   /* ---------------- 런타임 상태 ---------------- */
   var els = {};
@@ -2028,6 +2033,9 @@
     var name = (els.nameInput && els.nameInput.value ? els.nameInput.value : '').trim().slice(0, 12) || '한윤';
     var E = clampBig(bigForce.enemy, BIG_MIN);
     var A = clampBig(bigForce.ally, BIG_ALLY_MIN);
+    var GA = clampGen(bigForce.genAlly);      // 아군 큰 망치 장군
+    var GE = clampGen(bigForce.genEnemy);     // 적군 큰 망치 장군
+    var cls = bigClass === 'general' ? 'general' : 'soldier';
     var cfg = {
       id: 'solo-' + Date.now(),
       seed: (Date.now() % 100000) + 7,
@@ -2039,12 +2047,17 @@
       // 내가 고른 수 그대로 — 적군 E명 vs 아군 A명 (적 20~1000 · 아군 0~1000)
       enemyCount: E,
       allyCount: A,
+      // 큰 망치 중갑 장군 — 아군·적군 같은 스펙(체력 500 · 광역 강타 · 넉백)
+      allyGenerals: GA,
+      enemyGenerals: GE,
+      playerClass: cls,
+      playerHp: 160,
+      playerHpGeneral: 500,
       allyStart: A > 0 ? clampNum(Math.round(A * 0.32), 4, 40) : 0,
       maxAlive: clampNum(Math.round(E * 0.3), 12, 150),
       maxAlliesAlive: A > 0 ? clampNum(Math.round(A * 0.22), 8, 90) : 0,
       spawnMs: clampNum(Math.round(700 - E * 0.45), 110, 700),
       allyMs: clampNum(Math.round(1500 - A * 0.6), 160, 1500),
-      playerHp: 160,
       speedScale: 1.45,
       timeLimit: 150000 + Math.round((E + A) * 90),
       me: { slot: 0, name: name, color: '#3b82f6' },
@@ -2072,7 +2085,7 @@
     return key === 'ally' ? BIG_ALLY_MIN : BIG_MIN;
   }
 
-  /** 홈 화면 병사 수 UI (적군 · 아군 따로) */
+  /** 홈 화면 병사 수 UI (적군 · 아군 따로) + 큰 망치 장군 수 + 내 클래스 */
   function renderBigForce() {
     var pair = [[els.bigEnemy, els.bigEnemyVal, els.bigEnemyChips, 'enemy'],
       [els.bigAlly, els.bigAllyVal, els.bigAllyChips, 'ally']];
@@ -2089,19 +2102,54 @@
         }
       }
     }
-    if (els.bbSub) {
-      els.bbSub.textContent = '적군 ' + bigForce.enemy + ' · 아군 ' + bigForce.ally +
-        (bigForce.ally === 0 ? ' (혼자) ' : ' ') + '· 1인칭 난전';
+    // 큰 망치 장군 수 (0~20)
+    var gens = [[els.bigEnemyGen, els.bigEnemyGenVal, 'genEnemy'],
+      [els.bigAllyGen, els.bigAllyGenVal, 'genAlly']];
+    for (var g = 0; g < gens.length; g++) {
+      var gi = gens[g][0], gv = gens[g][1], gk = gens[g][2];
+      var gn = clampGen(bigForce[gk]);
+      bigForce[gk] = gn;
+      if (gi) gi.value = String(gn);
+      if (gv) gv.textContent = String(gn);
     }
+    // 내가 싸울 방식
+    if (els.bigClassRow) {
+      var btns = els.bigClassRow.querySelectorAll('button');
+      for (var b = 0; b < btns.length; b++) {
+        var on = btns[b].getAttribute('data-class') === bigClass;
+        btns[b].classList.toggle('on', on);
+        btns[b].setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    }
+    if (els.bbSub) {
+      var genTxt = (bigForce.genEnemy || bigForce.genAlly)
+        ? ' · 🔨 장군 적' + bigForce.genEnemy + '/아' + bigForce.genAlly
+        : '';
+      els.bbSub.textContent = '적군 ' + bigForce.enemy + ' · 아군 ' + bigForce.ally +
+        (bigForce.ally === 0 ? ' (혼자) ' : ' ') + genTxt +
+        ' · ' + (bigClass === 'general' ? '🔨 큰 망치 장군으로 참전' : '⚔️ 병사로 참전');
+    }
+  }
+
+  function clampGen(v) {
+    var n = Math.round(Number(v));
+    if (!isFinite(n)) n = 0;
+    return clampNum(n, 0, BIG_GEN_MAX);
   }
 
   function applyBigForceFromStorage() {
     var se = storageGet(BIG_ENEMY_KEY);
     var sa = storageGet(BIG_ALLY_KEY);
+    var sga = storageGet(BIG_GEN_A_KEY);
+    var sge = storageGet(BIG_GEN_E_KEY);
+    var sc = storageGet(BIG_CLASS_KEY);
     var e = Number(se);
     var a = Number(sa);
     if (se != null && se !== '' && e >= BIG_MIN) bigForce.enemy = clampBig(e);
     if (sa != null && sa !== '' && a >= BIG_ALLY_MIN) bigForce.ally = clampBig(a, BIG_ALLY_MIN);
+    if (sga != null && sga !== '') bigForce.genAlly = clampGen(sga);
+    if (sge != null && sge !== '') bigForce.genEnemy = clampGen(sge);
+    if (sc === 'general' || sc === 'soldier') bigClass = sc;
     renderBigForce();
   }
 
@@ -2138,6 +2186,40 @@
           });
         }
       })(pairs[i][0], pairs[i][1], pairs[i][2], pairs[i][3]);
+    }
+    // 큰 망치 장군 수 슬라이더 (0~20)
+    var genPairs = [[els.bigEnemyGen, 'genEnemy', BIG_GEN_E_KEY],
+      [els.bigAllyGen, 'genAlly', BIG_GEN_A_KEY]];
+    for (var g = 0; g < genPairs.length; g++) {
+      (function (input, key, storeKey) {
+        if (!input) return;
+        input.addEventListener('input', function () {
+          bigForce[key] = clampGen(input.value);
+          renderBigForce();
+          storageSet(storeKey, String(bigForce[key]));
+        });
+        input.addEventListener('change', function () {
+          storageSet(storeKey, String(bigForce[key]));
+          vibrate(6);
+        });
+      })(genPairs[g][0], genPairs[g][1], genPairs[g][2]);
+    }
+    // 내가 싸울 방식 — ⚔️ 일반 병사 / 🔨 큰 망치 장군
+    if (els.bigClassRow) {
+      els.bigClassRow.addEventListener('click', function (ev) {
+        var t = ev.target;
+        while (t && t !== els.bigClassRow) {
+          var cls = t.getAttribute && t.getAttribute('data-class');
+          if (cls) {
+            bigClass = cls === 'general' ? 'general' : 'soldier';
+            renderBigForce();
+            storageSet(BIG_CLASS_KEY, bigClass);
+            vibrate(6);
+            return;
+          }
+          t = t.parentNode;
+        }
+      });
     }
   }
 
@@ -2431,6 +2513,7 @@
       'app', 'lobby', 'homePanel', 'roomPanel', 'nameInput', 'joinCode', 'homeNote',
       'btnCreate', 'btnSim', 'btnJoin', 'btnBigBattle', 'bbSub',
       'bigEnemy', 'bigEnemyVal', 'bigEnemyChips', 'bigAlly', 'bigAllyVal', 'bigAllyChips',
+      'bigEnemyGen', 'bigEnemyGenVal', 'bigAllyGen', 'bigAllyGenVal', 'bigClassRow',
       'roomCode', 'btnCopyCode', 'btnShare', 'roomPlayers',
       'aiToggle', 'aiRow', 'roomSpeedRow', 'roomSpeed', 'roomNote', 'btnStart', 'waitHost', 'btnLeaveLobby',
       'netBar', 'netText', 'boot', 'bootText',

@@ -625,15 +625,27 @@ async function networkTests() {
     /if \(!en \|\| en\.counted\) return;/.test(arenaJs.body) &&
     /if \(!gone\.counted\) \{ gone\.counted = true; S\.defeated\+\+; \}/.test(arenaJs.body));
   ok('적 증원 상한은 살아 있는 적만 센다 (쓰러진 병사가 증원을 막지 않는다)',
-    /var alive = aliveEnemies\(\);/.test(arenaJs.body) && /cap - alive/.test(arenaJs.body));
-  const makeUnitSrc = (arenaJs.body.match(/function makeUnit\(team, x, y\) \{[\s\S]*?\n  \}/) || [''])[0];
+    /var alive = aliveSoldierEnemies\(\);/.test(arenaJs.body) && /cap - alive/.test(arenaJs.body) &&
+    /function aliveEnemies\(\)[\s\S]*?if \(!S\.enemies\[i\]\.dead\) n\+\+;/.test(arenaJs.body));
+  const makeUnitSrc = (arenaJs.body.match(/function makeUnit\(team, x, y, kind\) \{[\s\S]*?\n  \}/) || [''])[0];
   ok('아군·적군 병사 스펙이 한 벌(makeUnit)에서 나온다 (체력·공격력·속도 동일)',
-    /hp: UNIT_HP/.test(makeUnitSrc) && /dmg: UNIT_DMG/.test(makeUnitSrc) &&
-    /speed: UNIT_SPEED \* S\.speedScale/.test(makeUnitSrc) &&
+    /hp: gen \? GEN_HP : UNIT_HP/.test(makeUnitSrc) && /dmg: gen \? GEN_DMG : UNIT_DMG/.test(makeUnitSrc) &&
+    /speed: \(gen \? GEN_SPEED : UNIT_SPEED\) \* S\.speedScale/.test(makeUnitSrc) &&
     !/team === 'ally'|team !== 'enemy'/.test(makeUnitSrc), makeUnitSrc.length);
   ok('아군 증원은 고른 수(allyTotal)까지만 — 무한 생성 없음 (아군 0이면 0명)',
     /if \(S\.allySpawned < S\.allyTotal\)/.test(arenaJs.body) &&
     /allyCount == null \? 3 : cfg\.allyCount/.test(arenaJs.body));
+  ok('큰 망치 장군 — 양쪽 같은 스펙(체력 500) · 병사의 1.45배 몸집 · 전멸 판정에 포함',
+    /var GEN_HP = 500;/.test(arenaJs.body) && /var GEN_R = \+\(UNIT_R \* 1\.45\)/.test(arenaJs.body) &&
+    /S\.enemyGenSpawned >= S\.enemyGenTotal/.test(arenaJs.body) &&
+    /function generalSpec\(\)/.test(arenaJs.body) && /function spawnGenerals\(\)/.test(arenaJs.body));
+  ok('홈 대규모 전장에 장군 수(0~20) 조절 · ⚔️ 병사/🔨 장군 클래스 선택 UI',
+    /id="bigEnemyGen"/.test(home.body) && /id="bigAllyGen"/.test(home.body) &&
+    /id="bigClassRow"/.test(home.body) && /data-class="general"/.test(home.body) &&
+    /max="20"/.test(home.body));
+  ok('장군으로 참전하면 1인칭 워해머 · 막기/돌진 버튼 숨김',
+    /id="arSlash"/.test(home.body) && /\.arena-general \.ar-btn\.guard/.test(css.body) &&
+    /HAMMER_ANIM/.test(arenaJs.body) && /function doSlam\(\)/.test(arenaJs.body));
 
   const d = await connect(port);
   send(d, { type: 'create', name: '참전러', sim: true });

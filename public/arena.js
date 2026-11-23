@@ -50,8 +50,53 @@
   var UNIT_SLOT = 2;          // 적을 둘러쌀 때 목표에서 조금 물러서는 거리 (제자리에서 칼을 휘두를 수 있게)
   var SPECTATE_SPEED = 320;   // 🎬 관전 카메라 비행 속도(초당 월드 단위)
 
+  /* 큰 망치 중갑 장군 — 병사보다 훨씬 크고 단단하다. 아군 장군과 적군 장군은 '완전히' 같은 스펙.
+     병사 한 방(10)에는 끄떡없이 500의 피통이 깎이고, 장군끼리 붙으면 서로 100씩 5대를 주고받는다. */
+  var GEN_HP = 500;           // 장군 체력 (아군 = 적군)
+  var GEN_DMG = 100;          // 장군 망치 → 장군
+  var GEN_SOLDIER_DMG = 46;   // 장군 망치 → 병사인 플레이어 (한 방에 죽이지 않는다)
+  var GEN_R = +(UNIT_R * 1.45).toFixed(2);   // 몸 반지름 = 병사의 1.45배
+  var GEN_SPEED = 42;         // 무거워서 병사보다 느리다
+  var GEN_WIND = 620;         // 망치를 머리 위로 치켜드는 예비동작(ms) — 보고 피할 수 있다
+  var GEN_SWING = 300;        // 내려찍기 동작(ms)
+  var GEN_CD = 1500;          // 휘두른 뒤 쉬는 시간(ms)
+  var GEN_CD_VAR = 260;
+  var GEN_REACH = 34;         // 망치가 닿는 거리 = r + r + 34
+  var GEN_AOE = 104;          // 바닥을 내려친 충격파 반경 — 주변 병사를 한꺼번에 날린다
+  var GEN_ARC = 1.30;         // 정면 기준 ±1.3rad 부채꼴
+  var GEN_KB = 70;            // 병사 넉백
+  var GEN_KB_GEN = 30;        // 장군끼리 넉백
+  var GEN_SOLDIER_HIT = 8;    // 장군이 병사에게 받는 데미지 = 병사 공격력
+  var PLAYER_GEN_HP = 500;    // 내가 장군으로 참전할 때의 피통
+  var PLAYER_GEN_R = GEN_R;
+  var PLAYER_GEN_SPEED = 132;
+  var HAMMER_RANGE = 128;     // 1인칭 큰 망치 강타 사거리
+  var HAMMER_ARC = 1.45;      // 정면 부채꼴 ±1.45rad
+  var HAMMER_ANIM = 620;      // 치켜들기 → 내려찍기 → 회수 (ms)
+  var HAMMER_HIT_P = 0.55;    // 망치 머리가 바닥에 꽂히는 순간 (궤적 55%)
+  var HAMMER_CD = 880;
+  var HAMMER_VS_GEN = 100;    // 내 망치 → 적 장군 (5대면 쓰러진다)
+  var BLADE_VS_GEN = 50;      // 내 검 → 적 장군 (장군은 한 방에 죽지 않는다)
+  var HAMMER_KNOCK = 96;      // 내 망치에 맞은 병사가 날아가는 거리
+
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
   function lerp(a, b, t) { return a + (b - a) * t; }
+  /** 둥근 사각형 경로 (장군 머리 위 피통 HP바) */
+  function roundRect(ctx, x, y, w, h, r) {
+    var ww = Math.max(0.5, w), hh = Math.max(0.5, h);
+    var rr = Math.max(0, Math.min(r, ww / 2, hh / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.lineTo(x + ww - rr, y);
+    ctx.quadraticCurveTo(x + ww, y, x + ww, y + rr);
+    ctx.lineTo(x + ww, y + hh - rr);
+    ctx.quadraticCurveTo(x + ww, y + hh, x + ww - rr, y + hh);
+    ctx.lineTo(x + rr, y + hh);
+    ctx.quadraticCurveTo(x, y + hh, x, y + hh - rr);
+    ctx.lineTo(x, y + rr);
+    ctx.quadraticCurveTo(x, y, x + rr, y);
+    ctx.closePath();
+  }
   function rndRange(r, a, b) { return a + r() * (b - a); }
   function angDiff(a, b) {
     var d = (a - b) % (Math.PI * 2);
@@ -136,6 +181,31 @@
         g.gain.setValueAtTime(0.04, t);
         g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
         o.start(t); o.stop(t + 0.2);
+      } else if (kind === 'wind') {
+        // 큰 망치를 치켜들며 공기를 가르는 소리
+        o.type = 'sine';
+        o.frequency.setValueAtTime(300, t);
+        o.frequency.exponentialRampToValueAtTime(96, t + 0.3);
+        g.gain.setValueAtTime(0.035, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+        o.start(t); o.stop(t + 0.33);
+      } else if (kind === 'hammer') {
+        // 땅을 내려친 둔탁한 울림 — 낮은 사각파 + 빠른 감쇠
+        o.type = 'square';
+        o.frequency.setValueAtTime(96, t);
+        o.frequency.exponentialRampToValueAtTime(32, t + 0.34);
+        g.gain.setValueAtTime(0.085, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+        o.start(t); o.stop(t + 0.4);
+        var o2 = a.createOscillator();
+        var g2 = a.createGain();
+        o2.connect(g2); g2.connect(a.destination);
+        o2.type = 'triangle';
+        o2.frequency.setValueAtTime(340, t);
+        o2.frequency.exponentialRampToValueAtTime(70, t + 0.14);
+        g2.gain.setValueAtTime(0.05, t);
+        g2.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+        o2.start(t); o2.stop(t + 0.17);
       } else if (kind === 'down') {
         o.type = 'sawtooth';
         o.frequency.setValueAtTime(220, t);
@@ -261,7 +331,17 @@
       allyTimer: 0,
       allySpawned: 0,
       allyStart: Math.max(0, cfg.allyStart == null ? (cfg.allyCount == null ? 3 : cfg.allyCount) : cfg.allyStart),
-      playerHp: Math.max(40, cfg.playerHp || 100),
+      playerClass: cfg.playerClass === 'general' ? 'general' : 'soldier',
+      playerHp: cfg.playerClass === 'general'
+        ? Math.max(120, cfg.playerHpGeneral || PLAYER_GEN_HP)
+        : Math.max(40, cfg.playerHp || 100),
+      allyGenTotal: clamp(cfg.allyGenerals == null ? 0 : Math.round(cfg.allyGenerals), 0, 60),
+      enemyGenTotal: clamp(cfg.enemyGenerals == null ? 0 : Math.round(cfg.enemyGenerals), 0, 60),
+      allyGenSpawned: 0,
+      enemyGenSpawned: 0,
+      shocks: [],               // 바닥 충격파 링 (망치 강타)
+      cracks: [],               // 바닥 균열
+      hammerFlash: 0,
       damageGiven: 0,
       timeLimit: cfg.timeLimit || 150000,
       lastSwipe: null,
@@ -275,6 +355,7 @@
     buildWorld();
     spawnPlayer();
     spawnAllies();
+    spawnGenerals();
     start3d(cfg);
     bindControls();
     if (el.banner) {
@@ -283,6 +364,7 @@
     }
     updateTargetInfo();
     el.root.classList.remove('hidden');
+    el.root.classList.toggle('arena-general', S.playerClass === 'general');
     el.root.setAttribute('aria-hidden', 'false');
     document.body.classList.add('arena-on');
     if (el.result) el.result.classList.add('hidden');
@@ -311,6 +393,7 @@
     unbindControls();
     if (el.root) {
       el.root.classList.add('hidden');
+      el.root.classList.remove('arena-general');
       el.root.setAttribute('aria-hidden', 'true');
     }
     if (el.joy) el.joy.classList.add('hidden');
@@ -366,10 +449,12 @@
   }
 
   function spawnPlayer() {
+    var gen = S.playerClass === 'general';
     S.player = {
       x: W / 2,
       y: H * (S.cfg.playerY || 0.18),
-      r: PLAYER_R,
+      r: gen ? PLAYER_GEN_R : PLAYER_R,
+      kind: gen ? 'general' : 'soldier',
       hp: S.playerHp,
       maxHp: S.playerHp,
       face: Math.PI / 2,
@@ -408,19 +493,22 @@
     }
   }
 
-  /** 아군 병사와 적군 병사 — 체력·공격력·쿨다운·속도·사거리·몸집이 모두 같은 스펙 */
-  function makeUnit(team, x, y) {
+  /** 아군 병사와 적군 병사 — 체력·공격력·쿨다운·속도·사거리·몸집이 모두 같은 스펙
+      kind === 'general' 이면 큰 망치 중갑 장군 (양쪽 장군도 완전히 같은 스펙) */
+  function makeUnit(team, x, y, kind) {
     var enemy = team === 'enemy';
+    var gen = kind === 'general';
     return {
       team: team,
+      kind: gen ? 'general' : 'soldier',
       x: x, y: y,
-      r: UNIT_R,
-      hp: UNIT_HP,
-      maxHp: UNIT_HP,
-      dmg: UNIT_DMG,
-      speed: UNIT_SPEED * S.speedScale,
+      r: gen ? GEN_R : UNIT_R,
+      hp: gen ? GEN_HP : UNIT_HP,
+      maxHp: gen ? GEN_HP : UNIT_HP,
+      dmg: gen ? GEN_DMG : UNIT_DMG,
+      speed: (gen ? GEN_SPEED : UNIT_SPEED) * S.speedScale,
       face: enemy ? -Math.PI / 2 : Math.PI / 2,
-      cd: UNIT_CD + Math.random() * UNIT_CD_VAR,
+      cd: (gen ? GEN_CD : UNIT_CD) + Math.random() * (gen ? GEN_CD_VAR : UNIT_CD_VAR),
       wind: 0,
       swing: 0,
       hit: 0,
@@ -430,8 +518,48 @@
       lastHitBy: null,
       dashHit: false,
       wob: Math.random() * 6.28,
-      slot: Math.random() * 6.283       // 목표를 둘러쌀 때 맡는 자기 자리(각도)
+      slot: Math.random() * 6.283,     // 목표를 둘러쌀 때 맡는 자기 자리(각도)
+      windDur: gen ? GEN_WIND : UNIT_WIND,
+      swingDur: gen ? GEN_SWING : UNIT_WIND
     };
+  }
+
+  /** 지금 장군 스펙(양쪽 공통) — 검증·표시용 */
+  function generalSpec() {
+    return {
+      hp: GEN_HP, dmg: GEN_DMG, radius: GEN_R, speed: GEN_SPEED,
+      wind: GEN_WIND, swing: GEN_SWING, cd: GEN_CD, reach: GEN_REACH,
+      aoe: GEN_AOE, arc: GEN_ARC, kb: GEN_KB,
+      vsSoldier: GEN_SOLDIER_DMG, fromSoldier: GEN_SOLDIER_HIT,
+      scale: 1.45
+    };
+  }
+
+  /** 장군 배치 — 아군은 내 뒤·옆, 적군은 앞쪽 진영에 무리지어 세운다 (수는 홈에서 고른 그대로) */
+  function spawnGenerals() {
+    var r = S.rand;
+    var i, a, d;
+    var face = S.player ? S.player.face : Math.PI / 2;
+    for (i = 0; i < S.allyGenTotal; i++) {
+      a = face + Math.PI + (r() - 0.5) * 2.2;
+      d = 90 + r() * 150;
+      var ag = makeUnit('ally', clamp(S.player.x + Math.cos(a) * d, W * 0.1, W * 0.9),
+        clamp(S.player.y + Math.sin(a) * d * 0.9, H * 0.12, H * 0.88), 'general');
+      ag.cd = 400 + r() * 700;
+      spreadSpawn(ag);
+      S.allies.push(ag);
+      S.allyGenSpawned++;
+    }
+    for (i = 0; i < S.enemyGenTotal; i++) {
+      a = face + (r() - 0.5) * 1.9;
+      d = S.big ? 340 + r() * 220 : 150 + r() * 90;
+      var eg = makeUnit('enemy', clamp((S.player ? S.player.x : W / 2) + Math.cos(a) * d, W * 0.08, W * 0.92),
+        clamp((S.player ? S.player.y : H * 0.3) + Math.sin(a) * d, H * 0.2, H * 0.92), 'general');
+      eg.cd = 500 + r() * 800;
+      spreadSpawn(eg);
+      S.enemies.push(eg);
+      S.enemyGenSpawned++;
+    }
   }
 
   /** 지금 병사 스펙(양쪽 공통) — 검증·표시용 */
@@ -657,10 +785,15 @@
     add(window, 'resize', resize);
 
     add(el.btnSlash, 'pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); doSlash(); });
-    add(el.btnDash, 'pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); tapDash(e); });
+    add(el.btnDash, 'pointerdown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (S && S.playerClass === 'general') return;   // 장군은 망치 강타가 주력
+      tapDash(e);
+    });
     add(el.btnGuard, 'pointerdown', function (e) {
       e.preventDefault(); e.stopPropagation();
       if (!S || S.view === 'spectate') return;
+      if (S.playerClass === 'general') return;        // 중갑 장군은 막기 대신 피통으로 버틴다
       S.player.guard = true;
       S.player.guardT = 0;
       el.btnGuard.classList.add('on');
@@ -977,6 +1110,7 @@
 
   function tapDash(e) {
     if (!S) return;
+    if (S.playerClass === 'general') return;
     var pl = S.player;
     if (!S.r3d) {
       if (S.input.mag > 0.15) pl.dashDir = Math.atan2(S.input.dy, S.input.dx);
@@ -993,8 +1127,8 @@
     if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) e.preventDefault();
     S.keys[k] = true;
     if (k === ' ' || k === 'j') doSlash();
-    if (k === 'k' || k === 'shift') dashNow();
-    if (k === 'l') { S.player.guard = true; S.player.guardT = 0; el.btnGuard.classList.add('on'); }
+    if ((k === 'k' || k === 'shift') && S.playerClass !== 'general') dashNow();
+    if (k === 'l' && S.playerClass !== 'general') { S.player.guard = true; S.player.guardT = 0; el.btnGuard.classList.add('on'); }
     if (k === 'escape') finish('return');
   }
 
@@ -1023,6 +1157,8 @@
   function doSlash(swipe) {
     if (!S || S.ended || S.down > 0 || S.view === 'spectate') return;
     var pl = S.player;
+    // 🔨 큰 망치 장군으로 참전했으면 검 대신 망치를 내려찍는다
+    if (pl && pl.kind === 'general') { doSlam(); return; }
     if (!pl || pl.atkCd > 0 || pl.dash > 0) return;
     var dir = slashDir(swipe);
     var slice = sliceAngles(dir, pl.face);
@@ -1098,7 +1234,14 @@
       S.lastHitAt = { x: best.x, y: best.y, t: S.time };
       spawnSparks(best.x, best.y, 9);
       sfx('hit');
-      hurtEnemy(best, SLASH_DMG, pushAng, 34, slice.cut, slice.tilt);
+      if (best.kind === 'general') {
+        // 두꺼운 중갑 — 검 한 방에 쓰러지지 않고 피통이 깎인다
+        best.lastHitBy = 'player';
+        hurtGeneral(best, BLADE_VS_GEN, pushAng, 10, pl);
+        addFloat(best.x, best.y - 50, '-' + BLADE_VS_GEN, '#fde68a');
+      } else {
+        hurtEnemy(best, SLASH_DMG, pushAng, 34, slice.cut, slice.tilt);
+      }
     }
   }
 
@@ -1108,13 +1251,17 @@
     if (!S.pending || !pl) return;
     if (pl.atkAnim <= 0 || pl.hitDone) {
       // 궤적이 끝났는데 아직이면 마지막에 처리 (놓치지 않는다)
-      if (!pl.hitDone) { pl.hitDone = true; resolveSlashHit(S.pending); }
+      if (!pl.hitDone) {
+        pl.hitDone = true;
+        if (S.pending.kind === 'slam') resolveSlam(S.pending); else resolveSlashHit(S.pending);
+      }
       S.pending = null;
       return;
     }
-    if (SLASH_ANIM - pl.atkAnim >= S.pending.at) {
+    var dur = S.pending.kind === 'slam' ? HAMMER_ANIM : SLASH_ANIM;
+    if (dur - pl.atkAnim >= S.pending.at) {
       pl.hitDone = true;
-      resolveSlashHit(S.pending);
+      if (S.pending.kind === 'slam') resolveSlam(S.pending); else resolveSlashHit(S.pending);
       S.pending = null;
     }
   }
@@ -1144,11 +1291,13 @@
 
   function doDash() {
     if (!S || S.ended || S.down > 0 || S.view === 'spectate') return;
+    if (S.playerClass === 'general') return;
     var pl = S.player;
     if (!pl || pl.dashCd > 0) return;
     pl.dash = DASH_MS;
     pl.dashCd = DASH_CD;
     pl.atkAnim = 0;
+    pl.swingLock = 0;
     pl.hitDone = true;
     S.pending = null;
     resetDashHits();
@@ -1412,7 +1561,10 @@
         }
       }
     } else if (mag > 0.06) {
-      var sp = PLAYER_SPEED * S.speedScale * (pl.guard ? 0.55 : 1) * clamp(mag * 1.15, 0.35, 1);
+      var baseSpeed = pl.kind === 'general' ? PLAYER_GEN_SPEED : PLAYER_SPEED;
+      // 망치를 내려찍는 동안은 묵직하게 발이 묶인다
+      var rootK = pl.swingLock > 0 ? 0.22 : 1;
+      var sp = baseSpeed * S.speedScale * (pl.guard ? 0.55 : 1) * rootK * clamp(mag * 1.15, 0.35, 1);
       pl.x += dx * sp * (dt / 1000);
       pl.y += dy * sp * (dt / 1000);
       // 2D 폴백에서만 이동 방향으로 몸이 돈다 (3D는 시점 고정)
@@ -1423,6 +1575,7 @@
     if (pl.atkCd > 0) pl.atkCd -= dt;
     if (pl.atkAnim > 0) pl.atkAnim -= dt;
     if (pl.atkAnim < 0) pl.atkAnim = 0;
+    if (pl.swingLock > 0) { pl.swingLock -= dt; if (pl.swingLock < 0) pl.swingLock = 0; }
     stepSlashHit();
     if (pl.dashCd > 0) pl.dashCd -= dt;
     if (pl.hit > 0) pl.hit -= dt;
@@ -1460,6 +1613,7 @@
       pl.y = H * 0.2;
     }
     pl.atkCd = 0; pl.dash = 0; pl.dashCd = 0; pl.guard = false;
+    pl.swingLock = 0;
     pl.hitDone = true; S.pending = null;
     S.respawns++;
     S.invuln = 1400;
@@ -1661,6 +1815,7 @@
   }
 
   function aiUnit(u, target, dt, pl) {
+    if (u.kind === 'general') { aiGeneral(u, target, dt, pl); return; }
     if (u.stun > 0) {
       u.stun -= dt;
       collideWorld(u);
@@ -1731,7 +1886,10 @@
               target.hit = 140;
               spawnSparks(target.x, target.y, 4);
               if (target.hp <= 0) {
-                if (u.team === 'enemy') {
+                if (target.kind === 'general') {
+                  // 큰 망치 장군은 두꺼운 중갑 — 조각이 아니라 무너지며 쓰러진다 (집계는 한 번만)
+                  killGeneralUnit(target, Math.atan2(target.y - u.y, target.x - u.x), u);
+                } else if (u.team === 'enemy') {
                   // 적이 아군을 베어 쓰러뜨린 경우 — 아군은 stepUnits 에서 정리한다
                   target.dead = true;
                   spawnDeathSparks(target.x, target.y);
@@ -1749,6 +1907,242 @@
     collideWorld(u);
   }
 
+  /* ---------------------------------------------------------------------------
+     큰 망치 중갑 장군 — 병사 무리에 걸어 들어가 망치를 내려찍는다
+     --------------------------------------------------------------------------- */
+  function aiGeneral(u, target, dt, pl) {
+    if (u.stun > 0) {
+      u.stun -= dt;
+      if (u.hit > 0) u.hit -= dt;
+      collideWorld(u);
+      return;
+    }
+    if (u.hit > 0) u.hit -= dt;
+    if (u.cd > 0) u.cd -= dt;
+    if (u.swing > 0) u.swing -= dt;
+
+    // 망치를 치켜든 채 — 예비동작이 끝나는 순간 내려찍는다 (보고 피할 수 있는 느린 준비)
+    if (u.wind > 0) {
+      u.wind -= dt;
+      if (u.wind <= 0) {
+        u.swing = GEN_SWING;
+        u.cd = GEN_CD + Math.random() * GEN_CD_VAR;
+        generalSlam(u, pl);
+      }
+      collideWorld(u);
+      return;
+    }
+    if (u.swing > 0) { collideWorld(u); return; }
+
+    if (target) {
+      u.face = Math.atan2(target.y - u.y, target.x - u.x);
+      var tdx = target.x - u.x, tdy = target.y - u.y;
+      var tdist = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+      var reach = GEN_REACH + u.r + (target.r || 0);
+      if (tdist > reach) {
+        var step = u.speed * (dt / 1000);
+        u.x += (tdx / tdist) * step;
+        u.y += (tdy / tdist) * step;
+      } else if (u.cd <= 0) {
+        u.wind = GEN_WIND;
+      }
+    } else {
+      // 적이 없으면 앞으로 진격해 적을 찾는다
+      u.x += Math.cos(u.face) * u.speed * 0.5 * (dt / 1000);
+      u.y += Math.sin(u.face) * u.speed * 0.5 * (dt / 1000);
+    }
+    collideWorld(u);
+  }
+
+  /** 장군의 망치 강타 — 앞쪽 부채꼴 안의 적을 한꺼번에 내려친다 (바닥 충격파 연출 포함) */
+  function generalSlam(u, pl) {
+    var i, t, dx, dy, d, ang;
+    var list = u.team === 'ally' ? S.enemies : S.allies;
+    var hit = 0;
+    for (i = list.length - 1; i >= 0; i--) {
+      t = list[i];
+      if (!t || t.dead) continue;
+      dx = t.x - u.x; dy = t.y - u.y;
+      d = Math.sqrt(dx * dx + dy * dy);
+      if (d > GEN_AOE + t.r) continue;
+      ang = Math.atan2(dy, dx);
+      if (Math.abs(angDiff(ang, u.face)) > GEN_ARC) continue;
+      hit++;
+      if (t.kind === 'general') {
+        hurtGeneral(t, GEN_DMG, ang, GEN_KB_GEN, u);
+      } else if (t.team === 'enemy') {
+        // 적 병사 — 망치는 한 방에 처박는다 (조각 연출은 플레이어 타격에만)
+        t.hp = 0;
+        killEnemy(t, false, ang, 1.15);
+        t.x += Math.cos(ang) * GEN_KB; t.y += Math.sin(ang) * GEN_KB;
+        for (var q = 0; q < 5; q++) {
+          var qa = Math.random() * Math.PI * 2;
+          S.particles.push({
+            x: t.x, y: t.y, vx: Math.cos(qa) * (60 + Math.random() * 90), vy: Math.sin(qa) * (60 + Math.random() * 90) - 40,
+            life: 420 + Math.random() * 260, max: 680, color: '#b7a27a', size: 2 + Math.random() * 2.4
+          });
+        }
+      } else {
+        // 아군 병사가 적 장군에게 맞은 경우 — 병사는 그대로 쓰러진다
+        t.hp = 0;
+        t.dead = true;
+        t.counted = true;
+        spawnDeathSparks(t.x, t.y);
+      }
+    }
+    // 플레이어는 아군이므로 적 장군의 강타에 직접 맞는다
+    if (u.team === 'enemy' && pl && S.down <= 0 && S.view !== 'spectate') {
+      dx = pl.x - u.x; dy = pl.y - u.y;
+      d = Math.sqrt(dx * dx + dy * dy);
+      if (d <= GEN_AOE + pl.r) {
+        ang = Math.atan2(dy, dx);
+        if (Math.abs(angDiff(ang, u.face)) <= GEN_ARC) {
+          hurtPlayer(pl.kind === 'general' ? GEN_DMG : GEN_SOLDIER_DMG, u);
+          pl.x += Math.cos(ang) * 26; pl.y += Math.sin(ang) * 26;
+          hit++;
+        }
+      }
+    }
+    addShock(u.x + Math.cos(u.face) * (u.r + 26), u.y + Math.sin(u.face) * (u.r + 26), 118, 1.0, u.team);
+    S.shake = Math.max(S.shake, dNear(u, 520));
+    if (hit > 0) spawnSparks(u.x + Math.cos(u.face) * (u.r + 18), u.y + Math.sin(u.face) * (u.r + 18), 10 + hit * 2);
+    addFloat(u.x, u.y - 46, u.team === 'enemy' ? '적 장군 강타!' : '장군 강타!',
+      u.team === 'enemy' ? '#fca5a5' : '#93c5fd');
+  }
+
+  /** 카메라(플레이어)와의 거리에 따른 흔들림 세기 */
+  function dNear(u, maxD) {
+    var pl = S.player;
+    if (!pl) return 3;
+    var d = Math.sqrt((u.x - pl.x) * (u.x - pl.x) + (u.y - pl.y) * (u.y - pl.y));
+    return clamp(9 * (1 - d / maxD), 1.2, 9);
+  }
+
+  /** 장군이 장군에게 맞을 때 — 피통이 깎이고, 무게 때문에 조금만 밀린다 */
+  function hurtGeneral(t, dmg, ang, kb, from) {
+    if (!t || t.dead) return;
+    t.hp -= dmg;
+    t.hit = 170;
+    t.lastHitBy = from && from === S.player ? 'player' : (from ? (from.team === 'ally' ? 'ally' : 'enemy') : null);
+    t.x += Math.cos(ang) * (kb || 20) * 0.5;
+    t.y += Math.sin(ang) * (kb || 20) * 0.5;
+    t.stun = Math.max(t.stun, 220);
+    spawnSparks(t.x, t.y, 7);
+    if (t.hp <= 0) { t.hp = 0; killGeneralUnit(t, ang, from); }
+  }
+
+  /** 장군이 쓰러지는 순간 — 전멸 판정에 정확히 한 번만 잡힌다 */
+  function killGeneralUnit(t, ang, from) {
+    if (!t || t.counted) return;
+    var byPlayer = from === S.player || t.lastHitBy === 'player';
+    spawnSparks(t.x, t.y, 26);
+    addShock(t.x, t.y, 96, 1.15, t.team);
+    S.shake = Math.max(S.shake, dNear(t, 620) * 1.15);
+    if (t.team === 'enemy') {
+      if (byPlayer) {
+        // 플레이어가 적 장군을 쓰러뜨렸다 — 킬·콤보·조각 연출 그대로
+        killEnemy(t, true, ang, 1.15);
+        addFloat(t.x, t.y - 54, '⚔ 장군 격파!', '#fde68a');
+        S.comboT = 2400;
+      } else {
+        killEnemy(t, false, ang, 1.15);
+        addFloat(t.x, t.y - 54, '적 장군 전사!', '#a7f3d0');
+      }
+    } else {
+      t.dead = true;
+      t.counted = true;
+      spawnDeathSparks(t.x, t.y);
+      addFloat(t.x, t.y - 54, '아군 장군 전사', '#fca5a5');
+    }
+  }
+
+  /* ---------------------------------------------------------------------------
+     내가 큰 망치 장군일 때 — 1인칭 워해머 강타
+     --------------------------------------------------------------------------- */
+  function doSlam() {
+    if (!S || S.ended || S.down > 0 || S.view === 'spectate') return;
+    var pl = S.player;
+    if (!pl || pl.atkCd > 0 || pl.swingLock > 0) return;
+    pl.atkCd = HAMMER_CD;
+    pl.atkAnim = HAMMER_ANIM;
+    pl.swingLock = HAMMER_ANIM;
+    pl.hitDone = false;
+    pl.swipe = null;
+    S.lastSwipe = null;
+    S.pending = { kind: 'slam', at: HAMMER_ANIM * HAMMER_HIT_P, face: pl.face };
+    sfx('wind');
+  }
+
+  /** 망치 머리가 바닥에 꽂히는 순간 — 앞쪽 부채꼴의 적을 한꺼번에 날린다 */
+  function resolveSlam(pd) {
+    var pl = S.player;
+    if (!pl) return;
+    var i, en, dx, dy, d, ang;
+    var hits = 0, gens = 0;
+    // 뒤에서부터 지운다 (죽은 적을 지우면서 순회)
+    for (i = S.enemies.length - 1; i >= 0; i--) {
+      en = S.enemies[i];
+      if (!en || en.dead) continue;
+      dx = en.x - pl.x; dy = en.y - pl.y;
+      d = Math.sqrt(dx * dx + dy * dy);
+      if (d > HAMMER_RANGE + en.r) continue;
+      ang = Math.atan2(dy, dx);
+      if (Math.abs(angDiff(ang, pd.face)) > HAMMER_ARC) continue;
+      hits++;
+      if (en.kind === 'general') {
+        gens++;
+        S.lastHitAt = { x: en.x, y: en.y, t: S.time };
+        en.lastHitBy = 'player';
+        hurtGeneral(en, HAMMER_VS_GEN, ang, GEN_KB, pl);
+        addFloat(en.x, en.y - 48, '-' + HAMMER_VS_GEN, '#fde68a');
+      } else {
+        S.lastHitAt = { x: en.x, y: en.y, t: S.time };
+        killEnemy(en, true, ang, 1.2);      // 집계·킬 카운트·조각 연출을 모두 맡는다
+        en.x += Math.cos(ang) * HAMMER_KNOCK * 0.5;
+        en.y += Math.sin(ang) * HAMMER_KNOCK * 0.5;
+        S.comboT = 2400;
+      }
+    }
+    var ix = pl.x + Math.cos(pd.face) * (pl.r + 44);
+    var iy = pl.y + Math.sin(pd.face) * (pl.r + 44);
+    addShock(ix, iy, 150, 1.25, 'ally');
+    addCrack(ix, iy, pd.face);
+    for (i = 0; i < 16 + hits * 3; i++) {
+      var a = Math.random() * Math.PI * 2;
+      var sp = 70 + Math.random() * 190;
+      S.particles.push({
+        x: ix + (Math.random() - 0.5) * 30, y: iy + (Math.random() - 0.5) * 30,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 60,
+        life: 380 + Math.random() * 320, max: 700,
+        color: Math.random() < 0.6 ? '#e8d9b0' : '#8a7452', size: 2 + Math.random() * 3.2
+      });
+    }
+    S.hitstop = Math.max(S.hitstop, 110);
+    S.shake = Math.max(S.shake, 16);
+    S.hammerFlash = 1;
+    sfx('hammer');
+    if (hits > 0) {
+      addFloat(pl.x, pl.y - 40, hits + '명 강타!', '#fde68a');
+      updateHud();
+    }
+    if (gens > 0) addFloat(pl.x, pl.y - 62, '장군 타격!', '#fbbf24');
+  }
+
+  /** 바닥 충격파 링 — 3D·2D 모두 여기서 모아 그린다 */
+  function addShock(x, y, r, k, team) {
+    S.shocks.push({
+      x: x, y: y, t: 0, dur: 460, r: r * (k || 1),
+      team: team || 'ally'
+    });
+    if (S.shocks.length > 24) S.shocks.shift();
+  }
+
+  /** 바닥 균열 — 망치가 꽂힌 자리에서 방사형으로 갈라진다 */
+  function addCrack(x, y, face) {
+    S.cracks.push({ x: x, y: y, rot: face, t: 0, dur: 2600, len: 74 + Math.random() * 34 });
+    if (S.cracks.length > 10) S.cracks.shift();
+  }
+
   /** 지금 살아 있는 적 수 (쓰러진 병사는 세지 않는다 — 증원 상한 계산용) */
   function aliveEnemies() {
     var n = 0;
@@ -1756,9 +2150,28 @@
     return n;
   }
 
-  /** 전멸 판정 — 약속한 적을 모두 내보냈고 살아 있는 적이 한 명도 없을 때만 참 */
+  /** 살아 있는 '병사' 적 수 — 증원 상한은 장군을 빼고 센다 */
+  function aliveSoldierEnemies() {
+    var n = 0;
+    for (var i = 0; i < S.enemies.length; i++) {
+      if (!S.enemies[i].dead && S.enemies[i].kind !== 'general') n++;
+    }
+    return n;
+  }
+
+  function aliveSoldierAllies() {
+    var n = 0;
+    for (var i = 0; i < S.allies.length; i++) {
+      if (!S.allies[i].dead && S.allies[i].kind !== 'general') n++;
+    }
+    return n;
+  }
+
+  /** 전멸 판정 — 약속한 적을 모두 내보냈고 살아 있는 적이 한 명도 없을 때만 참 (적 장군 포함) */
   function enemiesCleared() {
-    return S.enemySpawned >= S.enemyTotal && aliveEnemies() === 0;
+    return S.enemySpawned >= S.enemyTotal &&
+      S.enemyGenSpawned >= S.enemyGenTotal &&
+      aliveEnemies() === 0;
   }
 
   function stepSpawn(dt) {
@@ -1766,7 +2179,8 @@
     if (S.enemySpawned < S.enemyTotal) {
       S.spawnTimer -= dt;
       var cap = S.maxAlive || (4 + Math.round(S.enemyTotal / 5));
-      var alive = aliveEnemies();
+      // 장군은 따로 서 있으므로 증원 상한은 병사 수로 센다 (장군이 병사 자리를 먹지 않게)
+      var alive = aliveSoldierEnemies();
       if (alive < cap && S.spawnTimer <= 0) {
         S.spawnTimer = S.spawnMs || Math.max(420, 1000 - S.enemyTotal * 16);
         var batch = S.big ? clamp(Math.round(S.enemyTotal / 40), 3, 26) : 2;
@@ -1794,7 +2208,7 @@
     if (S.allySpawned < S.allyTotal) {
       S.allyTimer -= dt;
       var acap = S.maxAlliesAlive || 999;
-      if (S.allies.length < acap && S.allyTimer <= 0) {
+      if (aliveSoldierAllies() < acap && S.allyTimer <= 0) {
         S.allyTimer = S.allyMs || 1500;
         var m = Math.min(S.big ? clamp(Math.round(S.allyTotal / 60), 2, 14) : 1, S.allyTotal - S.allySpawned);
         for (var j = 0; j < m; j++) {
@@ -1852,6 +2266,15 @@
       S.cuts[i].t += dt;
       if (S.cuts[i].t >= S.cuts[i].dur) S.cuts.splice(i, 1);
     }
+    for (i = S.shocks.length - 1; i >= 0; i--) {
+      S.shocks[i].t += dt;
+      if (S.shocks[i].t >= S.shocks[i].dur) S.shocks.splice(i, 1);
+    }
+    for (i = S.cracks.length - 1; i >= 0; i--) {
+      S.cracks[i].t += dt;
+      if (S.cracks[i].t >= S.cracks[i].dur) S.cracks.splice(i, 1);
+    }
+    if (S.hammerFlash > 0) S.hammerFlash = Math.max(0, S.hammerFlash - dt / 260);
     if (S.shake > 0) S.shake = Math.max(0, S.shake - dt * 0.02);
     if (S.guardFlash > 0) S.guardFlash = Math.max(0, S.guardFlash - dt);
     if (S.invuln > 0) S.invuln -= dt;
@@ -1952,6 +2375,7 @@
 
     drawDecor(ctx);
     drawObstacles(ctx);
+    drawShocks(ctx);
     drawTrails(ctx);
     drawCorpses(ctx);
 
@@ -2042,6 +2466,54 @@
     ctx.beginPath(); ctx.arc(0, 0, 1.7, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
+
+    // ── 큰 망치 장군 머리 위 피통 HP바 ──
+    var gi, gu, gp, gpct, gw, gh2, gcol, gdist;
+    var genBar = function (u) {
+      if (!u || u.dead || u.kind !== 'general') return;
+      gp = r.project(u.x, u.y, 47);
+      if (gp.behind || gp.x < -80 || gp.x > pw + 80 || gp.y < -40 || gp.y > ph + 40) return;
+      gdist = Math.sqrt((u.x - S.player.x) * (u.x - S.player.x) + (u.y - S.player.y) * (u.y - S.player.y));
+      gpct = clamp(u.hp / u.maxHp, 0, 1);
+      gw = clamp(84 - gdist * 0.05, 46, 84);
+      gh2 = 8;
+      gcol = u.team === 'enemy' ? (gpct < 0.34 ? '#fca5a5' : '#ef4444') : (gpct < 0.34 ? '#93c5fd' : '#3b82f6');
+      ctx.save();
+      ctx.globalAlpha = clamp(1.15 - gdist / 1200, 0.55, 1);
+      // 바탕 · 테두리 (어두운 전장에서도 또렷하게)
+      ctx.fillStyle = 'rgba(4,8,14,0.82)';
+      ctx.strokeStyle = u.team === 'enemy' ? 'rgba(248,113,113,0.85)' : 'rgba(147,197,253,0.85)';
+      ctx.lineWidth = 1.2;
+      roundRect(ctx, gp.x - gw / 2, gp.y - gh2, gw, gh2, 3);
+      ctx.fill(); ctx.stroke();
+      // 피통
+      ctx.fillStyle = gcol;
+      roundRect(ctx, gp.x - gw / 2 + 1.4, gp.y - gh2 + 1.4, Math.max(0, (gw - 2.8) * gpct), gh2 - 2.8, 2);
+      ctx.fill();
+      // 이름표
+      ctx.font = '800 8.5px -apple-system, "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 2.6;
+      ctx.strokeStyle = 'rgba(4,8,14,0.9)';
+      var label = (u.team === 'enemy' ? '적 ' : '') + '🔨 장군 ' + Math.max(0, Math.round(u.hp));
+      ctx.strokeText(label, gp.x, gp.y - gh2 - 1);
+      ctx.fillStyle = u.team === 'enemy' ? '#fecaca' : '#dbeafe';
+      ctx.fillText(label, gp.x, gp.y - gh2 - 1);
+      ctx.restore();
+    };
+    for (gi = 0; gi < S.enemies.length; gi++) genBar(S.enemies[gi]);
+    for (gi = 0; gi < S.allies.length; gi++) genBar(S.allies[gi]);
+
+    // 망치 강타의 섬광 — 내리찍은 순간 화면이 뜨겁게 번진다
+    if (S.hammerFlash > 0.01) {
+      var hf = ctx.createRadialGradient(cx, ph * 0.62, 10, cx, ph * 0.62, Math.max(pw, ph) * 0.6);
+      hf.addColorStop(0, 'rgba(255,224,150,' + (0.34 * S.hammerFlash).toFixed(3) + ')');
+      hf.addColorStop(0.5, 'rgba(255,170,80,' + (0.12 * S.hammerFlash).toFixed(3) + ')');
+      hf.addColorStop(1, 'rgba(255,120,40,0)');
+      ctx.fillStyle = hf;
+      ctx.fillRect(0, 0, pw, ph);
+    }
 
     // 화면 밖 적 → 가장자리 화살표
     var enCol = (S.cfg.enemy && S.cfg.enemy.color) || '#ef4444';
@@ -2267,8 +2739,10 @@
     var enCol = (S.cfg.enemy && S.cfg.enemy.color) || '#ef4444';
     var col = u.team === 'enemy' ? enCol : meCol;
     var body = u.team === 'enemy' ? '#1a2430' : '#1e3a8a';
+    var gen = u.kind === 'general';
     ctx.save();
     ctx.translate(u.x, u.y);
+    if (gen) ctx.scale(1.45, 1.45);         // 중갑 장군은 병사보다 1.45배 덩치
 
     // 그림자
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -2291,26 +2765,123 @@
     ctx.arc(0, -u.r * 0.25, u.r * 0.62, Math.PI, 0);
     ctx.fill();
 
-    // 칼
-    var sw = u.swing > 0 ? (1 - u.swing / 180) : 0;
-    var a = u.face - 0.7 + sw * 1.5;
-    ctx.strokeStyle = u.wind > 0 ? '#fca5a5' : '#dbeafe';
-    ctx.lineWidth = 2.2;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(Math.cos(u.face) * u.r * 0.5, Math.sin(u.face) * u.r * 0.5);
-    ctx.lineTo(Math.cos(a) * (u.r + 11), Math.sin(a) * (u.r + 11));
-    ctx.stroke();
+    // 칼 · 큰 망치
+    if (gen) {
+      // 장군: 양손 워해머 — 치켜들면 머리 위, 내리치면 앞바닥, 망치 머리는 묵직한 쌍날
+      var swK = u.wind > 0 ? 0 : (u.swing > 0 ? clamp(1 - u.swing / GEN_SWING, 0, 1) : 1);
+      var ha = u.face - 1.45 * (1 - swK);
+      var hx = Math.cos(ha), hy = Math.sin(ha);
+      ctx.save();
+      ctx.translate(Math.cos(u.face) * u.r * 0.5, Math.sin(u.face) * u.r * 0.5);
+      ctx.rotate(ha);
+      // 자루
+      ctx.strokeStyle = u.wind > 0 ? '#fbbf24' : '#8a7452';
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(u.r + 12, 0);
+      ctx.stroke();
+      // 철제 망치 머리 (두꺼운 쌍날)
+      ctx.fillStyle = u.wind > 0 ? '#fde68a' : '#cbd5e1';
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.rect(u.r + 10, -5.4, 7.5, 10.8);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(u.r + 16.4, -3.6, 2.6, 7.2);
+      ctx.restore();
+      // 망치가 내리친 순간 바닥 충격파
+      if (u.swing > 0 && u.swing > GEN_SWING * 0.55) {
+        ctx.strokeStyle = 'rgba(253,230,138,0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(hx * u.r, hy * u.r, GEN_AOE * (1 - u.swing / GEN_SWING), u.face - GEN_ARC, u.face + GEN_ARC);
+        ctx.stroke();
+      }
+    } else {
+      var sw = u.swing > 0 ? (1 - u.swing / 180) : 0;
+      var a = u.face - 0.7 + sw * 1.5;
+      ctx.strokeStyle = u.wind > 0 ? '#fca5a5' : '#dbeafe';
+      ctx.lineWidth = 2.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(u.face) * u.r * 0.5, Math.sin(u.face) * u.r * 0.5);
+      ctx.lineTo(Math.cos(a) * (u.r + 11), Math.sin(a) * (u.r + 11));
+      ctx.stroke();
+    }
 
     // 공격 예고
     if (u.wind > 0) {
-      ctx.strokeStyle = 'rgba(248,113,113,' + (0.25 + 0.5 * (1 - u.wind / 320)) + ')';
-      ctx.lineWidth = 2;
+      var windP = gen ? clamp(1 - u.wind / GEN_WIND, 0, 1) : clamp(1 - u.wind / UNIT_WIND, 0, 1);
+      ctx.strokeStyle = 'rgba(248,113,113,' + (0.25 + 0.5 * windP) + ')';
+      ctx.lineWidth = gen ? 3.4 : 2;
+      var arcHalf = gen ? GEN_ARC : 0.6;
       ctx.beginPath();
-      ctx.arc(0, 0, u.r + 14, u.face - 0.6, u.face + 0.6);
+      ctx.arc(0, 0, u.r + (gen ? 22 : 14), u.face - arcHalf, u.face + arcHalf);
       ctx.stroke();
     }
     ctx.restore();
+
+    // ── 장군 머리 위 피통 HP바 (2D 폴백에서도 또렷하게) ──
+    if (gen) {
+      var bw = u.r * 2.6, bh = 3.4, bx = u.x - bw / 2, by = u.y - u.r * 2.15;
+      var pct = clamp(u.hp / u.maxHp, 0, 1);
+      ctx.save();
+      ctx.fillStyle = 'rgba(4,8,14,0.82)';
+      ctx.strokeStyle = u.team === 'enemy' ? 'rgba(248,113,113,0.85)' : 'rgba(147,197,253,0.85)';
+      ctx.lineWidth = 0.9;
+      roundRect(ctx, bx, by, bw, bh, 1.6);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = u.team === 'enemy' ? (pct < 0.34 ? '#fca5a5' : '#ef4444') : (pct < 0.34 ? '#93c5fd' : '#3b82f6');
+      roundRect(ctx, bx + 0.7, by + 0.7, Math.max(0, (bw - 1.4) * pct), bh - 1.4, 1);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* 바닥 충격파 링 · 망치가 꽂힌 자리의 균열 (2D 폴백) */
+  function drawShocks(ctx) {
+    var i, s, c, k;
+    for (i = 0; i < S.shocks.length; i++) {
+      s = S.shocks[i];
+      k = clamp(s.t / s.dur, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = (1 - k) * 0.9;
+      ctx.strokeStyle = s.team === 'enemy' ? 'rgba(248,113,113,0.95)' : 'rgba(253,230,138,0.95)';
+      ctx.lineWidth = 2.4 * (1 - k) + 0.6;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * (0.18 + k * 0.95), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = (1 - k) * 0.45;
+      ctx.strokeStyle = s.team === 'enemy' ? 'rgba(252,165,165,0.8)' : 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * (0.08 + k * 0.62), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    for (i = 0; i < S.cracks.length; i++) {
+      c = S.cracks[i];
+      k = clamp(c.t / c.dur, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = (1 - k) * 0.75;
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.rot);
+      ctx.strokeStyle = '#3b2a16';
+      ctx.lineWidth = 1.8;
+      for (var j = 0; j < 7; j++) {
+        var aa = (j / 7) * Math.PI * 2 + c.rot * 0.3;
+        var len = c.len * (0.55 + ((j * 37) % 40) / 80) * (1 - k * 0.25);
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(aa) * 4, Math.sin(aa) * 4);
+        ctx.lineTo(Math.cos(aa + 0.2) * len * 0.6, Math.sin(aa + 0.2) * len * 0.6);
+        ctx.lineTo(Math.cos(aa - 0.1) * len, Math.sin(aa - 0.1) * len);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
   }
 
   function drawPlayer(ctx, pl) {
@@ -2377,21 +2948,42 @@
       ctx.restore();
     }
 
-    // 검 (막는 동안에는 옆으로 가로지른 자세)
-    var swingT = pl.atkAnim > 0 ? clamp(1 - pl.atkAnim / SLASH_ANIM, 0, 1) : 0;
-    var swx = pl.swipe ? pl.swipe.sx : SWIPE_DEFAULT.sx;
-    var ang = pl.face + (pl.atkAnim > 0 ? (-0.9 + swingT * 1.8) * (swx >= 0 ? 1 : -1) : 0.45);
-    if (!pl.guard) {
-      ctx.strokeStyle = '#f8fafc';
-      ctx.lineWidth = 3;
+    // 검 (막는 동안에는 옆으로 가로지른 자세) · 장군은 양손 큰 망치
+    if (pl.kind === 'general') {
+      var slamK = pl.atkAnim > 0 ? clamp(1 - pl.atkAnim / HAMMER_ANIM, 0, 1) : 0;
+      var hAng = pl.face - 1.35 + slamK * 1.65;
+      ctx.save();
+      ctx.rotate(hAng);
+      ctx.strokeStyle = '#8a7452';
+      ctx.lineWidth = 3.2;
       ctx.lineCap = 'round';
-      ctx.shadowColor = 'rgba(255,255,255,0.6)';
-      ctx.shadowBlur = 5;
       ctx.beginPath();
-      ctx.moveTo(Math.cos(pl.face) * pl.r * 0.4, Math.sin(pl.face) * pl.r * 0.4);
-      ctx.lineTo(Math.cos(ang) * (pl.r + 17), Math.sin(ang) * (pl.r + 17));
+      ctx.moveTo(0, 0);
+      ctx.lineTo(pl.r + 20, 0);
       ctx.stroke();
-      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#cbd5e1';
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.rect(pl.r + 17, -7, 9.5, 14);
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+    } else {
+      var swingT = pl.atkAnim > 0 ? clamp(1 - pl.atkAnim / SLASH_ANIM, 0, 1) : 0;
+      var swx = pl.swipe ? pl.swipe.sx : SWIPE_DEFAULT.sx;
+      var ang = pl.face + (pl.atkAnim > 0 ? (-0.9 + swingT * 1.8) * (swx >= 0 ? 1 : -1) : 0.45);
+      if (!pl.guard) {
+        ctx.strokeStyle = '#f8fafc';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.shadowColor = 'rgba(255,255,255,0.6)';
+        ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(pl.face) * pl.r * 0.4, Math.sin(pl.face) * pl.r * 0.4);
+        ctx.lineTo(Math.cos(ang) * (pl.r + 17), Math.sin(ang) * (pl.r + 17));
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
     }
 
     // 무적 깜빡임
@@ -2471,7 +3063,9 @@
     }
     if (el.hpText) el.hpText.textContent = String(Math.max(0, Math.round(pl.hp)));
     if (el.kills) el.kills.textContent = String(S.kills);
-    if (el.enemyLeft) el.enemyLeft.textContent = '적 ' + Math.max(0, S.enemyTotal - S.defeated);
+    if (el.enemyLeft) {
+      el.enemyLeft.textContent = '적 ' + Math.max(0, S.enemyTotal + S.enemyGenTotal - S.defeated);
+    }
     if (el.combo) {
       if (S.combo > 1) {
         el.combo.textContent = S.combo + ' 콤보';
@@ -2485,10 +3079,17 @@
       if (S.view === 'spectate') el.hint.textContent = '🎬 관전 — 왼쪽 드래그 비행 · 오른쪽 드래그 시점 · ⚔️ 참전으로 복귀';
       else if (pl.guard) el.hint.textContent = '🛡️ 꾹 누르고 있는 동안은 모두 막는다 · 누른 직후에 받으면 패링';
       else if (pl.dashCd > 0) el.hint.textContent = '돌진 준비 ' + (pl.dashCd / 1000).toFixed(1) + '초';
+      else if (pl.kind === 'general') el.hint.textContent = '🔨 망치 장군 — 좌 드래그 이동 · 우 드래그 시점 · 🔨 내려치기로 주변 적을 한꺼번에';
       else if (S.r3d) el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 드래그 시점 · ⚔️ 베기로 공격';
       else el.hint.textContent = '왼쪽 드래그 이동 · 오른쪽 탭/⚔️ 베기 · 🛡️로 막고 패링';
     }
-    if (el.btnSlash) el.btnSlash.setAttribute('aria-disabled', S.view === 'spectate' ? 'true' : 'false');
+    if (el.btnSlash) {
+      el.btnSlash.setAttribute('aria-disabled', S.view === 'spectate' ? 'true' : 'false');
+      var lbl = el.btnSlash.querySelector('small');
+      if (lbl) lbl.textContent = pl.kind === 'general' ? '내려치기' : '베기';
+      var ico = el.btnSlash.querySelector('span');
+      if (ico) ico.textContent = pl.kind === 'general' ? '🔨' : '⚔️';
+    }
   }
 
   function report(force) {
@@ -2621,6 +3222,23 @@
     spectate: function () { return S ? S.spectate : null; },
     toggleView: toggleView,
     spec: function () { return S ? unitSpec() : null; },
+    generalSpec: function () { return generalSpec(); },
+    /** 장군 검증용 — 수·생존·충격파·내 클래스 */
+    general: function () {
+      if (!S) return null;
+      var a = 0, e = 0, i;
+      for (i = 0; i < S.allies.length; i++) if (S.allies[i].kind === 'general' && !S.allies[i].dead) a++;
+      for (i = 0; i < S.enemies.length; i++) if (S.enemies[i].kind === 'general' && !S.enemies[i].dead) e++;
+      return {
+        spec: generalSpec(),
+        playerClass: S.playerClass,
+        allyTotal: S.allyGenTotal, enemyTotal: S.enemyGenTotal,
+        allyAlive: a, enemyAlive: e,
+        allySpawned: S.allyGenSpawned, enemySpawned: S.enemyGenSpawned,
+        shocks: S.shocks.length, cracks: S.cracks.length,
+        cleared: enemiesCleared()
+      };
+    },
     renderer3d: function () { return S ? S.r3d : null; },
     applyUpdate: applyUpdate,
     forceClose: forceClose,

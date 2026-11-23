@@ -121,6 +121,44 @@ const GEO = {
   shadow: new THREE.PlaneGeometry(19, 19)
 };
 
+/* 큰 망치 중갑 장군 전용 지오메트리 — 병사 부품을 1.45배로 키우고, 뿔 달린 투구·
+   덧댄 견갑·금장 흉갑·거대한 양손 워해머를 더한다 (지오메트리는 공유, 판마다 만들지 않는다) */
+const GGEO = {
+  torso: new THREE.CylinderGeometry(4.9, 3.9, 11.4, 12, 1),
+  chest: new THREE.BoxGeometry(9.2, 6.4, 1.8),
+  backPlate: new THREE.BoxGeometry(8.4, 5.4, 1.1),
+  pauldron: new THREE.SphereGeometry(3.15, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62),
+  pauldronRim: new THREE.CylinderGeometry(3.4, 3.1, 1.0, 14),
+  pauldronSpike: new THREE.ConeGeometry(0.72, 2.8, 5),
+  tasset: new THREE.BoxGeometry(3.9, 4.6, 0.8),
+  gorget: new THREE.CylinderGeometry(2.9, 3.4, 1.6, 12),
+  helmet: new THREE.SphereGeometry(3.25, 16, 11, 0, Math.PI * 2, 0, Math.PI * 0.6),
+  horn: new THREE.ConeGeometry(0.9, 5.0, 6),
+  crest: new THREE.BoxGeometry(0.55, 3.2, 1.6),
+  belt: new THREE.BoxGeometry(9.8, 1.9, 8.8),
+  buckle: new THREE.BoxGeometry(3.0, 2.3, 0.9),
+  tabard: new THREE.BoxGeometry(3.9, 10.6, 0.5),
+  cape: new THREE.PlaneGeometry(7.2, 14.6),
+  emblem: new THREE.CylinderGeometry(2.0, 2.0, 0.5, 16),
+  emblemBar: new THREE.BoxGeometry(3.6, 0.6, 0.62),
+  leg: new THREE.BoxGeometry(3.3, 7.6, 3.3),
+  shin: new THREE.BoxGeometry(3.0, 6.4, 3.0),
+  boot: new THREE.BoxGeometry(3.6, 2.2, 4.8),
+  greave: new THREE.BoxGeometry(3.2, 3.4, 3.2),
+  upperArm: new THREE.BoxGeometry(2.9, 5.5, 2.9),
+  foreArm: new THREE.BoxGeometry(2.6, 4.8, 2.6),
+  hand: new THREE.BoxGeometry(2.3, 2.1, 2.3),
+  // 워해머 — 자루는 +Z 방향, 머리는 끝에
+  haft: new THREE.CylinderGeometry(0.78, 0.86, 17.0, 10),
+  haftWrap: new THREE.CylinderGeometry(0.95, 0.95, 2.6, 10),
+  haftCap: new THREE.SphereGeometry(1.15, 10, 8),
+  headCore: new THREE.BoxGeometry(5.2, 4.8, 6.4),
+  headBand: new THREE.BoxGeometry(5.6, 0.9, 6.8),
+  headFace: new THREE.BoxGeometry(4.4, 4.2, 2.2),
+  headSpike: new THREE.ConeGeometry(1.05, 3.4, 4),
+  rune: new THREE.BoxGeometry(0.5, 0.9, 3.2)
+};
+
 /* ---------------------------------------------------------------------------
    텍스처 (모두 절차적 캔버스 · 한 번만 만들어 공유)
    --------------------------------------------------------------------------- */
@@ -1314,7 +1352,9 @@ function create(opts) {
     steel: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.16, metalness: 0.96, emissive: 0x20304a, emissiveIntensity: 0.25, envMapIntensity: 1.7 }),
     skin: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, envMapIntensity: 0.55 }),
     dark: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, envMapIntensity: 0.4 }),
-    crest: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45, metalness: 0.1, emissive: 0x2a3646, emissiveIntensity: 0.35, envMapIntensity: 0.8 })
+    crest: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45, metalness: 0.1, emissive: 0x2a3646, emissiveIntensity: 0.35, envMapIntensity: 0.8 }),
+    gold: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.22, metalness: 1.0, envMapIntensity: 1.5 }),
+    rune: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.34, metalness: 0.2, emissive: 0xffb24a, emissiveIntensity: 0.9, envMapIntensity: 0.6 })
   };
 
   // 파트 정의 — rig: 어느 관절을 따라가는지, pos: 그 관절 기준 로컬 위치
@@ -1355,22 +1395,93 @@ function create(opts) {
   ];
   const shadowMat = new THREE.MeshBasicMaterial({ map: TEX.shadow, transparent: true, depthWrite: false, opacity: 0.62 });
 
-  const parts = PARTS.map((def) => {
-    const mat = def.mat === 'shadow' ? shadowMat : crowdMat[def.mat];
-    const mesh = new THREE.InstancedMesh(def.geo, mat, MAX_SOLDIERS);
-    mesh.count = 0;
-    mesh.frustumCulled = false;
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.userData.part = def.key;
-    if (def.mat !== 'shadow' && (def.key === 'torso' || def.key === 'head' || def.key === 'helmet' || def.key === 'legL' || def.key === 'legR')) {
-      mesh.castShadow = true; mesh.receiveShadow = false; mesh.userData.shadowPart = true;
-    }
-    scene.add(mesh);
-    const local = new THREE.Matrix4();
-    const e = new THREE.Euler(def.rot ? def.rot[0] : 0, def.rot ? def.rot[1] : 0, def.rot ? def.rot[2] : 0, 'XYZ');
-    local.compose(new THREE.Vector3(def.pos[0], def.pos[1], def.pos[2]), new THREE.Quaternion().setFromEuler(e), new THREE.Vector3(1, 1, 1));
-    return { def: def, mesh: mesh, local: local };
-  });
+  /** 파트 정의 → InstancedMesh 한 벌 (병사·장군이 같은 공정을 쓴다) */
+  function buildPartSet(defs, cap) {
+    return defs.map((def) => {
+      const mat = def.mat === 'shadow' ? shadowMat : crowdMat[def.mat];
+      const mesh = new THREE.InstancedMesh(def.geo, mat, cap);
+      mesh.count = 0;
+      mesh.frustumCulled = false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.userData.part = def.key;
+      if (def.mat !== 'shadow' && (def.key === 'torso' || def.key === 'head' || def.key === 'helmet' || def.key === 'legL' || def.key === 'legR')) {
+        mesh.castShadow = true; mesh.receiveShadow = false; mesh.userData.shadowPart = true;
+      }
+      scene.add(mesh);
+      const local = new THREE.Matrix4();
+      const e = new THREE.Euler(def.rot ? def.rot[0] : 0, def.rot ? def.rot[1] : 0, def.rot ? def.rot[2] : 0, 'XYZ');
+      const sc = def.scale ? new THREE.Vector3(def.scale[0], def.scale[1], def.scale[2]) : new THREE.Vector3(1, 1, 1);
+      local.compose(new THREE.Vector3(def.pos[0], def.pos[1], def.pos[2]), new THREE.Quaternion().setFromEuler(e), sc);
+      return { def: def, mesh: mesh, local: local };
+    });
+  }
+
+  const parts = buildPartSet(PARTS, MAX_SOLDIERS);
+
+  /* ===========================================================================
+     큰 망치 중갑 장군 — 병사와 같은 관절 리그를 1.45배로 키우고, 뿔 투구·큰 견갑·
+     금장 흉갑·망토·문양과 거대한 양손 워해머를 더한 40여 개 파트 (인스턴스 공유)
+     =========================================================================== */
+  const MAX_GENERALS = 48;
+  const GENERAL_PARTS = [
+    { key: 'gTorso', geo: GGEO.torso, mat: 'armor', rig: 'body', pos: [0, 15.2, 0] },
+    { key: 'gChest', geo: GGEO.chest, mat: 'plate', rig: 'body', pos: [0, 16.4, 3.5] },
+    { key: 'gBack', geo: GGEO.backPlate, mat: 'plate', rig: 'body', pos: [0, 16.2, -2.6] },
+    { key: 'gGorget', geo: GGEO.gorget, mat: 'steel', rig: 'body', pos: [0, 19.8, 0] },
+    { key: 'gBelt', geo: GGEO.belt, mat: 'dark', rig: 'body', pos: [0, 10.2, 0] },
+    { key: 'gBuckle', geo: GGEO.buckle, mat: 'gold', rig: 'body', pos: [0, 10.2, 4.2] },
+    { key: 'gTassetL', geo: GGEO.tasset, mat: 'plate', rig: 'body', pos: [-3.1, 8.6, 2.3], rot: [0.12, 0, 0.16] },
+    { key: 'gTassetR', geo: GGEO.tasset, mat: 'plate', rig: 'body', pos: [3.1, 8.6, 2.3], rot: [0.12, 0, -0.16] },
+    { key: 'gTabard', geo: GGEO.tabard, mat: 'cloth', rig: 'body', pos: [0, 13.3, 2.9] },
+    { key: 'gEmblem', geo: GGEO.emblem, mat: 'gold', rig: 'body', pos: [0, 17.2, 4.5], rot: [Math.PI / 2, 0, 0] },
+    { key: 'gEmblemBar', geo: GGEO.emblemBar, mat: 'gold', rig: 'body', pos: [0, 17.2, 4.85] },
+    { key: 'gCape', geo: GGEO.cape, mat: 'cape', rig: 'body', pos: [0, 15.2, -2.8], rot: [0.16, 0, 0] },
+    { key: 'gNeck', geo: GEO.neck, mat: 'skin', rig: 'body', pos: [0, 20.5, 0] },
+    { key: 'gHead', geo: GEO.head, mat: 'skin', rig: 'body', pos: [0, 23.2, 0] },
+    { key: 'gHelmet', geo: GGEO.helmet, mat: 'steel', rig: 'body', pos: [0, 23.4, 0], scale: [1.04, 1.0, 1.06] },
+    { key: 'gBrim', geo: GEO.brim, mat: 'steel', rig: 'body', pos: [0, 22.9, 0], scale: [1.1, 1.0, 1.1] },
+    { key: 'gVisor', geo: GEO.visor, mat: 'dark', rig: 'body', pos: [0, 22.8, 2.8], scale: [1.1, 1.1, 1.0] },
+    { key: 'gCrest', geo: GGEO.crest, mat: 'steel', rig: 'body', pos: [0, 26.2, -0.9], rot: [-0.14, 0, 0] },
+    { key: 'gPlume', geo: GEO.plume, mat: 'crest', rig: 'body', pos: [0, 26.6, -0.1], rot: [-0.24, 0, 0] },
+    { key: 'gHornL', geo: GGEO.horn, mat: 'gold', rig: 'body', pos: [-2.6, 24.6, 0.3], rot: [0.22, 0, 1.0] },
+    { key: 'gHornR', geo: GGEO.horn, mat: 'gold', rig: 'body', pos: [2.6, 24.6, 0.3], rot: [0.22, 0, -1.0] },
+    { key: 'gPaulL', geo: GGEO.pauldron, mat: 'plate', rig: 'body', pos: [-4.95, 19.2, 0], scale: [1.12, 0.78, 1.12] },
+    { key: 'gPaulR', geo: GGEO.pauldron, mat: 'plate', rig: 'body', pos: [4.95, 19.2, 0], scale: [1.12, 0.78, 1.12] },
+    { key: 'gPaulRimL', geo: GGEO.pauldronRim, mat: 'gold', rig: 'body', pos: [-4.95, 17.9, 0] },
+    { key: 'gPaulRimR', geo: GGEO.pauldronRim, mat: 'gold', rig: 'body', pos: [4.95, 17.9, 0] },
+    { key: 'gSpikeL', geo: GGEO.pauldronSpike, mat: 'steel', rig: 'body', pos: [-6.5, 20.6, 0], rot: [0, 0, -0.62] },
+    { key: 'gSpikeR', geo: GGEO.pauldronSpike, mat: 'steel', rig: 'body', pos: [6.5, 20.6, 0], rot: [0, 0, 0.62] },
+    { key: 'gLegL', geo: GGEO.leg, mat: 'dark', rig: 'legL', pos: [0, -3.4, 0] },
+    { key: 'gShinL', geo: GGEO.shin, mat: 'dark', rig: 'kneeL', pos: [0, -3.0, 0] },
+    { key: 'gGreaveL', geo: GGEO.greave, mat: 'plate', rig: 'kneeL', pos: [0, -3.2, 0.16] },
+    { key: 'gBootL', geo: GGEO.boot, mat: 'dark', rig: 'kneeL', pos: [0, -6.2, 0.6] },
+    { key: 'gLegR', geo: GGEO.leg, mat: 'dark', rig: 'legR', pos: [0, -3.4, 0] },
+    { key: 'gShinR', geo: GGEO.shin, mat: 'dark', rig: 'kneeR', pos: [0, -3.0, 0] },
+    { key: 'gGreaveR', geo: GGEO.greave, mat: 'plate', rig: 'kneeR', pos: [0, -3.2, 0.16] },
+    { key: 'gBootR', geo: GGEO.boot, mat: 'dark', rig: 'kneeR', pos: [0, -6.2, 0.6] },
+    { key: 'gUpArmL', geo: GGEO.upperArm, mat: 'armor', rig: 'armL', pos: [0, -2.6, 0] },
+    { key: 'gForeArmL', geo: GGEO.foreArm, mat: 'plate', rig: 'elbowL', pos: [0, -2.4, 0] },
+    { key: 'gHandL', geo: GGEO.hand, mat: 'dark', rig: 'elbowL', pos: [0, -5.0, 0] },
+    { key: 'gUpArmR', geo: GGEO.upperArm, mat: 'armor', rig: 'armR', pos: [0, -2.6, 0] },
+    { key: 'gForeArmR', geo: GGEO.foreArm, mat: 'plate', rig: 'elbowR', pos: [0, -2.4, 0] },
+    { key: 'gHandR', geo: GGEO.hand, mat: 'dark', rig: 'elbowR', pos: [0, -5.0, 0] },
+    // 워해머 (rig 'hammer' — 손 앞에서 통째로 돈다. 자루는 +Z, 머리는 끝)
+    { key: 'gHaft', geo: GGEO.haft, mat: 'dark', rig: 'hammer', pos: [0, 0, 3.6], rot: [Math.PI / 2, 0, 0] },
+    { key: 'gWrapA', geo: GGEO.haftWrap, mat: 'cloth', rig: 'hammer', pos: [0, 0, -1.1], rot: [Math.PI / 2, 0, 0] },
+    { key: 'gWrapB', geo: GGEO.haftWrap, mat: 'cloth', rig: 'hammer', pos: [0, 0, 0.6], rot: [Math.PI / 2, 0, 0] },
+    { key: 'gCap', geo: GGEO.haftCap, mat: 'steel', rig: 'hammer', pos: [0, 0, -4.6] },
+    { key: 'gRingA', geo: GGEO.haftWrap, mat: 'gold', rig: 'hammer', pos: [0, 0, 9.4], rot: [Math.PI / 2, 0, 0], scale: [1.12, 0.38, 1.12] },
+    { key: 'gHeadCore', geo: GGEO.headCore, mat: 'steel', rig: 'hammer', pos: [0, 0, 13.6] },
+    { key: 'gBandA', geo: GGEO.headBand, mat: 'gold', rig: 'hammer', pos: [0, 0, 11.4] },
+    { key: 'gBandB', geo: GGEO.headBand, mat: 'gold', rig: 'hammer', pos: [0, 0, 15.8] },
+    { key: 'gFaceF', geo: GGEO.headFace, mat: 'plate', rig: 'hammer', pos: [0, 0, 17.1] },
+    { key: 'gFaceB', geo: GGEO.headFace, mat: 'plate', rig: 'hammer', pos: [0, 0, 10.1] },
+    { key: 'gHeadSpike', geo: GGEO.headSpike, mat: 'steel', rig: 'hammer', pos: [0, 0, 18.9], rot: [Math.PI / 2, 0, 0] },
+    { key: 'gRuneL', geo: GGEO.rune, mat: 'rune', rig: 'hammer', pos: [-2.55, 0, 13.6] },
+    { key: 'gRuneR', geo: GGEO.rune, mat: 'rune', rig: 'hammer', pos: [2.55, 0, 13.6] },
+    { key: 'gShadow', geo: GEO.shadow, mat: 'shadow', rig: 'body', pos: [0, 0.1, 0], rot: [-Math.PI / 2, 0, 0], scale: [1.5, 1.5, 1.5] }
+  ];
+  const genParts = buildPartSet(GENERAL_PARTS, MAX_GENERALS);
 
   function partColor(def, team, out) {
     if (def.mat === 'skin') return out.copy(skinColor);
@@ -1381,6 +1492,8 @@ function create(opts) {
     if (def.mat === 'cloth') return out.copy(team).lerp(whiteColor, 0.14);
     if (def.mat === 'cape') return out.copy(team).multiplyScalar(0.5);
     if (def.mat === 'crest') return out.copy(team).lerp(whiteColor, 0.56);
+    if (def.mat === 'gold') return out.setRGB(0.86, 0.71, 0.36).lerp(team, 0.18);
+    if (def.mat === 'rune') return out.setRGB(1.0, 0.76, 0.34);
     if (def.mat === 'shadow') return out.setRGB(1, 1, 1);
     return out.setRGB(1, 1, 1);
   }
@@ -1472,10 +1585,173 @@ function create(opts) {
   let arcCountNow = 0;
   let crowdShadowOff = false;
 
+  /* ===========================================================================
+     큰 망치 중갑 장군 — 1.45배 몸집 · 뿔 투구 · 큰 견갑 · 거대 양손 워해머
+     병사와 같은 관절 리그를 쓰되, 망치는 손 앞(hammar rig)에서 통째로 돌아간다.
+     =========================================================================== */
+  const genViews = new Map();
+  const GEN_WIND_MS = 620;          // arena.js GEN_WIND 와 같은 박자
+  const GEN_SWING_MS = 300;         // arena.js GEN_SWING
+  const _gBody = new THREE.Matrix4();
+  const _gLegL = new THREE.Matrix4();
+  const _gKneeL = new THREE.Matrix4();
+  const _gLegR = new THREE.Matrix4();
+  const _gKneeR = new THREE.Matrix4();
+  const _gArmL = new THREE.Matrix4();
+  const _gElbowL = new THREE.Matrix4();
+  const _gArmR = new THREE.Matrix4();
+  const _gElbowR = new THREE.Matrix4();
+  const _gHammer = new THREE.Matrix4();
+  let genAlive = 0, genAllyN = 0, genEnemyN = 0;
+
+  function buildGenerals(S, dt, list, camX, camZ, arcStart) {
+    let arcN = arcStart || 0;
+    const live = new Set();
+    for (const [u] of list) live.add(u);
+    for (const u of [...genViews.keys()]) if (!live.has(u)) genViews.delete(u);
+
+    const n = Math.min(list.length, MAX_GENERALS);
+    genAlive = n;
+    genAllyN = 0; genEnemyN = 0;
+    for (let i = 0; i < n; i++) {
+      const u = list[i][0];
+      const team = list[i][1];
+      if (team === 'ally') genAllyN++; else genEnemyN++;
+      let v = genViews.get(u);
+      if (!v) {
+        v = { phase: rand() * 6.28, lx: u.x, ly: u.y, speed: 0, run: 0, hamK: -1.02, yawK: -0.52, leanK: 0, legL: 0, legR: 0, kneeL: 0, kneeR: 0 };
+        genViews.set(u, v);
+      }
+      const moved = Math.hypot(u.x - v.lx, u.y - v.ly);
+      v.lx = u.x; v.ly = u.y;
+      const spd = dt > 0 ? moved / (dt / 1000) : 0;
+      v.speed = lerp(v.speed, spd, 0.2);
+      const run = clamp(v.speed / 70, 0, 1);
+      v.run = run;
+      v.phase += (dt / 1000) * (0.7 + run * 5.2);
+      const ph = v.phase;
+      const sL = Math.sin(ph), sR = Math.sin(ph + Math.PI);
+      const walk = clamp(run * 1.7, 0, 1);
+      const breath = Math.sin(S.time / 1100 + v.phase * 0.3);
+
+      // ---- 망치 자세 : 오른어깨에 얹었다가 치켜들기(예고) → 내려찍기 ----
+      let hamT = -1.02 + breath * 0.02, yawT = -0.52, leanT = walk * 0.1 + breath * 0.01;
+      let armT = -0.86, elbowT = 0.95;
+      let telegraph = 0;
+      if (u.wind > 0) {
+        telegraph = smoothstep(clamp(1 - u.wind / GEN_WIND_MS, 0, 1));
+        hamT = lerp(-1.02, -1.62, telegraph);
+        yawT = lerp(-0.52, 0.42, telegraph);
+        leanT = lerp(leanT, -0.2, telegraph);
+        armT = lerp(-0.86, -1.8, telegraph);
+        elbowT = lerp(0.95, 0.5, telegraph);
+      } else if (u.swing > 0) {
+        const s = clamp(1 - u.swing / GEN_SWING_MS, 0, 1);
+        const k = smoothstep(clamp((s - 0.08) / 0.5, 0, 1));
+        hamT = lerp(-1.62, 1.0, k);
+        yawT = lerp(0.42, -0.04, k);
+        leanT = lerp(-0.2, 0.34, k);
+        armT = lerp(-1.8, 0.05, k);
+        elbowT = lerp(0.5, 1.15, k);
+      }
+      v.hamK = damp(v.hamK, hamT, dt, u.swing > 0 ? 26 : 55);
+      v.yawK = damp(v.yawK, yawT, dt, 60);
+      v.leanK = damp(v.leanK, leanT, dt, 70);
+      const hamA = v.hamK, hamYaw = v.yawK;
+
+      // ---- 다리 · 팔 관절 ----
+      const ampG = 0.02 + walk * 0.5;
+      const legLT = sL * ampG, legRT = sR * ampG;
+      const kneeLT = Math.max(0, sL) * (0.05 + walk * 0.8) + 0.04;
+      const kneeRT = Math.max(0, sR) * (0.05 + walk * 0.8) + 0.04;
+      v.legL = damp(v.legL, legLT, dt, 60);
+      v.legR = damp(v.legR, legRT, dt, 60);
+      v.kneeL = damp(v.kneeL, kneeLT, dt, 65);
+      v.kneeR = damp(v.kneeR, kneeRT, dt, 65);
+      const armRx = damp(v.armRx == null ? -0.9 : v.armRx, armT + sL * walk * 0.08, dt, u.swing > 0 ? 32 : 60);
+      const armLx = damp(v.armLx == null ? -0.9 : v.armLx, armT - sL * walk * 0.08, dt, u.swing > 0 ? 32 : 60);
+      const elbowR = damp(v.elbowR == null ? 1.0 : v.elbowR, elbowT + Math.abs(sL) * walk * 0.2, dt, 55);
+      const elbowL = damp(v.elbowL == null ? 1.0 : v.elbowL, elbowT + Math.abs(sR) * walk * 0.2, dt, 55);
+      v.armRx = armRx; v.armLx = armLx; v.elbowR = elbowR; v.elbowL = elbowL;
+
+      const bobY = Math.abs(Math.sin(ph)) * (0.14 + walk * 0.9) + breath * 0.08;
+      const lfx = Math.cos(u.face || 0), lfz = Math.sin(u.face || 0);
+      const lunge = u.swing > 0 ? smoothstep(clamp(1 - u.swing / GEN_SWING_MS, 0, 1)) * 2.2 : 0;
+      _pos.set(u.x - W / 2 + lfx * lunge, bobY, u.y - H / 2 + lfz * lunge);
+      _eul.set(v.leanK, Math.PI / 2 - (u.face || 0), Math.sin(ph) * (0.01 + walk * 0.02), 'YXZ');
+      _quat.setFromEuler(_eul);
+      const GS = 1.45;                 // 병사보다 1.45배 덩치
+      _scl.set(GS, GS, GS);
+      _gBody.compose(_pos, _quat, _scl);
+
+      const rigs = {
+        body: _gBody,
+        legL: joint(_gLegL, _gBody, -2.05, 9.6, 0, v.legL, 0, -0.03),
+        kneeL: joint(_gKneeL, _gLegL, 0, -6.9, 0, v.kneeL, 0, 0),
+        legR: joint(_gLegR, _gBody, 2.05, 9.6, 0, v.legR, 0, 0.03),
+        kneeR: joint(_gKneeR, _gLegR, 0, -6.9, 0, v.kneeR, 0, 0),
+        armL: joint(_gArmL, _gBody, -4.75, 19.1, 0, v.armLx, 0, 0.62),
+        elbowL: joint(_gElbowL, _gArmL, 0, -5.2, 0, v.elbowL, 0, 0),
+        armR: joint(_gArmR, _gBody, 4.75, 19.1, 0, v.armRx, 0, -0.62),
+        elbowR: joint(_gElbowR, _gArmR, 0, -5.2, 0, v.elbowR, 0, 0),
+        hammer: joint(_gHammer, _gBody, 0, 17.4, 3.4, hamA, hamYaw, 0)
+      };
+
+      const hurt = u.hit > 0 ? clamp(u.hit / 150, 0, 1) * 0.75 : 0;
+      const color = team === 'enemy' ? colors.enemy : colors.me;
+      for (let p = 0; p < genParts.length; p++) {
+        const P = genParts[p];
+        const base = rigs[P.def.rig] || _gBody;
+        _m2.copy(base).multiply(P.local);
+        P.mesh.setMatrixAt(i, _m2);
+        if (P.def.mat !== 'shadow') {
+          partColor(P.def, color, tmpColor2);
+          if (hurt > 0) tmpColor2.lerp(whiteColor, hurt);
+          P.mesh.setColorAt(i, tmpColor2);
+        }
+      }
+
+      // ---- 장군의 느린 치켜들기 예고 — 병사의 검기보다 크고 묵직하게 (보고 피할 수 있게) ----
+      if (telegraph > 0.02 && arcN < MAX_ARCS) {
+        const ux = u.x - W / 2, uz = u.y - H / 2;
+        const faceCam = Math.atan2(camX - ux, camZ - uz);
+        _m2.makeRotationY(faceCam);
+        _m.makeRotationX(-0.1);
+        _m2.multiply(_m);
+        const w = 15 + telegraph * 7;
+        const h = 10 + telegraph * 5;
+        _m.makeScale(w, h, 1);
+        _m2.multiply(_m);
+        _m2.setPosition(ux, 44 + telegraph * 12, uz);
+        arcMesh.setMatrixAt(arcN, _m2);
+        const pulse = 0.6 + 0.4 * Math.sin(S.time / 54);
+        if (team === 'enemy') tmpColor.setRGB(1.0, 0.22, 0.08);
+        else tmpColor.setRGB(0.5, 0.82, 1.0);
+        tmpColor.multiplyScalar(0.6 + telegraph * 0.5 + pulse * 0.12);
+        arcMesh.setColorAt(arcN, tmpColor);
+        arcN++;
+      }
+    }
+
+    for (let p = 0; p < genParts.length; p++) {
+      genParts[p].mesh.count = n;
+      genParts[p].mesh.instanceMatrix.needsUpdate = true;
+      if (genParts[p].mesh.instanceColor) genParts[p].mesh.instanceColor.needsUpdate = true;
+    }
+    return arcN;
+  }
+
   function buildCrowd(S, dt) {
     const list = [];
-    for (const a of S.allies) if (!a.dead) list.push([a, 'ally']);
-    for (const e of S.enemies) if (!e.dead) list.push([e, 'enemy']);
+    const gens = [];
+    for (const a of S.allies) {
+      if (a.dead) continue;
+      if (a.kind === 'general') gens.push([a, 'ally']); else list.push([a, 'ally']);
+    }
+    for (const e of S.enemies) {
+      if (e.dead) continue;
+      if (e.kind === 'general') gens.push([e, 'enemy']); else list.push([e, 'enemy']);
+    }
 
     // 사라진 유닛 정리
     const seen = new Set();
@@ -1704,6 +1980,8 @@ function create(opts) {
         if (P.mesh.userData.shadowPart) P.mesh.castShadow = !crowdShadowOff;
       }
     }
+    // ── 큰 망치 중갑 장군 (병사와 별도 인스턴스 묶음) ──
+    arcN = buildGenerals(S, dt, gens, camX, camZ, arcN);
     for (let p = 0; p < parts.length; p++) {
       const P = parts[p];
       P.mesh.count = n;
@@ -2057,6 +2335,93 @@ function create(opts) {
   }
 
   /* ===========================================================================
+     바닥 충격파 링 · 망치가 꽂힌 자리의 균열 (장군 강타의 묵직함)
+     =========================================================================== */
+  const SHOCK_MAX = 16;
+  const shockGeo = new THREE.RingGeometry(0.9, 1.0, 64);
+  const shockPool = [];
+  for (let si = 0; si < SHOCK_MAX; si++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffe0a0, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+    });
+    const m = new THREE.Mesh(shockGeo, mat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = 0.7;
+    m.visible = false;
+    m.renderOrder = 3;
+    scene.add(m);
+    shockPool.push({ mesh: m, mat });
+  }
+
+  const crackTex = canvasTex(256, 256, (x) => {
+    x.clearRect(0, 0, 256, 256);
+    x.translate(128, 128);
+    x.lineCap = 'round';
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + (i % 3) * 0.19;
+      x.strokeStyle = i % 2 ? 'rgba(26,17,8,0.95)' : 'rgba(58,38,18,0.85)';
+      x.lineWidth = 5.5 - (i % 3) * 1.4;
+      x.beginPath();
+      x.moveTo(Math.cos(a) * 8, Math.sin(a) * 8);
+      for (let sgn = 1; sgn <= 4; sgn++) {
+        const rr = sgn * 27 + (i % 2) * 7;
+        const aa = a + Math.sin(i * 3.1 + sgn) * 0.15;
+        x.lineTo(Math.cos(aa) * rr, Math.sin(aa) * rr);
+      }
+      x.stroke();
+    }
+    const g = x.createRadialGradient(0, 0, 2, 0, 0, 30);
+    g.addColorStop(0, 'rgba(18,11,4,0.75)');
+    g.addColorStop(1, 'rgba(18,11,4,0)');
+    x.fillStyle = g;
+    x.beginPath(); x.arc(0, 0, 30, 0, Math.PI * 2); x.fill();
+  });
+  const CRACK_MAX = 6;
+  const crackGeo = new THREE.PlaneGeometry(1, 1);
+  const crackPool = [];
+  for (let ci = 0; ci < CRACK_MAX; ci++) {
+    const mat = new THREE.MeshBasicMaterial({
+      map: crackTex, transparent: true, opacity: 0, depthWrite: false, color: 0xffffff
+    });
+    const m = new THREE.Mesh(crackGeo, mat);
+    m.rotation.x = -Math.PI / 2;
+    m.position.y = 0.55;
+    m.visible = false;
+    scene.add(m);
+    crackPool.push({ mesh: m, mat });
+  }
+
+  function syncShocks(S) {
+    const shocks = S.shocks || [];
+    for (let i = 0; i < shockPool.length; i++) {
+      const p = shockPool[i];
+      const s = shocks[i];
+      if (!s) { p.mesh.visible = false; continue; }
+      const k = clamp(s.t / s.dur, 0, 1);
+      const r = Math.max(2, s.r * (0.16 + k * 0.95));
+      p.mesh.visible = true;
+      p.mesh.scale.set(r, r, 1);
+      p.mesh.position.set(s.x - W / 2, 0.7, s.y - H / 2);
+      p.mat.color.setHex(s.team === 'enemy' ? 0xff6b52 : 0xffe2a6);
+      p.mat.opacity = (1 - k) * 0.9;
+    }
+    const cracks = S.cracks || [];
+    for (let i = 0; i < crackPool.length; i++) {
+      const p = crackPool[i];
+      const c = cracks[i];
+      if (!c) { p.mesh.visible = false; continue; }
+      const k = clamp(c.t / c.dur, 0, 1);
+      const size = c.len * 1.55;
+      p.mesh.visible = true;
+      p.mesh.scale.set(size, size, 1);
+      p.mesh.position.set(c.x - W / 2, 0.55, c.y - H / 2);
+      p.mesh.rotation.z = -c.rot;
+      p.mat.opacity = (1 - k) * 0.62;
+    }
+  }
+
+  /* ===========================================================================
      1인칭 카메라 (수동 회전 전용 · 아주 미세한 무게감)
      =========================================================================== */
   let camYaw = (cfg.playerFace != null ? cfg.playerFace : Math.PI / 2);
@@ -2083,6 +2448,8 @@ function create(opts) {
     if (api.debugCamera) {
       camera.position.set(api.debugCamera.x, api.debugCamera.y, api.debugCamera.z);
       camera.lookAt(api.debugCamera.tx, api.debugCamera.ty, api.debugCamera.tz);
+      viewK = 1;                       // 자유 카메라에서는 1인칭 손·검을 그리지 않는다
+      viewMode = 'spectate';
       return;
     }
     camYaw = pl.face;
@@ -2100,22 +2467,26 @@ function create(opts) {
     const sway = Math.sin(bobT * 0.5) * (0.05 + run * 0.28);
 
     const px = pl.x - W / 2, pz = pl.y - H / 2;
+    const isGen = pl.kind === 'general';
+    const eyeH = isGen ? EYE * 1.45 : EYE;       // 중갑 장군은 눈높이도 높다
 
-    // 베기 반동 — 팔과 몸이 함께 실린다
-    const ap = pl.atkAnim > 0 ? 1 - clamp(pl.atkAnim / ATK_DUR, 0, 1) : 0;
-    const strike = ap > 0.16 && ap < 0.66 ? Math.sin(((ap - 0.16) / 0.5) * Math.PI) : 0;
+    // 베기 반동 — 팔과 몸이 함께 실린다 (장군은 망치 강타의 묵직한 반동)
+    const ap = pl.atkAnim > 0 ? 1 - clamp(pl.atkAnim / (isGen ? 620 : ATK_DUR), 0, 1) : 0;
+    const strike = !isGen && ap > 0.16 && ap < 0.66 ? Math.sin(((ap - 0.16) / 0.5) * Math.PI) : 0;
+    // 망치가 바닥에 꽂히는 순간(궤적 55%)에 화면이 쾅 내려앉는다
+    const slamK = isGen && ap > 0.38 && ap < 0.72 ? Math.sin(((ap - 0.38) / 0.34) * Math.PI) : 0;
     const sw = pl.swipe || { sx: -1, sy: 0.16 };
     const brace = vmGuard * 0.5;
     const breath = Math.sin(timeSec * 1.25) * 0.03;
 
     // 반동·막기 충격은 지수 감쇠로 부드럽게
     camKickZX = damp(camKickZX, strike * 0.55 * clamp(sw.sx, -1, 1), dt, 90);
-    camKickZY = damp(camKickZY, -strike * 0.2 - brace * 0.12, dt, 90);
+    camKickZY = damp(camKickZY, -strike * 0.2 - brace * 0.12 - slamK * 0.9, dt, slamK > 0.05 ? 34 : 120);
 
     // ---- 1인칭 자리 (병사 눈높이) ----
     fpPos.set(
       px + Math.cos(camYaw) * camKickZX * 0.22 - Math.sin(camYaw) * sway * 0.1,
-      EYE + bob + camKickZY + breath,
+      eyeH + bob + camKickZY + breath,
       pz + Math.sin(camYaw) * camKickZX * 0.22 + Math.cos(camYaw) * sway * 0.1
     );
     const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
@@ -2124,7 +2495,7 @@ function create(opts) {
     const lookSide = strike * 0.9 * clamp(sw.sx, -1, 1);
     fpLook.set(
       px + fx * cp * 120 - fz * lookSide,
-      EYE + bob + sp * 120 + camKickZY * 1.4 + breath,
+      eyeH + bob + sp * 120 + camKickZY * 1.4 + breath,
       pz + fz * cp * 120 + fx * lookSide
     );
 
@@ -2389,6 +2760,190 @@ function create(opts) {
   };
   const GUARD_POSE = { w: [0.34, -0.96, -2.86], b: [-0.20, 0.94, 0.16], n: [0, 0, 1] };
 
+  /* ===========================================================================
+     🔨 큰 망치 장군의 1인칭 워해머 — 두 손으로 자루를 쥐고, 치켜들었다가
+     바닥으로 내려찍는다. 자루·가죽 감김·금장 띠·강철 쌍날 머리·룬 발광.
+     (자세는 '자루 방향 + 손 위치'로 저작해 쿼터니언으로 이어 붙인다)
+     =========================================================================== */
+  const genVm = new THREE.Group();
+  genVm.visible = false;
+  vm.add(genVm);
+
+  const vmHammerMats = {
+    haft: new THREE.MeshStandardMaterial({ color: 0x4b3324, roughness: 0.82, metalness: 0.08 }),
+    wrap: new THREE.MeshStandardMaterial({ color: 0x2c1c13, roughness: 0.94 }),
+    steel: new THREE.MeshStandardMaterial({ color: 0xccd7e4, roughness: 0.22, metalness: 0.96, envMapIntensity: 1.7 }),
+    face: new THREE.MeshStandardMaterial({ color: 0xe6eef8, roughness: 0.14, metalness: 1.0, envMapIntensity: 2.0 }),
+    gold: new THREE.MeshStandardMaterial({ color: 0xe8c877, roughness: 0.24, metalness: 1.0, envMapIntensity: 1.6 }),
+    leather: new THREE.MeshStandardMaterial({ color: 0x54382a, roughness: 0.88 }),
+    plate: new THREE.MeshStandardMaterial({ color: 0x9aa8ba, roughness: 0.34, metalness: 0.86, envMapIntensity: 1.3 }),
+    rune: new THREE.MeshStandardMaterial({ color: 0xffc766, emissive: 0xff9a1e, emissiveIntensity: 1.5, roughness: 0.4, metalness: 0.3 })
+  };
+
+  const ham = new THREE.Group();
+  genVm.add(ham);
+
+  // 자루 (아래 끝 → 머리)
+  const haftMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 1.24, 10), vmHammerMats.haft);
+  haftMesh.position.y = 0.44;
+  ham.add(haftMesh);
+  const buttCap = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 8), vmHammerMats.gold);
+  buttCap.position.y = -0.18;
+  ham.add(buttCap);
+  for (let i = 0; i < 6; i++) {
+    const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.033, 0.006, 5, 12), vmHammerMats.wrap);
+    wrap.rotation.x = Math.PI / 2;
+    wrap.position.y = -0.06 + i * 0.052;
+    ham.add(wrap);
+  }
+  // 자루 금장 띠 · 날개
+  for (const gy of [0.74, 0.86]) {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.036, 0.009, 5, 14), vmHammerMats.gold);
+    band.rotation.x = Math.PI / 2;
+    band.position.y = gy;
+    ham.add(band);
+  }
+  const langetF = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.22, 0.012), vmHammerMats.plate);
+  langetF.position.set(0, 0.94, 0.03);
+  ham.add(langetF);
+  const langetB = langetF.clone();
+  langetB.position.z = -0.03;
+  ham.add(langetB);
+
+  // 망치 머리 — 강철 몸통 + 양쪽 타격면 + 금장 고정 띠 + 룬 홈
+  const headCore = new THREE.Mesh(new THREE.BoxGeometry(0.40, 0.24, 0.22), vmHammerMats.steel);
+  headCore.position.y = 1.06;
+  ham.add(headCore);
+  for (const sx of [1, -1]) {
+    const face = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.265, 0.245), vmHammerMats.face);
+    face.position.set(sx * 0.235, 1.06, 0);
+    ham.add(face);
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.28, 0.26), vmHammerMats.gold);
+    rim.position.set(sx * 0.19, 1.06, 0);
+    ham.add(rim);
+  }
+  const headCollar = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.27, 0.25), vmHammerMats.gold);
+  headCollar.position.y = 1.06;
+  ham.add(headCollar);
+  const headTop = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.15, 4), vmHammerMats.steel);
+  headTop.position.y = 1.27;
+  headTop.rotation.y = Math.PI / 4;
+  ham.add(headTop);
+  const headButt = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.12, 4), vmHammerMats.steel);
+  headButt.position.y = 0.84;
+  headButt.rotation.x = Math.PI;
+  headButt.rotation.y = Math.PI / 4;
+  ham.add(headButt);
+  for (const sz of [1, -1]) {
+    const rune = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.055, 0.012), vmHammerMats.rune);
+    rune.position.set(0, 1.06, sz * 0.115);
+    ham.add(rune);
+  }
+
+  // 두 주먹 + 팔뚝 (자루에 붙어 함께 움직인다 — 아래에서 올라와 쥔 모양)
+  const hamFists = [];
+  for (const fy of [0.0, 0.215]) {
+    const fist = new THREE.Group();
+    fist.position.y = fy;
+    const glove = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.115, 0.115), vmHammerMats.leather);
+    fist.add(glove);
+    for (let f = 0; f < 4; f++) {
+      const fing = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.05, 0.10), vmHammerMats.leather);
+      fing.position.set(-0.036 + f * 0.024, 0.05, 0.0);
+      fist.add(fing);
+    }
+    const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.056, 0.10, 10), vmHammerMats.plate);
+    wrist.position.y = -0.10;
+    fist.add(wrist);
+    const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.052, 0.26, 4, 10), vmHammerMats.plate);
+    fore.position.set(0.012, -0.30, 0.035);
+    fore.rotation.set(0.14, 0, -0.06);
+    fist.add(fore);
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.062, 0.058, 0.08, 10), vmHammerMats.gold);
+    cuff.position.y = -0.475;
+    fist.add(cuff);
+    ham.add(fist);
+    hamFists.push(fist);
+  }
+
+  // 망치 자세 키 — 손(그립) 위치 + 머리 방향 (카메라 공간)
+  const HAM_KEYS = [
+    { p: 0.00, pos: [0.14, -0.94, -1.36], dir: [0.34, 0.92, 0.20], roll: 0.42 },   // 어깨에 얹고 있다
+    { p: 0.12, pos: [0.18, -1.00, -1.28], dir: [0.24, 0.95, 0.16], roll: 0.32 },   // 힘을 모으며 내린다
+    { p: 0.40, pos: [0.10, -0.46, -1.30], dir: [0.05, 0.86, 0.50], roll: 0.08 },   // 머리 위로 치켜듦
+    { p: 0.50, pos: [0.08, -0.56, -1.24], dir: [0.03, 0.28, 0.96], roll: 0.04 },   // 가속하며 돌린다
+    { p: 0.55, pos: [0.06, -0.66, -1.16], dir: [0.02, -0.92, -0.38], roll: 0.0 },   // 바닥에 꼽히는 순간
+    { p: 0.66, pos: [0.05, -0.82, -1.10], dir: [0.02, -0.98, -0.16], roll: -0.06 },// 팔로우스루
+    { p: 0.86, pos: [0.12, -0.92, -1.28], dir: [0.28, 0.72, 0.30], roll: 0.28 },   // 다시 들어올리며
+    { p: 1.00, pos: [0.14, -0.94, -1.36], dir: [0.34, 0.92, 0.20], roll: 0.42 }
+  ];
+  const _hkPos = new THREE.Vector3();
+  const _hkDir = new THREE.Vector3();
+  const _hkQ = new THREE.Quaternion();
+  const _hkUp = new THREE.Vector3(0, 1, 0);
+  let hamPhase = 0;
+  let hamImpactK = 0;
+  const hamVmState = { visible: false, phase: 0, head: { x: 0.5, y: 0.5 }, roll: 0, impact: 0 };
+
+  /** 카메라 공간 자세 키를 부드럽게 이어(스무스스텝) 망치를 놓는다 */
+  function poseHammer(p) {
+    let i = 0;
+    while (i < HAM_KEYS.length - 2 && p > HAM_KEYS[i + 1].p) i++;
+    const a = HAM_KEYS[i], b = HAM_KEYS[i + 1];
+    const t = clamp((p - a.p) / Math.max(1e-4, b.p - a.p), 0, 1);
+    const k = t * t * (3 - 2 * t);
+    _hkPos.set(
+      lerp(a.pos[0], b.pos[0], k),
+      lerp(a.pos[1], b.pos[1], k),
+      lerp(a.pos[2], b.pos[2], k)
+    );
+    _hkDir.set(
+      lerp(a.dir[0], b.dir[0], k),
+      lerp(a.dir[1], b.dir[1], k),
+      lerp(a.dir[2], b.dir[2], k)
+    ).normalize();
+    ham.position.copy(_hkPos);
+    _hkQ.setFromUnitVectors(_hkUp, _hkDir);
+    ham.quaternion.copy(_hkQ);
+    // 자루 축 둘레로 살짝 돌려 타격면이 화면을 향하게
+    const roll = lerp(a.roll, b.roll, k);
+    ham.rotateY(roll * 0.35);
+    return 0;
+  }
+
+  function updateHammerVm(S, dt) {
+    const pl = S.player;
+    const isGen = !!pl && pl.kind === 'general';
+    const show = isGen && viewK < 0.55 && !S.ended;
+    genVm.visible = show;
+    hamVmState.visible = show;
+    if (!isGen) return;
+    const u = pl.atkAnim > 0 ? clamp(1 - pl.atkAnim / 620, 0, 1) : 0;
+    hamPhase = u;
+    const breathe = Math.sin(timeSec * 1.6) * 0.008;
+    poseHammer(u);
+    ham.position.y += breathe;
+    // 걸을 때·맞을 때 묵직하게 흔들린다
+    const run = clamp(plSpeed / 90, 0, 1);
+    ham.position.y += Math.sin(bobT * 1.0) * (0.006 + run * 0.03);
+    ham.position.x += Math.sin(bobT * 0.5) * (0.005 + run * 0.014);
+    if (pl.hit > 0) {
+      const hk = clamp(pl.hit / 180, 0, 1);
+      ham.position.x -= hk * 0.03;
+      ham.position.y -= hk * 0.02;
+    }
+    // 꼭대기 정점의 화면 좌표 (검증·연출 기준)
+    ham.updateWorldMatrix(true, true);
+    headCore.getWorldPosition(_tipV);
+    _tipV.project(vmCam);
+    hamVmState.head.x = _tipV.x * 0.5 + 0.5;
+    hamVmState.head.y = -_tipV.y * 0.5 + 0.5;
+    hamVmState.phase = u;
+    hamImpactK = (u > 0.52 && u < 0.62) ? 1 : Math.max(0, hamImpactK - dt / 220);
+    hamVmState.impact = hamImpactK;
+    hamVmState.roll = ham.quaternion.y;
+  }
+
   const _kW = new THREE.Vector3();
   const _kB = new THREE.Vector3();
   const _kN = new THREE.Vector3();
@@ -2612,6 +3167,7 @@ function create(opts) {
   function updateViewModel(S, dt) {
     const pl = S.player;
     if (!pl) return;
+    const isGen = pl.kind === 'general';
     const run = clamp(plSpeed / 120, 0, 1);
     vmBob += (dt / 1000) * (2.0 + run * 7.5);
     const bob = Math.sin(vmBob) * (0.014 + run * 0.04);
@@ -2623,6 +3179,9 @@ function create(opts) {
     vm.rotation.set(-run * 0.02 - dashK * 0.1 + hitK * 0.03, 0, Math.sin(vmBob * 0.5) * 0.018 * run);
     // 🎬 관전으로 넘어가면 1인칭 팔·검은 사라진다 (전장을 가리지 않게)
     vm.visible = viewK < 0.55;
+    // 장군은 검 대신 큰 망치를 든다 (팔·검 모델은 숨김)
+    armRoot.visible = !isGen;
+    if (isGen) { if (trailMesh.visible) clearTrail(); }
 
     /* --- 막기 자세 가중치 --- */
     const gTarget = pl.guard ? 1 : 0;
@@ -2708,8 +3267,8 @@ function create(opts) {
     }
 
     // 칼날 궤적 리본 — 베는 동안 칼이 지나간 자리를 따라 그리고, 다 베면 흔적 없이 사라진다
-    const swinging = pl.atkAnim > 0 && vm.visible;
-    if (vm.visible) pushTrail(_tipV, _bladeMidV, swinging && p > 0.19 && p < 0.80, dt);
+    const swinging = pl.atkAnim > 0 && vm.visible && !isGen;
+    if (vm.visible && !isGen) pushTrail(_tipV, _bladeMidV, swinging && p > 0.19 && p < 0.80, dt);
     else clearTrail();
   }
 
@@ -2837,9 +3396,11 @@ function create(opts) {
     syncCuts(S);
     syncPieces(S, dt);
     syncParticles(S, dt);
+    syncShocks(S);
     updateBanners(timeSec);
     updateCamera(S, dt);
     updateViewModel(S, dt);
+    updateHammerVm(S, dt);
     updateAtmosphere(timeSec, dt);
     updateDust(timeSec, camera.position.x, camera.position.z);
 
@@ -2874,7 +3435,7 @@ function create(opts) {
   }
 
   /* 공용 지오메트리·텍스처는 모듈 공용이라 절대 버리지 않는다 (다음 판이 그대로 쓴다) */
-  const SHARED_GEO = new Set(Object.keys(GEO).map((k) => GEO[k]));
+  const SHARED_GEO = new Set(Object.keys(GEO).map((k) => GEO[k]).concat(Object.keys(GGEO).map((k) => GGEO[k])));
   const SHARED_TEX = new Set(Object.keys(TEX).map((k) => TEX[k]));
 
   function disposeScene(root) {
@@ -2915,6 +3476,7 @@ function create(opts) {
     for (const [, p] of pieces) disposePiece(p);
     pieces.clear();
     for (const P of parts) { P.mesh.dispose(); }
+    for (const P of genParts) { P.mesh.dispose(); }
     arcMesh.dispose();
     for (const k in vmMats) vmMats[k].dispose();
     pGeo.dispose(); pMat.dispose();
@@ -3024,7 +3586,7 @@ function create(opts) {
           yaw: camYaw,
           pitch: camPitch,
           viewmodelMeshes: vmMeshes,
-          viewmodelVisible: !!(vm.visible && shoulderPivot.visible),
+          viewmodelVisible: !!(vm.visible && shoulderPivot.visible && armRoot.visible),
           viewmodelGuard: vmGuard,
           shield: false,
           swordPhase: vmState.phase,
@@ -3071,6 +3633,22 @@ function create(opts) {
           fov: camera.fov
         },
         crowd: { parts: parts.length, max: MAX_SOLDIERS },
+        generals: {
+          alive: genAlive, ally: genAllyN, enemy: genEnemyN, max: MAX_GENERALS,
+          parts: genParts.length,
+          shocks: lastS && lastS.shocks ? lastS.shocks.length : 0,
+          cracks: lastS && lastS.cracks ? lastS.cracks.length : 0,
+          visibleShocks: shockPool.filter((p) => p.mesh.visible).length
+        },
+        hammer: {
+          visible: hamVmState.visible,
+          phase: +hamVmState.phase.toFixed(3),
+          head: { x: +hamVmState.head.x.toFixed(3), y: +hamVmState.head.y.toFixed(3) },
+          impact: +hamVmState.impact.toFixed(2),
+          fists: hamFists.length,
+          group: !!genVm,
+          swordHidden: !armRoot.visible
+        },
         graphics: {
           env: !!scene.environment,
           lights: scene.children.filter((o) => !!o.isLight).length,

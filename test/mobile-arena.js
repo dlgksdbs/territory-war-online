@@ -8,22 +8,19 @@
 const puppeteer = require('/workspace/.cache/uitest/node_modules/puppeteer');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
 
 const ROOT = '/workspace/territory-war-online';
 const SHOTS = path.join(ROOT, 'screenshots');
 const PORT = 3577;
+process.env.PORT = String(PORT);   // 서버를 같은 프로세스에서 띄운다 (자식 프로세스 없이 안정적으로)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  const server = spawn(process.execPath, ['server.js'], {
-    cwd: ROOT,
-    env: Object.assign({}, process.env, { PORT: String(PORT) }),
-    stdio: 'ignore'
-  });
-  const stop = () => { try { server.kill('SIGKILL'); } catch (e) { /* noop */ } };
+  const { createServer } = require(path.join(ROOT, 'server.js'));
+  const { server } = createServer();
+  await new Promise((res, rej) => { server.once('error', rej); server.listen(PORT, '0.0.0.0', res); });
+  const stop = () => { try { server.close(); } catch (e) { /* noop */ } };
   process.on('exit', stop);
-  await sleep(900);
 
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -44,7 +41,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     console.log((cond ? '  ✓ ' : '  ✗ ') + name + (cond ? '' : '  ' + JSON.stringify(extra === undefined ? null : extra)));
   };
 
-  await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle2', timeout: 60000 });
+  await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await sleep(700);
 
   // 로비에서 AI 시뮬레이션으로 바로 시작
@@ -464,6 +461,101 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('전멸 순간 남은 적 표시 “적 0” · 쓰러진 병사가 목록에 남지 않는다',
     !!winInfo.clear && winInfo.clear.enemyLeft === '적 0' && winInfo.residue === false, winInfo);
   await page.screenshot({ path: path.join(SHOTS, '20-fix-win-result.png') }).catch(() => {});
+  await page.waitForFunction(() => !window.TWArena.isOpen(), { timeout: 15000 }).catch(() => {});
+
+  /* ============ 큰 망치 중갑 장군 (2D 폴백) ============ */
+  console.log('큰 망치 장군 · 2D');
+  await page.evaluate(() => { try { window.TWArena.close(); } catch (e) {} window.__endReason = null; });
+  await sleep(900);
+  await page.evaluate(() => window.TWArena.open({
+    id: 'gen2d', seed: 8181, solo: true, w: 280, h: 600, enemyCount: 12, allyCount: 4, allyStart: 4,
+    allyGenerals: 3, enemyGenerals: 2, playerClass: 'general', playerHpGeneral: 500,
+    spawnMs: 400, allyMs: 500, timeLimit: 9e9, maxKills: 12, force2d: true,
+    me: { name: '한윤', color: '#3b82f6' }, enemy: { name: '적', color: '#ef4444' },
+    region: { name: '송천' }, target: { name: '적', troops: 12 }
+  }, { onEnd: function (r) { window.__endReason = r; } }));
+  await sleep(700);
+  const gen2d = await page.evaluate(() => {
+    const g = window.TWArena.general();
+    const st = window.TWArena.state();
+    return {
+      g: g, hp: st.player.hp, maxHp: st.player.maxHp, kind: st.player.kind,
+      cls: document.getElementById('arena').className,
+      guard: getComputedStyle(document.getElementById('arGuard')).display,
+      dash: getComputedStyle(document.getElementById('arDash')).display,
+      btn: document.getElementById('arSlash').textContent.replace(/\s+/g, '')
+    };
+  });
+  ok('아군·적군 큰 망치 장군이 고른 수(3·2)만큼 서고 스펙이 완전히 같다 (체력 500)',
+    gen2d.g.allyTotal === 3 && gen2d.g.enemyTotal === 2 && gen2d.g.allyAlive === 3 && gen2d.g.enemyAlive === 2 &&
+    gen2d.g.spec.hp === 500 && gen2d.g.spec.dmg === 100 && gen2d.g.spec.scale === 1.45, gen2d.g);
+  ok('🔨 장군으로 참전 — 피통 500 · 내려치기 버튼 · 막기/돌진 버튼 숨김',
+    gen2d.kind === 'general' && gen2d.hp === 500 && gen2d.maxHp === 500 &&
+    gen2d.cls.indexOf('arena-general') >= 0 && gen2d.guard === 'none' && gen2d.dash === 'none' &&
+    gen2d.btn.indexOf('내려치기') >= 0 && gen2d.btn.indexOf('🔨') >= 0, gen2d);
+
+  // 앞쪽에 적 병사 5명 + 적 장군을 세우고 망치 내려치기 한 방
+  await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const mk = (kind, x, y) => ({
+      team: 'enemy', kind: kind, x: x, y: y, r: kind === 'general' ? 13.05 : 9,
+      hp: kind === 'general' ? 500 : 100, maxHp: kind === 'general' ? 500 : 100,
+      dmg: kind === 'general' ? 100 : 10, speed: 40, face: -Math.PI / 2, cd: 400, wind: 0, swing: 0,
+      hit: 0, stun: 0, dead: false, counted: false, wob: 0, slot: 0, dashHit: false
+    });
+    st.enemies.length = 0;
+    for (let i = 0; i < 5; i++) st.enemies.push(mk('soldier', st.player.x + (i - 2) * 20, st.player.y + 48));
+    st.enemies.push(mk('general', st.player.x, st.player.y + 60));
+    st.enemySpawned = st.enemyTotal; st.enemyGenSpawned = st.enemyGenTotal;
+    st.player.face = Math.PI / 2; st.player.atkCd = 0; st.invuln = 9e9;
+  });
+  await sleep(120);
+  await page.evaluate(() => {
+    document.getElementById('arSlash').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  });
+  await sleep(500);
+  const slam2d = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const gen = st.enemies.find((e) => e.kind === 'general');
+    return {
+      defeated: st.defeated, shocks: st.shocks.length, cracks: st.cracks.length,
+      left: document.getElementById('arEnemyLeft').textContent,
+      genHp: gen ? gen.hp : null, enemies: st.enemies.length,
+      cleared: window.TWArena.general().cleared
+    };
+  });
+  ok('한 번 내려치면 앞쪽 적 병사들이 한꺼번에 날아간다 (광역 강타 · 다수 처치)',
+    slam2d.defeated >= 4, slam2d);
+  ok('망치 강타에 바닥 충격파 링·균열이 터진다', slam2d.shocks >= 1 && slam2d.cracks >= 1, slam2d);
+  ok('적 장군은 한 방에 죽지 않고 피통이 100 깎인다 (500→400)', slam2d.genHp === 400, slam2d);
+  ok('적 병사가 다 죽어도 적 장군이 살아 있으면 승리(전멸)가 아니다', slam2d.cleared === false, slam2d);
+  await page.screenshot({ path: path.join(SHOTS, '21-general-2d.png') }).catch(() => {});
+
+  // 적 장군을 마저 쓰러뜨리면 전멸 → 승리 판정
+  await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const gen = st.enemies.find((e) => e.kind === 'general');
+    if (gen) {
+      gen.hp = 100; gen.stun = 9e9; gen.cd = 9e9;
+      gen.x = st.player.x; gen.y = st.player.y + 60;
+    }
+    st.player.face = Math.PI / 2; st.player.atkCd = 0;
+    st.player.x = gen ? gen.x : st.player.x;
+    st.player.y = gen ? gen.y - 60 : st.player.y;
+    st.enemies.forEach((e) => { if (e.kind !== 'general') { e.dead = true; e.counted = true; } });
+  });
+  await sleep(120);
+  await page.evaluate(() => {
+    document.getElementById('arSlash').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  });
+  await sleep(900);
+  const killGen = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    return { enemies: st.enemies.length, defeated: st.defeated, cleared: window.TWArena.general().cleared,
+      wins: window.__endReason };
+  });
+  ok('적 장군까지 쓰러뜨리면 전멸 판정이 서고 승리로 끝난다 (적 일반 병사 + 적 장군 모두)',
+    killGen.enemies === 0 && killGen.cleared === true, killGen);
   await page.waitForFunction(() => !window.TWArena.isOpen(), { timeout: 15000 }).catch(() => {});
 
   ok('콘솔 · 페이지 오류 0', errors.length === 0, errors.slice(0, 5));

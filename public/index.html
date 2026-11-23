@@ -115,6 +115,35 @@
           </div>
         </div>
       </div>
+      <div class="bb-gen">
+        <div class="bb-gen-head">
+          <span>🔨 큰 망치 중갑 장군</span>
+          <small>피통 500 · 한 방에 안 죽음 · 광역 강타</small>
+        </div>
+        <div class="bb-team enemy gen">
+          <div class="bb-head"><span>적 장군</span><b id="bigEnemyGenVal">0</b></div>
+          <input id="bigEnemyGen" class="bb-range" type="range" min="0" max="20" step="1" value="0" aria-label="적군 큰 망치 장군 수" />
+        </div>
+        <div class="bb-team ally gen">
+          <div class="bb-head"><span>아군 장군</span><b id="bigAllyGenVal">0</b></div>
+          <input id="bigAllyGen" class="bb-range" type="range" min="0" max="20" step="1" value="0" aria-label="아군 큰 망치 장군 수" />
+        </div>
+      </div>
+      <div class="bb-class">
+        <div class="bb-class-label">내가 싸울 방식</div>
+        <div class="bb-class-row" id="bigClassRow" role="group" aria-label="플레이어 클래스 선택">
+          <button type="button" class="bb-cls on" data-class="soldier" aria-pressed="true">
+            <span aria-hidden="true">⚔️</span>
+            <b>일반 병사</b>
+            <small>검 · 한 방에 베기</small>
+          </button>
+          <button type="button" class="bb-cls" data-class="general" aria-pressed="false">
+            <span aria-hidden="true">🔨</span>
+            <b>큰 망치 장군</b>
+            <small>피통 500 · 광역 강타</small>
+          </button>
+        </div>
+      </div>
       <button id="btnCreate" class="primary" type="button">방 만들기</button>
       <button id="btnSim" class="primary sim" type="button">🤖 AI 시뮬레이션 (관전 + 난입)</button>
       <div class="or"><span>또는</span></div>

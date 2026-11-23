@@ -18,23 +18,24 @@
 const puppeteer = require('/workspace/.cache/uitest/node_modules/puppeteer');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
 
 const ROOT = '/workspace/territory-war-online';
 const SHOTS = path.join(ROOT, 'screenshots');
 const PORT = 3588;
+// TW_ONLY=late 이면 대규모 난전 구간을 건너뛰고 장군·2D 폴백만 검증한다
+// (소프트웨어 WebGL 환경에서 한 번에 300초를 넘기지 않도록 조각 실행)
+const LATE = process.env.TW_ONLY === 'late';   // 장군·2D 폴백만
+const EARLY = process.env.TW_ONLY === 'early'; // 대규모 난전까지만
+process.env.PORT = String(PORT);   // 서버를 같은 프로세스에서 띄운다 (자식 프로세스 없이 안정적으로)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
   try { fs.mkdirSync(SHOTS, { recursive: true }); } catch (e) { /* noop */ }
-  const server = spawn(process.execPath, ['server.js'], {
-    cwd: ROOT,
-    env: Object.assign({}, process.env, { PORT: String(PORT) }),
-    stdio: 'ignore'
-  });
-  const stop = () => { try { server.kill('SIGKILL'); } catch (e) { /* noop */ } };
+  const { createServer } = require(path.join(ROOT, 'server.js'));
+  const { server } = createServer();
+  await new Promise((res, rej) => { server.once('error', rej); server.listen(PORT, '0.0.0.0', res); });
+  const stop = () => { try { server.close(); } catch (e) { /* noop */ } };
   process.on('exit', stop);
-  await sleep(900);
 
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -48,8 +49,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => {
-    if (m.type() === 'error') errors.push('console: ' + m.text());
-    else if (m.type() === 'warning' || m.type() === 'warn') console.log('  · warn ' + m.text().slice(0, 160));
+    if (m.type() === 'error') {
+      if (/AudioContext/.test(m.text())) return;   // 헤드리스에는 오디오 장치가 없다 (페이지 오류 아님)
+      errors.push('console: ' + m.text());
+    } else if (m.type() === 'warning' || m.type() === 'warn') console.log('  · warn ' + m.text().slice(0, 160));
   });
   page.on('requestfailed', (r) => errors.push('requestfailed: ' + r.url()));
 
@@ -79,8 +82,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   const more = async (n) => { const f = await fnow(); return f < 0 ? false : frames(f + n); };
 
+  if (LATE) console.log('⏭  대규모 난전 구간(0~3-3부)은 건너뛰고 장군·2D 폴백만 검증합니다');
+  if (!LATE) {
   /* ============ 0. 모듈 ============ */
-  await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle2', timeout: 60000 });
+  // 소프트웨어 WebGL 환경에서는 첫 페이지 로드가 간헐적으로 멈춘다 → 짧게 여러 번 시도
+  let firstNav = false;
+  for (let a = 0; a < 5 && !firstNav; a++) {
+    try {
+      await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+      firstNav = true;
+    } catch (e) {
+      console.log('  · 페이지 로드 재시도 ' + (a + 1) + ' (' + String(e.message).slice(0, 40) + ')');
+      await sleep(1200);
+    }
+  }
   await sleep(600);
   const mod = await page.evaluate(() => ({
     loaded: !!window.TWArena3D,
@@ -1288,7 +1303,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }, v);
   // 홈 화면에서 시작하는 흐름이므로 저장된 세션을 지우고 페이지를 새로 열어 로비로 돌아간다
   await page.evaluate(() => { try { localStorage.clear(); } catch (e) { /* noop */ } });
-  await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'networkidle2', timeout: 60000 });
+  await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.evaluate(() => { window.__TW_KEEP_RES__ = true; });
   await sleep(500);
   const homeState = await page.evaluate(() => {
@@ -1684,6 +1699,137 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // 승리 후 아레나가 스스로 닫힌다 (홈으로 돌아간 상태에서 4부를 이어간다)
   await page.waitForFunction(() => !window.TWArena.isOpen(), { timeout: 15000 }).catch(() => {});
 
+  }
+
+  if (EARLY) console.log('⏭  장군·2D 폴백 구간(3.5부·4부)은 따로 실행합니다 (TW_ONLY=late)');
+  if (!EARLY) {
+
+  /* ============ 3.5부. 큰 망치 중갑 장군 (3D) ============ */
+  console.log('큰 망치 중갑 장군 · 3D');
+  // 대규모 난전을 마친 뒤라 렌더러 메모리를 한 번 비운다 (새 페이지에서 장군 검증)
+  await page.evaluate(() => { try { window.TWArena.close(); } catch (e) {} });
+  await sleep(500);
+  let genNav = false;
+  for (let a = 0; a < 3 && !genNav; a++) {
+    try {
+      await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
+      genNav = true;
+    } catch (e) { console.log('  · 페이지 다시 열기 ' + (a + 1)); await sleep(1500); }
+  }
+  ok('장군 검증용 페이지 로드', genNav);
+  await sleep(900);
+  await page.evaluate(() => { window.__TW_KEEP_RES__ = true; });
+  const genOpen = await page.evaluate(() => window.TWArena.open({
+    id: 'gen3d', seed: 6391, solo: true, big: true, w: 700, h: 1500, playerY: 0.42,
+    enemyCount: 30, allyCount: 20, allyStart: 10, maxAlive: 16, maxAlliesAlive: 10,
+    allyGenerals: 2, enemyGenerals: 3, playerClass: 'general', playerHpGeneral: 500,
+    spawnMs: 400, allyMs: 500, speedScale: 0.7, timeLimit: 9e9, maxKills: 30,
+    me: { slot: 0, name: '한윤', color: '#3b82f6' },
+    enemy: { slot: 1, name: '적', color: '#ef4444' },
+    region: { name: '대평원' }, target: { name: '적', troops: 30 }
+  }));
+  await sleep(900);
+  await frames(8);
+  const genSnap = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    if (!st || !st.r3d) return null;
+    const i = st.r3d.info();
+    const g = window.TWArena.general();
+    return {
+      gen: i.generals, hammer: i.hammer, fp: i.fp, view: i.view,
+      api: { allyAlive: g.allyAlive, enemyAlive: g.enemyAlive, allyTotal: g.allyTotal, enemyTotal: g.enemyTotal,
+        hp: g.spec.hp, scale: g.spec.scale },
+      player: { kind: st.player.kind, hp: st.player.hp, maxHp: st.player.maxHp, eye: st.r3d.eye },
+      cam: i.camera, cls: document.getElementById('arena').className,
+      guard: getComputedStyle(document.getElementById('arGuard')).display,
+      btn: document.getElementById('arSlash').textContent.replace(/\s+/g, '')
+    };
+  });
+  ok('3D 전장에 큰 망치 장군이 병사와 별도 인스턴스로 서고 수가 고른 그대로 (아2·적3)',
+    genOpen === true && !!genSnap && genSnap.gen.alive >= 5 && genSnap.gen.ally === 2 && genSnap.gen.enemy === 3 &&
+    genSnap.gen.parts >= 40, genSnap && genSnap.gen);
+  ok('🔨 1인칭 워해머 뷰모델 — 검은 숨고 두 주먹이 자루를 쥔다',
+    !!genSnap && genSnap.hammer.visible && genSnap.hammer.swordHidden && genSnap.hammer.fists === 2 &&
+    genSnap.hammer.group === true, genSnap && genSnap.hammer);
+  ok('장군으로 참전하면 눈높이가 높아지고 피통 500 · 내려치기 버튼',
+    !!genSnap && genSnap.player.kind === 'general' && genSnap.player.maxHp === 500 &&
+    genSnap.cam.y > 24 && genSnap.cls.indexOf('arena-general') >= 0 && genSnap.guard === 'none' &&
+    genSnap.btn.indexOf('내려치기') >= 0, genSnap && { cam: genSnap.cam, player: genSnap.player, cls: genSnap.cls });
+
+  // 앞쪽에 적 병사 5명 + 적 장군을 세우고 망치 내려치기
+  const setupGen = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const mk = (kind, x, y) => ({
+      team: 'enemy', kind: kind, x: x, y: y, r: kind === 'general' ? 13.05 : 9,
+      hp: kind === 'general' ? 500 : 100, maxHp: kind === 'general' ? 500 : 100,
+      dmg: kind === 'general' ? 100 : 10, speed: 40, face: -Math.PI / 2, cd: 900, wind: 0, swing: 0,
+      hit: 0, stun: 99999, dead: false, counted: false, wob: 0, slot: 0, dashHit: false
+    });
+    st.enemies.length = 0;
+    for (let i = 0; i < 5; i++) st.enemies.push(mk('soldier', st.player.x + (i - 2) * 26, st.player.y + 62));
+    st.enemies.push(mk('general', st.player.x, st.player.y + 84));
+    st.enemySpawned = st.enemyTotal; st.enemyGenSpawned = st.enemyGenTotal;
+    st.player.face = Math.PI / 2; st.player.pitch = -0.08; st.player.atkCd = 0; st.invuln = 9e9;
+    st.allies.forEach((a) => { a.x = st.player.x - 120; a.y = st.player.y - 60; });
+    return { before: st.defeated, hp: st.player.hp };
+  });
+  await sleep(300);
+  await page.evaluate(() => {
+    document.getElementById('arSlash').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  });
+  // 소프트웨어 WebGL은 프레임이 느리다 — 게임 시간 기준으로 내려찍기 순간을 기다린다
+  const swingShot = await page.waitForFunction(() => {
+    const st = window.TWArena.state();
+    if (!st || !st.r3d) return false;
+    const h = st.r3d.info().hammer;
+    return h.visible && h.phase > 0.30 && h.phase < 0.58;
+  }, { timeout: 90000, polling: 80 }).then(() => true).catch(() => false);
+  if (swingShot) {
+    await page.screenshot({ path: path.join(SHOTS, '33-general-hammer-swing.png') }).catch(() => {});
+    await page.screenshot({ path: '/workspace/downloads/territory-war-큰망치-1인칭-휘두르기.png' }).catch(() => {});
+  }
+  const hit = await page.waitForFunction((before) => {
+    const st = window.TWArena.state();
+    return !!st && st.defeated > before;
+  }, { timeout: 90000, polling: 80 }, setupGen.before).then(() => true).catch(() => false);
+  const slam3dOk = await page.evaluate((before, swung, landed) => {
+    const st = window.TWArena.state();
+    const i = st.r3d.info();
+    const gen = st.enemies.find((e) => e.kind === 'general');
+    return {
+      defeated: st.defeated - before, shocks: i.generals.shocks, cracks: i.generals.cracks,
+      flash: st.hammerFlash, shake: st.shake, genHp: gen ? gen.hp : null,
+      enemies: st.enemies.length, cleared: window.TWArena.general().cleared, hammer: i.hammer,
+      swingShot: swung, hit: landed
+    };
+  }, setupGen.before, swingShot, hit);
+  ok('망치 내려찍는 궤적이 1인칭 화면에 잡힌다 (휘두르기 스크린샷)', swingShot, slam3dOk);
+  ok('3D에서도 망치 한 방에 앞쪽 적이 한꺼번에 날아간다 (광역 강타 · 다수 처치)',
+    slam3dOk.defeated >= 4, slam3dOk);
+  ok('바닥 충격파 링·균열이 3D로 그려진다', slam3dOk.shocks >= 1 && slam3dOk.cracks >= 1, slam3dOk);
+  ok('망치가 꽂히는 순간 화면이 번쩍이고 흔들린다 (화면 흔들림 · 히트스톱)', slam3dOk.shake > 2, slam3dOk);
+  ok('적 장군은 한 방에 죽지 않고 피통이 깎인다 (500→400)', slam3dOk.genHp === 400, slam3dOk);
+  ok('적 병사가 다 죽어도 적 장군이 살아 있으면 승리가 아니다', slam3dOk.cleared === false, slam3dOk);
+  await page.screenshot({ path: path.join(SHOTS, '34-general-slam.png') }).catch(() => {});
+
+  // 관전 카메라로 장군 무리 + 머리 위 피통 확인용 스크린샷
+  await page.evaluate(() => {
+    const st = window.TWArena.state();
+    st.view = 'spectate';
+    st.spectate = { x: st.player.x, y: st.player.y + 170, h: 96, yaw: Math.PI / 2, pitch: -0.5 };
+  });
+  await sleep(1400);
+  await page.screenshot({ path: '/workspace/downloads/territory-war-큰망치-전장-장군.png' }).catch(() => {});
+  const field = await page.evaluate(() => {
+    const st = window.TWArena.state();
+    const i = st.r3d.info();
+    return { gen: i.generals, units: i.units, calls: i.calls, view: i.view.mode };
+  });
+  ok('전장 위 관전 시점에서도 장군이 병사 무리와 함께 그려진다',
+    field.view === 'spectate' && field.gen.alive >= 2 && field.units >= 5, field);
+  await page.evaluate(() => window.TWArena.close());
+  await sleep(400);
+
   /* ============ 4부. 2D 폴백 ============ */
   await page.evaluate(() => { try { delete window.TWArena3D; } catch (e) { window.TWArena3D = undefined; } });
   const fbOpen = await page.evaluate(() => window.TWArena.open({
@@ -1702,6 +1848,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     fbOpen === true && fb.mode === '2d' && !fb.has3d && fb.canvas3d === 'none', fb);
   await shot('26-arena3d-fallback-2d.png');
   await page.evaluate(() => window.TWArena.close());
+
+  }
 
   ok('콘솔 · 페이지 오류 0', errors.length === 0, errors.slice(0, 6));
 

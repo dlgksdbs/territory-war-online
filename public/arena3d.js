@@ -1425,16 +1425,16 @@ function create(opts) {
   const MAX_GENERALS = 48;
   const GENERAL_PARTS = [
     { key: 'gTorso', geo: GGEO.torso, mat: 'armor', rig: 'body', pos: [0, 15.2, 0] },
-    { key: 'gChest', geo: GGEO.chest, mat: 'plate', rig: 'body', pos: [0, 16.4, 3.5] },
+    { key: 'gChest', geo: GGEO.chest, mat: 'plate', rig: 'body', pos: [0, 16.4, 5.1] },
     { key: 'gBack', geo: GGEO.backPlate, mat: 'plate', rig: 'body', pos: [0, 16.2, -2.6] },
     { key: 'gGorget', geo: GGEO.gorget, mat: 'steel', rig: 'body', pos: [0, 19.8, 0] },
     { key: 'gBelt', geo: GGEO.belt, mat: 'dark', rig: 'body', pos: [0, 10.2, 0] },
-    { key: 'gBuckle', geo: GGEO.buckle, mat: 'gold', rig: 'body', pos: [0, 10.2, 4.2] },
-    { key: 'gTassetL', geo: GGEO.tasset, mat: 'plate', rig: 'body', pos: [-3.1, 8.6, 2.3], rot: [0.12, 0, 0.16] },
-    { key: 'gTassetR', geo: GGEO.tasset, mat: 'plate', rig: 'body', pos: [3.1, 8.6, 2.3], rot: [0.12, 0, -0.16] },
-    { key: 'gTabard', geo: GGEO.tabard, mat: 'cloth', rig: 'body', pos: [0, 13.3, 2.9] },
-    { key: 'gEmblem', geo: GGEO.emblem, mat: 'gold', rig: 'body', pos: [0, 17.2, 4.5], rot: [Math.PI / 2, 0, 0] },
-    { key: 'gEmblemBar', geo: GGEO.emblemBar, mat: 'gold', rig: 'body', pos: [0, 17.2, 4.85] },
+    { key: 'gBuckle', geo: GGEO.buckle, mat: 'gold', rig: 'body', pos: [0, 10.2, 5.2] },
+    { key: 'gTassetL', geo: GGEO.tasset, mat: 'plate', rig: 'body', pos: [-3.4, 8.6, 4.4], rot: [0.12, 0, 0.16] },
+    { key: 'gTassetR', geo: GGEO.tasset, mat: 'plate', rig: 'body', pos: [3.4, 8.6, 4.4], rot: [0.12, 0, -0.16] },
+    { key: 'gTabard', geo: GGEO.tabard, mat: 'cloth', rig: 'body', pos: [0, 13.3, 4.9] },
+    { key: 'gEmblem', geo: GGEO.emblem, mat: 'gold', rig: 'body', pos: [0, 17.2, 6.1], rot: [Math.PI / 2, 0, 0] },
+    { key: 'gEmblemBar', geo: GGEO.emblemBar, mat: 'gold', rig: 'body', pos: [0, 17.2, 6.4] },
     { key: 'gCape', geo: GGEO.cape, mat: 'cape', rig: 'body', pos: [0, 15.2, -2.8], rot: [0.16, 0, 0] },
     { key: 'gNeck', geo: GEO.neck, mat: 'skin', rig: 'body', pos: [0, 20.5, 0] },
     { key: 'gHead', geo: GEO.head, mat: 'skin', rig: 'body', pos: [0, 23.2, 0] },
@@ -1445,8 +1445,8 @@ function create(opts) {
     { key: 'gPlume', geo: GEO.plume, mat: 'crest', rig: 'body', pos: [0, 26.6, -0.1], rot: [-0.24, 0, 0] },
     { key: 'gHornL', geo: GGEO.horn, mat: 'gold', rig: 'body', pos: [-2.6, 24.6, 0.3], rot: [0.22, 0, 1.0] },
     { key: 'gHornR', geo: GGEO.horn, mat: 'gold', rig: 'body', pos: [2.6, 24.6, 0.3], rot: [0.22, 0, -1.0] },
-    { key: 'gPaulL', geo: GGEO.pauldron, mat: 'plate', rig: 'body', pos: [-4.95, 19.2, 0], scale: [1.12, 0.78, 1.12] },
-    { key: 'gPaulR', geo: GGEO.pauldron, mat: 'plate', rig: 'body', pos: [4.95, 19.2, 0], scale: [1.12, 0.78, 1.12] },
+    { key: 'gPaulL', geo: GGEO.pauldron, mat: 'armor', rig: 'body', pos: [-4.95, 19.2, 0], scale: [1.12, 0.78, 1.12] },
+    { key: 'gPaulR', geo: GGEO.pauldron, mat: 'armor', rig: 'body', pos: [4.95, 19.2, 0], scale: [1.12, 0.78, 1.12] },
     { key: 'gPaulRimL', geo: GGEO.pauldronRim, mat: 'gold', rig: 'body', pos: [-4.95, 17.9, 0] },
     { key: 'gPaulRimR', geo: GGEO.pauldronRim, mat: 'gold', rig: 'body', pos: [4.95, 17.9, 0] },
     { key: 'gSpikeL', geo: GGEO.pauldronSpike, mat: 'steel', rig: 'body', pos: [-6.5, 20.6, 0], rot: [0, 0, -0.62] },
@@ -1460,10 +1460,10 @@ function create(opts) {
     { key: 'gGreaveR', geo: GGEO.greave, mat: 'plate', rig: 'kneeR', pos: [0, -3.2, 0.16] },
     { key: 'gBootR', geo: GGEO.boot, mat: 'dark', rig: 'kneeR', pos: [0, -6.2, 0.6] },
     { key: 'gUpArmL', geo: GGEO.upperArm, mat: 'armor', rig: 'armL', pos: [0, -2.6, 0] },
-    { key: 'gForeArmL', geo: GGEO.foreArm, mat: 'plate', rig: 'elbowL', pos: [0, -2.4, 0] },
+    { key: 'gForeArmL', geo: GGEO.foreArm, mat: 'armor', rig: 'elbowL', pos: [0, -2.4, 0] },
     { key: 'gHandL', geo: GGEO.hand, mat: 'dark', rig: 'elbowL', pos: [0, -5.0, 0] },
     { key: 'gUpArmR', geo: GGEO.upperArm, mat: 'armor', rig: 'armR', pos: [0, -2.6, 0] },
-    { key: 'gForeArmR', geo: GGEO.foreArm, mat: 'plate', rig: 'elbowR', pos: [0, -2.4, 0] },
+    { key: 'gForeArmR', geo: GGEO.foreArm, mat: 'armor', rig: 'elbowR', pos: [0, -2.4, 0] },
     { key: 'gHandR', geo: GGEO.hand, mat: 'dark', rig: 'elbowR', pos: [0, -5.0, 0] },
     // 워해머 (rig 'hammer' — 손 앞에서 통째로 돈다. 자루는 +Z, 머리는 끝)
     { key: 'gHaft', geo: GGEO.haft, mat: 'dark', rig: 'hammer', pos: [0, 0, 3.6], rot: [Math.PI / 2, 0, 0] },
@@ -1619,7 +1619,7 @@ function create(opts) {
       if (team === 'ally') genAllyN++; else genEnemyN++;
       let v = genViews.get(u);
       if (!v) {
-        v = { phase: rand() * 6.28, lx: u.x, ly: u.y, speed: 0, run: 0, hamK: -1.02, yawK: -0.52, leanK: 0, legL: 0, legR: 0, kneeL: 0, kneeR: 0 };
+        v = { phase: rand() * 6.28, lx: u.x, ly: u.y, speed: 0, run: 0, hamK: -0.58, yawK: -1.0, leanK: 0, legL: 0, legR: 0, kneeL: 0, kneeR: 0 };
         genViews.set(u, v);
       }
       const moved = Math.hypot(u.x - v.lx, u.y - v.ly);
@@ -1635,13 +1635,13 @@ function create(opts) {
       const breath = Math.sin(S.time / 1100 + v.phase * 0.3);
 
       // ---- 망치 자세 : 오른어깨에 얹었다가 치켜들기(예고) → 내려찍기 ----
-      let hamT = -1.02 + breath * 0.02, yawT = -0.52, leanT = walk * 0.1 + breath * 0.01;
+      let hamT = -0.58 + breath * 0.02, yawT = -1.0, leanT = walk * 0.1 + breath * 0.01;
       let armT = -0.86, elbowT = 0.95;
       let telegraph = 0;
       if (u.wind > 0) {
         telegraph = smoothstep(clamp(1 - u.wind / GEN_WIND_MS, 0, 1));
-        hamT = lerp(-1.02, -1.62, telegraph);
-        yawT = lerp(-0.52, 0.42, telegraph);
+        hamT = lerp(-0.58, -1.55, telegraph);
+        yawT = lerp(-1.0, 0.10, telegraph);
         leanT = lerp(leanT, -0.2, telegraph);
         armT = lerp(-0.86, -1.8, telegraph);
         elbowT = lerp(0.95, 0.5, telegraph);
@@ -2868,14 +2868,14 @@ function create(opts) {
 
   // 망치 자세 키 — 손(그립) 위치 + 머리 방향 (카메라 공간)
   const HAM_KEYS = [
-    { p: 0.00, pos: [0.14, -0.94, -1.36], dir: [0.34, 0.92, 0.20], roll: 0.42 },   // 어깨에 얹고 있다
-    { p: 0.12, pos: [0.18, -1.00, -1.28], dir: [0.24, 0.95, 0.16], roll: 0.32 },   // 힘을 모으며 내린다
+    { p: 0.00, pos: [0.02, -0.92, -1.32], dir: [0.30, 0.93, 0.20], roll: 0.42 },   // 어깨에 얹고 있다
+    { p: 0.12, pos: [0.06, -1.00, -1.26], dir: [0.22, 0.95, 0.16], roll: 0.32 },   // 힘을 모으며 내린다
     { p: 0.40, pos: [0.10, -0.46, -1.30], dir: [0.05, 0.86, 0.50], roll: 0.08 },   // 머리 위로 치켜듦
     { p: 0.50, pos: [0.08, -0.56, -1.24], dir: [0.03, 0.28, 0.96], roll: 0.04 },   // 가속하며 돌린다
     { p: 0.55, pos: [0.06, -0.66, -1.16], dir: [0.02, -0.92, -0.38], roll: 0.0 },   // 바닥에 꼽히는 순간
     { p: 0.66, pos: [0.05, -0.82, -1.10], dir: [0.02, -0.98, -0.16], roll: -0.06 },// 팔로우스루
-    { p: 0.86, pos: [0.12, -0.92, -1.28], dir: [0.28, 0.72, 0.30], roll: 0.28 },   // 다시 들어올리며
-    { p: 1.00, pos: [0.14, -0.94, -1.36], dir: [0.34, 0.92, 0.20], roll: 0.42 }
+    { p: 0.86, pos: [0.02, -0.90, -1.26], dir: [0.26, 0.74, 0.30], roll: 0.28 },   // 다시 들어올리며
+    { p: 1.00, pos: [0.02, -0.92, -1.32], dir: [0.30, 0.93, 0.20], roll: 0.42 }
   ];
   const _hkPos = new THREE.Vector3();
   const _hkDir = new THREE.Vector3();

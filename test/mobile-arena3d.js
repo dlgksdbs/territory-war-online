@@ -24,8 +24,9 @@ const SHOTS = path.join(ROOT, 'screenshots');
 const PORT = 3588;
 // TW_ONLY=late 이면 대규모 난전 구간을 건너뛰고 장군·2D 폴백만 검증한다
 // (소프트웨어 WebGL 환경에서 한 번에 300초를 넘기지 않도록 조각 실행)
-const LATE = process.env.TW_ONLY === 'late';   // 장군·2D 폴백만
-const EARLY = process.env.TW_ONLY === 'early'; // 대규모 난전까지만
+// TW_ONLY 로 구간을 골라 실행할 수 있다 (예: '01', '2', '3', 'late', '01,2,3,late')
+// 소프트웨어 WebGL 환경에서 한 번에 300초·메모리를 넘기지 않도록 조각 실행할 때 쓴다.
+const ONLY = process.env.TW_ONLY || 'all';
 process.env.PORT = String(PORT);   // 서버를 같은 프로세스에서 띄운다 (자식 프로세스 없이 안정적으로)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -42,7 +43,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     protocolTimeout: 600000,          // 소프트웨어 WebGL(느린 CI)에서도 CDP 입력이 끊기지 않게
     executablePath: '/workspace/.cache/puppeteer/chrome/linux-148.0.7778.97/chrome-linux64/chrome',
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--enable-unsafe-swiftshader',
-      '--use-gl=angle', '--use-angle=swiftshader', '--autoplay-policy=no-user-gesture-required']
+      '--use-gl=angle', '--use-angle=swiftshader', '--disable-gpu-sandbox', '--autoplay-policy=no-user-gesture-required']
   });
   const errors = [];
   const page = await browser.newPage();
@@ -82,20 +83,29 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   const more = async (n) => { const f = await fnow(); return f < 0 ? false : frames(f + n); };
 
-  if (LATE) console.log('⏭  대규모 난전 구간(0~3-3부)은 건너뛰고 장군·2D 폴백만 검증합니다');
-  if (!LATE) {
-  /* ============ 0. 모듈 ============ */
-  // 소프트웨어 WebGL 환경에서는 첫 페이지 로드가 간헐적으로 멈춘다 → 짧게 여러 번 시도
-  let firstNav = false;
-  for (let a = 0; a < 5 && !firstNav; a++) {
-    try {
-      await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 20000 });
-      firstNav = true;
-    } catch (e) {
-      console.log('  · 페이지 로드 재시도 ' + (a + 1) + ' (' + String(e.message).slice(0, 40) + ')');
-      await sleep(1200);
+  const on = (k) => ONLY === 'all' || ONLY.split(',').indexOf(k) >= 0;
+  let pageLoaded = false;
+  async function ensurePage() {
+    if (pageLoaded) return true;
+    for (let a = 0; a < 5; a++) {
+      try {
+        await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 20000 });
+        pageLoaded = true;
+        await page.evaluate(() => { window.__TW_KEEP_RES__ = true; window.__TW_SAMPLE__ = true; });
+        await sleep(700);
+        return true;
+      } catch (e) {
+        console.log('  · 페이지 로드 재시도 ' + (a + 1) + ' (' + String(e.message).slice(0, 40) + ')');
+        await sleep(1200);
+      }
     }
+    return false;
   }
+  if (on('2') || on('3') || on('late')) { await ensurePage(); }
+  console.log('▶ TW_ONLY=' + ONLY + ' 구간 검증');
+  if (on('01')) {
+  /* ============ 0. 모듈 ============ */
+  await ensurePage();
   await sleep(600);
   const mod = await page.evaluate(() => ({
     loaded: !!window.TWArena3D,
@@ -201,6 +211,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('🗺️ 지도로 복귀하면 3D 아레나가 닫히고 지도로 돌아온다',
     !!live && live.closed && live.back.mode === 'none' && live.back.canvas3d === 'none' &&
     !live.back.arena3dClass && live.back.map, live && live.back);
+
+  }
+
+  if (on('2')) {
 
   /* ============ 2부. 결정적 1인칭 검증 ============ */
   await page.evaluate(() => {
@@ -1293,6 +1307,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('아레나를 닫으면 3D 캔버스가 숨는다',
     closed.mode === 'none' && closed.canvas3d === 'none' && !closed.arena3dClass, closed);
 
+  }
+
+  if (on('3')) {
+
   /* ============ 3부. 홈 화면 [대규모 3D 전장] ============ */
   // 이 구간은 1000명 난전의 병사 수·드로우콜·시뮬레이션 검증이 목적이다.
   // 느린 CI GPU 에서도 시간 안에 돌도록 내부 렌더 해상도만 낮춰(0.7) 돌리고,
@@ -1701,8 +1719,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   }
 
-  if (EARLY) console.log('⏭  장군·2D 폴백 구간(3.5부·4부)은 따로 실행합니다 (TW_ONLY=late)');
-  if (!EARLY) {
+  if (on('late')) {
 
   /* ============ 3.5부. 큰 망치 중갑 장군 (3D) ============ */
   console.log('큰 망치 중갑 장군 · 3D');

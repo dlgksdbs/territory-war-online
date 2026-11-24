@@ -23,6 +23,9 @@ const LOOK_SENS = 0.0063;        // 화면 드래그 1px 당 좌우 회전(rad)
 const LOOK_PITCH_SENS = 0.0049;  // 화면 드래그 1px 당 상하 회전(rad)
 const SPEC_SENS = 0.0072;        // 관전 카메라 좌우
 const SPEC_PITCH_SENS = 0.0056;  // 관전 카메라 상하
+/* 🎬 관전 자유 비행 범위 — 땅 아래만 막고 하늘(120m)·성채 뒷편까지 어디든 */
+const SPECTATE_MIN_Y = 1.2;
+const SPECTATE_MAX_Y = 120;
 const _aimDir = new THREE.Vector3();
 const UNIT_KR = { soldier: '병사', knight: '기사', wizard: '마법사', blademaster: '검객' };
 
@@ -369,7 +372,7 @@ class App {
       if (this.camMode === 'spectate') {
         if (!this.spectate) this._enterSpectate();
         const s = this.spectate;
-        s.yaw += dx * SPEC_SENS;
+        s.yaw -= dx * SPEC_SENS;        // 1인칭과 같은 방향 (예전엔 부호가 반대라 화면이 거꾸로 돌았다)
         s.pitch = clamp(s.pitch - dy * SPEC_PITCH_SENS, -1.50, 0.92);
         this._spectateIdle = 0;
         this.autoSpectate = false;      // 손으로 돌리면 자동 회전은 멈춘다
@@ -782,15 +785,17 @@ class App {
         s.x += d.x * spd * dt;
         s.z += d.z * spd * dt;
         // 수직 — 아래를 보며 앞으로 가면 땅으로 내려가고, 위를 보며 가면 하늘로 올라간다.
-        //        뒤로 당기면 반대. 최저 1.5m = 병사 눈높이까지 내려가 구경할 수 있다.
-        s.y = clamp(s.y + Math.sin(s.pitch) * mz * spd * dt, 1.5, 92);
+        //        뒤로 당기면 반대. 병사가 다니는 높이(1.2m)부터 성채 위 하늘(120m)까지 자유롭게.
+        s.y = clamp(s.y + Math.sin(s.pitch) * mz * spd * dt, SPECTATE_MIN_Y, SPECTATE_MAX_Y);
       } else {
         this._spectateIdle += dt;
         if (this.autoSpectate && this._spectateIdle > 2.2) s.yaw += dt * 0.055;
       }
-      const bound = (b.arenaR || 60) + 26;
+      // 🎬 관전은 맵 안이면 어디든 — 땅 아래와 전장 바깥 허공만 막는다 (AI 병사가 못 가는 곳도 구경 가능)
+      const bound = Math.max((b.arenaR || 60) + 35, 95);
       s.x = clamp(s.x, -bound, bound);
       s.z = clamp(s.z, -bound, bound);
+      s.y = clamp(s.y, SPECTATE_MIN_Y, SPECTATE_MAX_Y);
       const cp = Math.cos(s.pitch), sp2 = Math.sin(s.pitch);
       this.cam.position.set(s.x, s.y, s.z);
       this.cam.lookAt(s.x + Math.sin(s.yaw) * cp * 60, s.y + sp2 * 60, s.z + Math.cos(s.yaw) * cp * 60);

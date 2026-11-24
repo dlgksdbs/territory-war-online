@@ -13,6 +13,8 @@ import { makeUnitRig } from './rig.js';
 
 const DEATH_DOWN = 0.20 + KNEEL_TIME + FALL_TIME; // 눕기까지 걸리는 시간
 const DEATH_REMOVE = DEATH_DOWN + CORPSE_TIME;
+/* 🛡️ AI 병사가 한 번 막고 나서 다시 막을 수 있을 때까지의 재사용 대기(초) */
+const GUARD_COOLDOWN = 1.4;
 
 class Grid {
   constructor(cell) {
@@ -113,7 +115,7 @@ export class Battle {
       moveAmt: 0, walkPhase: sd.r2 * TAU, animPhase: sd.r0 * TAU,
       mirror: 0,
       staggerT: 0, staggerSide: 1, freezeT: 0, slowT: 0,
-      guard: false, guardT: 0, guardCheckT: 0.9 + sd.r1 * 1.4, guardFlash: 0,
+      guard: false, guardT: 0, guardCheckT: 0.9 + sd.r1 * 1.4, guardFlash: 0, guardCd: 0,
       cd: { fire: 0, lightning: 0, ice: 0, petal: 0 },
       dashT: -1, dashHit: null, dashCount: 0,
       casts: 0, kills: 0, growl: 1,
@@ -428,7 +430,7 @@ export class Battle {
         const heavy = kind === 'hammer' || kind === 'petal' || kind === 'fire' || kind === 'ice' || kind === 'lightning';
         raw = heavy ? amount * 0.34 : 0;      // 평타는 완전 방어
         target.guardFlash = 0.22;
-        if (heavy) { target.guard = false; target.guardT = 0; }
+        if (heavy) { target.guard = false; target.guardT = 0; target.guardCd = GUARD_COOLDOWN; }
         this.emit({
           type: 'block', unit: target, source: source || null, heavy,
           x: target.x + Math.sin(target.yaw) * 0.45, z: target.z + Math.cos(target.yaw) * 0.45,
@@ -747,7 +749,8 @@ export class Battle {
       const u = order[(startAt + oi) % order.length];
       // 타이머
       if (u.cooldown > 0) u.cooldown -= dt;
-      if (u.guardT > 0) { u.guardT -= dt; if (u.guardT <= 0) { u.guardT = 0; if (!u.isPlayer) u.guard = false; } }
+      if (u.guardT > 0) { u.guardT -= dt; if (u.guardT <= 0) { u.guardT = 0; if (!u.isPlayer) { u.guard = false; u.guardCd = GUARD_COOLDOWN; } } }
+      if (u.guardCd > 0) u.guardCd = Math.max(0, u.guardCd - dt);
       if (u.guardFlash > 0) u.guardFlash = Math.max(0, u.guardFlash - dt);
       if (u.staggerT > 0) u.staggerT -= dt;
       if (u.freezeT > 0) {
@@ -873,21 +876,22 @@ export class Battle {
       }
 
       // 🛡️ 일반 병사(AI) — 적이 검을 휘두르면 반응해서 검으로 막는다 (아군·적군 완전 동일 규칙)
+      //    가끔 한 번씩만 막는다: 반응 확률 16%, 대치 중 6%, 한 번 막고 나면 1.4초 재사용 대기
       if (u.cls === 'soldier') {
         const windup = t && t.attackT >= 0 && t.attackT < impactAt(t.cls) + 0.06;
         const threat = windup && d < spec.reach + 3.2;
         u.guardRollT = (u.guardRollT || 0) - dt;
-        if (!u.guard && threat && u.guardRollT <= 0) {
+        if (!u.guard && u.guardCd <= 0 && threat && u.guardRollT <= 0) {
           u.guardRollT = 0.30;               // 한 번의 공격 동작에 한 번만 판단
-          if (this.rng() < 0.62) {
+          if (this.rng() < 0.16) {
             u.guard = true; u.guardT = 0.52 + this.rng() * 0.32;
             u.attackT = -1;                  // 휘두르던 손을 거두고 막기로
           }
-        } else if (!u.guard && !threat) {
+        } else if (!u.guard && u.guardCd <= 0 && !threat) {
           u.guardCheckT = (u.guardCheckT || 0) - dt;
           if (u.guardCheckT <= 0) {
             u.guardCheckT = 1.1 + this.rng() * 1.1;
-            if (d < spec.reach + 2.6 && this.rng() < 0.35) {
+            if (d < spec.reach + 2.6 && this.rng() < 0.06) {
               u.guard = true; u.guardT = 0.45 + this.rng() * 0.30;
               u.attackT = -1;
             }

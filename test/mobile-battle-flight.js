@@ -1,8 +1,11 @@
 'use strict';
 
 /* 배틀 아레나 3D · 모바일(390×844 세로) 실제 렌더 검증
-   - 🎬 관전 자유 비행: 아래를 보고 조이스틱 앞으로 → 고도가 실제로 내려가 4m 아래(병사 눈높이 1.5m)까지,
+   - 🎬 관전 자유 비행: 아래를 보고 조이스틱 앞으로 → 고도가 실제로 내려가 4m 아래(병사 눈높이 1.2m)까지,
      위를 보면 올라가고, 뒤로 당기면 반대로. 가로 이동이 카메라 시선 방향과 정확히 일치하는지(전진·우측).
+   - 🎬 관전 범위: 전장·성채·하늘(1.2~120m) 어디든 — 예전 한계(전장+26m·92m) 밖도 난다. 맵 바깥 허공만 막힘.
+   - 🖐️ 관전 드래그 회전 방향 = 1인칭과 같은 쪽 (예전엔 좌우가 반대였다).
+   - 🛡️ AI 일반 병사 막기 빈도 대폭 하향 (가끔 한 번씩) · 플레이어 검 막기는 그대로 0 피해.
    - ⚔️ 참전 복귀: 관전하던 그 지면으로 내려오고(전장 반경 클램프) 보던 방향 유지 · 0.9초 무적.
    - 화면 흔들림 0: 헤드밥·호흡·공격/피격 반동·롤·fov 출렁임이 없이 눈높이 고정.
    - 코앞 아군이 사라지지 않는다 (근접 시야 가림 제거), 1인칭에서 숨는 건 내 몸뿐.
@@ -254,13 +257,13 @@ function ok(name, cond, extra) {
   await shot('42-spectate-ground.png');
   const descending = ys.every((y, i) => i === 0 || y <= ys[i - 1] + 1e-9);
   ok('아래를 보고 앞으로 밀면 고도가 실제로 내려간다', descending, ys.map((y) => +y.toFixed(2)));
-  ok('4m 아래까지 내려가 병사 눈높이(1.5m)에서 멈춘다 (예전엔 4m에서 막혔다)',
-    Math.min(...ys) <= 1.55 && Math.min(...ys) < 4, { min: +Math.min(...ys).toFixed(2) });
+  ok('4m 아래까지 내려가 병사 눈높이(1.2m)에서 멈춘다 (예전엔 4m에서 막혔다)',
+    Math.min(...ys) <= 1.25 && Math.min(...ys) < 4, { min: +Math.min(...ys).toFixed(2) });
 
-  // 앞으로 계속 밀어도 1.5m 아래로는 내려가지 않는다
+  // 앞으로 계속 밀어도 1.2m 아래로는 내려가지 않는다
   await advance(0.8);
   const floor = (await st()).spectate.y;
-  ok('최저 고도 1.5m 고정 (땅에 박히지 않는다)', floor >= 1.49 && floor <= 1.55, { y: +floor.toFixed(2) });
+  ok('최저 고도 1.2m 고정 (땅에 박히지 않는다)', floor >= 1.19 && floor <= 1.25, { y: +floor.toFixed(2) });
 
   // 위를 보고 앞으로 → 상승
   await page.evaluate(() => { const s = window.BA.app.spectate; s.pitch = 0.8; });
@@ -310,6 +313,53 @@ function ok(name, cond, extra) {
     { moved: +rl.toFixed(2), dot: +dotR.toFixed(3), right: dir.right });
   await joy(42, 0, 'up');
 
+  /* ===== 4b. 🎬 관전 범위 — 맵 안이면 어디든 (땅 아래·바깥 허공만 막는다) ===== */
+  const range = await page.evaluate(() => {
+    const app = window.BA.app, s = app.spectate, b = window.BA.battle;
+    app.autoSpectate = false;
+    app.input.mx = 0; app.input.mz = 0;
+    const bound = Math.max((b.arenaR || 60) + 35, 95);
+    // 예전 한계(전장 +26m · 92m 고도)를 넘는 지점 — 성채 뒤·맵 구석 하늘
+    s.x = b.arenaR + 30; s.z = -(b.arenaR + 30); s.y = 100; s.pitch = 0;
+    app.updateCamera(1 / 60);
+    const keep = { x: s.x, z: s.z, y: s.y, camX: app.cam.position.x, camZ: app.cam.position.z, camY: app.cam.position.y };
+    // 맵 완전 바깥 허공 / 하늘 위
+    s.x = 9999; s.z = -9999; s.y = 9999;
+    app.updateCamera(1 / 60);
+    const far = { x: s.x, z: s.z, y: s.y, bound };
+    // 땅 아래
+    s.y = -50;
+    app.updateCamera(1 / 60);
+    return { arenaR: b.arenaR, keep, far, low: s.y };
+  });
+  ok('🎬 관전은 예전 한계(전장+26m·92m) 밖 — 성채 뒤·하늘 100m까지 그대로 난다',
+    range.keep.y === 100 && Math.abs(range.keep.camY - 100) < 1e-6 &&
+    range.keep.x > range.arenaR + 26 && Math.abs(range.keep.camX - range.keep.x) < 1e-6 &&
+    Math.abs(range.keep.camZ - range.keep.z) < 1e-6,
+    { keep: range.keep, arenaR: +range.arenaR.toFixed(1) });
+  ok('맵 완전 바깥 허공은 막는다 (bound = max(전장+35, 95))',
+    Math.abs(range.far.x - range.far.bound) < 0.01 && Math.abs(range.far.z + range.far.bound) < 0.01,
+    { far: range.far });
+  ok('하늘은 120m·땅은 1.2m에서 막힌다', range.far.y === 120 && Math.abs(range.low - 1.2) < 0.01,
+    { high: range.far.y, low: +range.low.toFixed(2) });
+
+  /* ===== 4c. 🎬 관전 드래그 — 1인칭과 같은 방향 (예전엔 좌우가 반대였다) ===== */
+  const camHead = () => page.evaluate(() => {
+    const f = new window.__THREE.Vector3(0, 0, -1).applyQuaternion(window.BA.app.cam.quaternion);
+    return Math.atan2(f.x, f.z);
+  });
+  const turnOf = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  await page.evaluate(() => {
+    const app = window.BA.app, s = app.spectate;
+    app.autoSpectate = false;
+    s.yaw = 0; s.pitch = 0;
+    app.updateCamera(1 / 60);
+  });
+  const sHead0 = await camHead();
+  await drag(80, 0);                       // 화면을 오른쪽으로 민다
+  await page.evaluate(() => window.BA.app.updateCamera(1 / 60));
+  const specTurn = turnOf(sHead0, await camHead());
+
   /* ===== 5. ⚔️ 참전 복귀 — 관전하던 지면으로 ===== */
   const beforeExit = await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle, s = app.spectate;
@@ -342,6 +392,27 @@ function ok(name, cond, extra) {
 
   const camOk = await page.evaluate(() => ({ mode: window.BA.state().camMode, safe: window.BA.state().playerSafe }));
   ok('복귀 후 1인칭 참전 상태로 돌아온다', camOk.mode === 'fp' && camOk.safe === false, camOk);
+
+  /* ===== 5b. 🖐️ 1인칭 드래그와 관전 드래그가 같은 방향으로 돈다 ===== */
+  await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    b.player.yaw = 0; app.camYaw = Math.PI; app.camPitch = 0;
+    app.updateCamera(1 / 60);
+  });
+  const fHead0 = await camHead();
+  await drag(80, 0);                       // 화면을 오른쪽으로 민다
+  const fHead1 = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    b.player.yaw = app.camYaw + Math.PI;   // 실제 루프와 같은 순서로 시점 → 몸 방향
+    app.updateCamera(1 / 60);
+    const f = new window.__THREE.Vector3(0, 0, -1).applyQuaternion(app.cam.quaternion);
+    return Math.atan2(f.x, f.z);
+  });
+  const fpTurn = turnOf(fHead0, fHead1);
+  ok('관전 드래그도 1인칭과 같은 쪽으로 돈다 (좌우 반전 없음)',
+    fpTurn * specTurn > 0 && Math.abs(fpTurn) > 0.3 && Math.abs(specTurn) > 0.3 &&
+    Math.abs(Math.abs(specTurn) / Math.abs(fpTurn) - 1) < 0.6,
+    { firstPerson: +fpTurn.toFixed(3), spectate: +specTurn.toFixed(3) });
 
   /* ===== 6. 🛡️ 일반 병사 방패 막기 ===== */
   await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 10, enemy: 10, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
@@ -452,7 +523,8 @@ function ok(name, cond, extra) {
   await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle;
     app.paused = true;
-    const u = b.units.find((x) => x.team === 'ally' && x.cls === 'soldier' && !x.isPlayer && !x.dead);
+    const u = b.units.find((x) => x.team === 'ally' && x.cls === 'soldier' && !x.isPlayer && !x.dead) ||
+      window.BA.debug.spawn('soldier', 'ally', 0, 0);   // 아군이 전멸했으면 한 명 새로 세운다
     for (const x of b.units) {
       if (x === u) continue;
       if (x.isPlayer) { x.guard = false; x.x = 0; x.z = -40; continue; }
@@ -499,6 +571,47 @@ function ok(name, cond, extra) {
   });
   ok('병사가 죽으면 시체가 남아 있어도 즉시 충원된다 (0.45초 안에 6명 복귀)',
     reinf.after >= reinf.afterKill + 5 && reinf.reserve1 <= reinf.reserve0 - 5 && reinf.corpses1 > 0, reinf);
+
+  /* ===== 6d. 🛡️ AI 병사 막기 빈도 — 가끔 한 번씩만 ===== */
+  // 예전: 320명 교전 12초에 병사 1인당 5.4번 막기 자세(전투 중 15%가 막는 중) · 공겨의 40%가 막힘
+  const blockRate = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    app.paused = true;
+    app.input.guard = false; app.input.mx = 0; app.input.mz = 0; app.input.attack = false;
+    let blocks = 0, zero = 0, hits = 0, episodes = 0, guardFrames = 0, frames = 0;
+    const wasGuard = new Map();
+    const orig = b.emit.bind(b);
+    b.emit = (e) => {
+      if (e.type === 'block') { blocks++; if (e.dmg === 0) zero++; }
+      else if (e.type === 'hit') hits++;
+      return orig(e);
+    };
+    for (let i = 0; i < 30; i++) {          // 0.2초 × 30 = 6초
+      window.BA.debug.advance(0.2);
+      b.playerSafe = true;
+      let n = 0;
+      for (const u of b.units) {
+        if (u.isPlayer || u.cls !== 'soldier' || u.dead) continue;
+        const g = !!u.guard;
+        if (g && !wasGuard.get(u.id)) episodes++;
+        wasGuard.set(u.id, g);
+        if (g) { n++; guardFrames++; }
+      }
+      frames++;
+    }
+    b.emit = orig;
+    const soldiers = b.units.filter((u) => !u.isPlayer && u.cls === 'soldier' && !u.dead).length;
+    return {
+      blocks, zero, hits, episodes, soldiers, frames,
+      blockShare: +(blocks / Math.max(1, blocks + hits) * 100).toFixed(1),
+      guardsPerSoldierPerSec: +(episodes / Math.max(1, soldiers) / (frames * 0.2)).toFixed(3),
+      guardTimePct: +(guardFrames / Math.max(1, soldiers * frames) * 100).toFixed(1)
+    };
+  });
+  ok('AI 병사 막기 빈도 대폭 하향 — 병사 1인당 1초에 0.25번 미만(예전 0.45번)',
+    blockRate.guardsPerSoldierPerSec < 0.25 && blockRate.episodes > 0, blockRate);
+  ok('막는 자세로 보내는 시간이 전투의 10% 미만 (예전 15%) · 막힌 공격 비율 30% 미만 (예전 40%)',
+    blockRate.guardTimePct < 10 && blockRate.blockShare < 30, blockRate);
 
   /* ===== 6c. 상세 모델 슬롯 — 카메라 코앞 병사가 블록 실루엣으로 떨어지지 않는다 ===== */
   const lod = await page.evaluate(() => {

@@ -292,7 +292,7 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 
 /* 관전 안내 */
 .spec-hint {
-  display: none; position: absolute; left: 50%; top: calc(8px + env(safe-area-inset-top));
+  display: none; position: absolute; left: 50%; top: calc(62px + env(safe-area-inset-top));
   transform: translateX(-50%); padding: 4px 9px; border-radius: 8px;
   font-size: 8.5px; letter-spacing: .02em; color: #ffe6b4; white-space: nowrap;
   background: rgba(12, 14, 20, .7); border: 1px solid rgba(232,194,122,.32); pointer-events: none;

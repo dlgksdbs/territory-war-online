@@ -443,6 +443,18 @@ export function computePose(u, t, dt) {
   // 시선 목표 (머리만 살짝)
   if (u.lookYaw) R(p, J.head, 0, clamp(u.lookYaw, -0.6, 0.6) * 0.55, 0);
 
+  // 🛠️ 검으로 막기 자세 — 일반 병사가 오른손 검을 눈앞으로 가로·대각선으로 치켜들고 몸을 웅크린다 (방패 없음)
+  if (u.guard && cls === 'soldier') {
+    R(p, J.shR, 0.05, -0.30, -0.15);
+    R(p, J.armR, -0.95, -0.30, -0.45);
+    R(p, J.elbR, -1.30, 0, 0);
+    R(p, J.handR, 0.10, -1.15, 0.30);
+    R(p, J.chest, 0.12, -0.14, 0);
+    R(p, J.spine, 0.05, -0.08, 0);
+    R(p, J.armL, -0.42, -0.30, 0.22);
+    R(p, J.elbL, -1.10, 0, 0);
+  }
+
   // 🌸 매화 일섬 돌진 자세
   if (u.dashT !== undefined && u.dashT >= 0) {
     const k = clamp(u.dashT / SKILL.dashTime, 0, 1);

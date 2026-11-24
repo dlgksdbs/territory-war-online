@@ -402,21 +402,6 @@ function soldierParts() {
     shape('box', [0, -0.05, 0.005], [0, 0, 0], [0.085, 0.105, 0.10])
   ]);
 
-  /* 방패 — 왼팔 바깥쪽, 앞을 향한다 (지름 0.56m) */
-  add('elbL', 'woodDark', 0, [
-    shape('cyl', [-0.21, -0.09, 0.045], [Math.PI / 2, -0.28, 0], [0.56, 0.045, 0.56])
-  ]);
-  add('elbL', 'clothHeavy', 1, [
-    shape('cyl', [-0.215, -0.09, 0.062], [Math.PI / 2, -0.28, 0], [0.43, 0.02, 0.43])
-  ]);
-  add('elbL', 'steel', 1, [
-    shape('sph', [-0.218, -0.09, 0.082], [0, 0, 0], [0.15, 0.15, 0.09]),      // 방패 돌기
-    shape('torus', [-0.212, -0.09, 0.060], [Math.PI / 2, -0.28, 0], [0.55, 0.55, 0.55]) // 테
-  ]);
-  add('elbL', 'gold', 2, [
-    shape('box', [-0.22, -0.09, 0.092], [0, 0, 0], [0.045, 0.045, 0.02])
-  ]);
-
   /* ── 다리 ────────────────────────────────────────────────────── */
   const leg = (side) => {
     const sx = side === 'R' ? 1 : -1;
@@ -1091,15 +1076,7 @@ export class UnitRenderer {
         }
         const dx = u.x - camPos.x, dz = u.z - camPos.z;
         const d2 = dx * dx + dz * dz;
-        // 바로 코앞의 아군 몸이 1인칭 시야를 가리지 않게 잠깐 숨긴다 (적은 1.5m 이내만)
-        if (!u.isPlayer && (d2 < 2.56 || (u.team === 'ally' && d2 < 23))) {
-          if (u._tier !== -2) {
-            this.releaseDetail(u);
-            if (u.slot != null && u.slot >= 0) c.silhouette.setMatrixAt(u.slot, _hiddenM);
-            u._tier = -2;
-          }
-          continue;
-        }
+        // 유닛은 아무리 가까이 붙어도 숨기지 않는다 — 1인칭에서 숨기는 것은 플레이어 본인 몸(hideModel)뿐이다.
         let tier;
         if (u.isPlayer) tier = 0;
         else if (d2 < 15 * 15) tier = 0;

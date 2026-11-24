@@ -416,8 +416,8 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   position: absolute; inset: 0; z-index: 20; display: none; place-items: center;
   background: rgba(4,6,10,.62); backdrop-filter: blur(6px); padding: 20px;
 }
-.sheet.is-on, .result.is-on { display: grid; }
-.sheet-card, .result-card {
+.sheet.is-on { display: grid; }
+.sheet-card {
   width: 100%; max-width: 340px; border-radius: 18px; padding: 18px;
   border: 1px solid rgba(232,194,122,.24);
   background: linear-gradient(165deg, rgba(26,30,40,.98), rgba(10,12,18,.98));
@@ -431,15 +431,37 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 }
 .sheet-card button:active { background: rgba(232,194,122,.16); }
 .sheet-note { font-size: 9.5px; color: var(--muted); margin: 10px 0 0; line-height: 1.5; }
-.res-emblem { font-size: 40px; filter: drop-shadow(0 0 22px rgba(232,194,122,.5)); }
-.result-card h2 { margin: 6px 0 2px; font-family: var(--serif); font-size: 28px; letter-spacing: .16em; color: #ffe6b4; }
-.result-card p { margin: 0 0 14px; font-size: 11px; color: var(--muted); }
-.res-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
-.res-stats > div { padding: 8px 4px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06); }
-.res-stats span { display: block; font-size: 8.5px; color: var(--muted); letter-spacing: .05em; }
-.res-stats b { display: block; margin-top: 3px; font-size: 15px; color: #ffe4ae; font-variant-numeric: tabular-nums; }
-.res-btns { display: flex; gap: 8px; }
+
+/* 결과 — 전장을 가리지 않는 미니 카드 (딤드 없음 · 오른쪽 아래에 떠 있다) */
+.result { position: absolute; inset: auto; right: 8px; left: auto; z-index: 20; display: none;
+  bottom: calc(168px + env(safe-area-inset-bottom)); width: min(300px, 78vw);
+  padding: 0; background: none; backdrop-filter: none; pointer-events: none; }
+.result.is-on { display: block; }
+.result-card { position: relative; width: 100%; max-width: 340px; border-radius: 14px; padding: 9px 11px 10px;
+  border: 1px solid rgba(232,194,122,.30); background: linear-gradient(165deg, rgba(26,30,40,.80), rgba(10,12,18,.84));
+  backdrop-filter: blur(7px); box-shadow: 0 10px 26px rgba(0,0,0,.45); text-align: left; pointer-events: auto; }
+.res-close { position: absolute; top: 5px; right: 6px; width: 26px; height: 26px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: #e9e2d4;
+  font-size: 12px; line-height: 1; display: grid; place-items: center; padding: 0; }
+.res-close:active { background: rgba(232,194,122,.22); }
+.res-head { display: flex; align-items: baseline; gap: 7px; padding-right: 28px; }
+.res-head .res-emblem { font-size: 17px; line-height: 1; filter: drop-shadow(0 0 10px rgba(232,194,122,.45)); }
+.res-head h2 { margin: 0; font-family: var(--serif); font-size: 18px; letter-spacing: .10em; color: #ffe6b4; }
+.res-head .res-sub { font-size: 9.5px; color: var(--muted); }
+.res-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin: 7px 0 8px; }
+.res-stats > div { padding: 4px 3px; border-radius: 8px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06); text-align: center; }
+.res-stats span { display: block; font-size: 8px; color: var(--muted); letter-spacing: .04em; }
+.res-stats b { display: block; margin-top: 1px; font-size: 12.5px; color: #ffe4ae; font-variant-numeric: tabular-nums; }
+.res-btns { display: flex; gap: 6px; }
+.res-btns button { flex: 1; width: auto; margin: 0; padding: 8px 6px; border-radius: 9px; font-size: 11.5px; }
 .res-btns .primary { background: linear-gradient(100deg, #b8862f, #f0d195 50%, #a87b2c); color: #1f1608; font-weight: 700; border: 0; }
+
+/* 🛡️ 일반 병사 방패 막기 버튼 */
+.guard-btn { border-color: rgba(150, 200, 255, .55);
+  background: radial-gradient(circle at 38% 30%, rgba(210, 236, 255, .95), rgba(70, 120, 180, .92) 52%, rgba(20, 40, 70, .95));
+  color: #08131f; }
+.guard-btn.is-on { display: flex; }
+.guard-btn.is-held { filter: brightness(1.25); box-shadow: 0 0 18px rgba(150, 210, 255, .75), inset 0 0 10px rgba(255,255,255,.5); transform: scale(1.04); }
 
 /* 가로 모드 */
 @media (orientation: landscape) and (max-height: 520px) {

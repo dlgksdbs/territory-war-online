@@ -25,7 +25,7 @@ export const CLASSES = {
     blurb: '검과 방패, 민첩한 연속 베기. 모든 전장의 기준.',
     hp: 100,
     damage: 12,
-    speed: 3.05,
+    speed: 3.9,
     radius: 0.38,
     height: 1.72,
     reach: 2.05,
@@ -46,9 +46,9 @@ export const CLASSES = {
     name: '중갑 기사',
     tag: 'HEAVY · AOE',
     blurb: '큰 망치를 든 중갑 장군. 한 번의 내리치기로 최대 5명을 으스러뜨린다.',
-    hp: 240,            // 병사의 2.4배
-    damage: 30,         // 병사의 2.5배
-    speed: 2.42,
+    hp: 420,            // 무거운 망치 · 단단하다
+    damage: 110,        // 일반 병사(100)를 한 번에 처치
+    speed: 3.1,
     radius: 0.52,
     height: 1.94,
     reach: 2.75,
@@ -69,9 +69,9 @@ export const CLASSES = {
     name: '매화 검객',
     tag: 'SWIFT · DASH',
     blurb: '매화처럼 흩날리는 초고속 연속 베기. 스킬로 전방을 쓸어버리는 돌진 참격.',
-    hp: 150,
-    damage: 20,
-    speed: 3.9,
+    hp: 115,            // 가벼운 검 · 체력은 가볍게
+    damage: 105,        // 일반 병사(100)를 한 번에 처치
+    speed: 5.0,
     radius: 0.38,
     height: 1.76,
     reach: 2.35,
@@ -80,7 +80,7 @@ export const CLASSES = {
     animDur: 0.80,
     windup: 0.22,
     impact: 0.34,
-    maxTargets: 3,      // 한 번의 베기로 최대 3명
+    maxTargets: 4,      // 한 번의 베기로 최대 4명
     aoe: 0,
     armor: 0.03,
     mass: 0.95,
@@ -92,9 +92,9 @@ export const CLASSES = {
     name: '대마법사',
     tag: 'GLASS CANNON',
     blurb: '종이처럼 얇은 몸, 그러나 세 가지 마법으로 전장을 지운다.',
-    hp: 78,             // 유리 대포
+    hp: 80,             // 유리 대포
     damage: 9,          // 지팡이 근접(최후의 수단)
-    speed: 2.78,
+    speed: 3.6,
     radius: 0.36,
     height: 1.78,
     reach: 1.9,
@@ -130,7 +130,7 @@ export const SPELLS = {
     icon: '🔥',
     cooldown: 3.2,
     cast: 0.42,
-    damage: 58,
+    damage: 125,
     radius: 3.5,
     range: 19,
     color: 0xff7a24,
@@ -144,7 +144,7 @@ export const SPELLS = {
     icon: '⚡',
     cooldown: 5.6,
     cast: 0.34,
-    damage: 44,
+    damage: 105,
     jumps: 4,           // 최대 대상 수
     falloff: 0.78,      // 연쇄마다 위력 감소
     range: 17,
@@ -159,7 +159,7 @@ export const SPELLS = {
     icon: '❄️',
     cooldown: 7.4,
     cast: 0.46,
-    damage: 40,
+    damage: 100,
     radius: 7.4,
     halfAngle: Math.PI / 3.1,   // 전방 약 58°
     freeze: 1.35,
@@ -175,9 +175,9 @@ export const SKILL = {
   key: 'petal',
   name: '매화 일섬',
   icon: '🌸',
-  cooldown: 6.0,
-  damage: 34,
-  radius: 2.2,
+  cooldown: 5.0,
+  damage: 145,
+  radius: 2.6,
   dash: 7.2,
   dashTime: 0.34,
   color: 0xff9ec8

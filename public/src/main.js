@@ -4,7 +4,7 @@
    홈(병력 편성) → 3D 전장(1인칭 참전 / 3인칭 / 관전) → 결과 · 다시 싸우기
    ============================================================================= */
 import * as THREE from 'three';
-import { CLASSES, SPELLS, SPELL_ORDER, MAX_SOLDIERS, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt } from './config.js';
+import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt } from './config.js';
 import { buildWorld } from './world.js';
 import { UnitRenderer } from './rig.js';
 import { Battle } from './battle.js';
@@ -51,7 +51,7 @@ class App {
     this.hitStopT = 0;
     this.playerKillSaveT = 0;
     this.spellAimHelper = new THREE.Vector3();
-    this.input = { mx: 0, mz: 0, yaw: 0, pitch: 0, attack: false, attackHeld: false };
+    this.input = { mx: 0, mz: 0, yaw: 0, pitch: 0, attack: false, attackHeld: false, guard: false };
     this.debugLock = null;
     this.sfx = new Sfx();
     this.last = 0;
@@ -244,6 +244,21 @@ class App {
     });
     $('#againBtn').addEventListener('click', () => this.startBattle());
     $('#toHomeBtn').addEventListener('click', () => this.toHome());
+    // 결과 미니 카드 닫기 — 결과창 없이 전장을 자유롭게 구경한다
+    const resClose = $('#resClose');
+    if (resClose) {
+      resClose.addEventListener('click', () => {
+        $('#result').classList.remove('is-on');
+        this.paused = false;
+        this.attackHeld = false; this.input.attack = false; this.input.guard = false;
+        this.camMode = 'spectate';
+        this.spectate = null;
+        this._enterSpectate();
+        const cb = $('#camBtn');
+        if (cb) { cb.textContent = '🎬'; cb.title = '관전'; }
+        this._toast('🎬 전장 구경 — 🎬 버튼으로 참전');
+      });
+    }
     const atkBtn = $('#attackBtn');
     atkBtn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
@@ -264,6 +279,21 @@ class App {
     });
     const skillBtn = $('#skillBtn');
     skillBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.useSkill(); });
+    // 🛡️ 일반 병사 방패 막기 — 꾹 누르고 있는 동안
+    const guardBtn = $('#guardBtn');
+    if (guardBtn) {
+      const press = (e) => {
+        e.preventDefault();
+        this.input.guard = true;
+        guardBtn.classList.add('is-held');
+        try { guardBtn.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
+      };
+      const release = () => { this.input.guard = false; guardBtn.classList.remove('is-held'); };
+      guardBtn.addEventListener('pointerdown', press);
+      guardBtn.addEventListener('pointerup', release);
+      guardBtn.addEventListener('pointercancel', release);
+      guardBtn.addEventListener('pointerleave', release);
+    }
     this._bindJoystick();
     this._bindLook();
     this._bindKeys();
@@ -275,6 +305,7 @@ class App {
       this.keys = this.keys || {};
       this.keys[e.code] = true;
       if (e.code === 'Space') { e.preventDefault(); this.attackHeld = true; this.input.attack = true; this._aimAssist(); }
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') { this.input.guard = true; const gb = $('#guardBtn'); if (gb) gb.classList.add('is-held'); }
       if (e.code === 'Digit1') this.castSpell('fire');
       if (e.code === 'Digit2') this.castSpell('lightning');
       if (e.code === 'Digit3') this.castSpell('ice');
@@ -283,6 +314,10 @@ class App {
     window.addEventListener('keyup', (e) => {
       if (this.keys) this.keys[e.code] = false;
       if (e.code === 'Space') this.attackHeld = false;
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') {
+        this.input.guard = false;
+        const gb = $('#guardBtn'); if (gb) gb.classList.remove('is-held');
+      }
     });
   }
 
@@ -335,7 +370,7 @@ class App {
         if (!this.spectate) this._enterSpectate();
         const s = this.spectate;
         s.yaw += dx * SPEC_SENS;
-        s.pitch = clamp(s.pitch - dy * SPEC_PITCH_SENS, -1.42, 0.62);
+        s.pitch = clamp(s.pitch - dy * SPEC_PITCH_SENS, -1.50, 0.92);
         this._spectateIdle = 0;
         this.autoSpectate = false;      // 손으로 돌리면 자동 회전은 멈춘다
       } else {
@@ -420,6 +455,9 @@ class App {
     this.vm.setClass(this.cfg.playerClass);
     this.camMode = 'fp';
     this.spectate = null;
+    this.input.guard = false;
+    this.attackHeld = false;
+    const gb0 = $('#guardBtn'); if (gb0) gb0.classList.remove('is-held');
     $('#battle').classList.remove('is-spectate');
     // 시작 첫 프레임부터 자기 몸이 1인칭 시야를 가리지 않도록
     if (this.battle.player) this.battle.player.hideModel = true;
@@ -490,9 +528,29 @@ class App {
   }
 
   _exitSpectate() {
-    if (this.battle) { this.battle.playerSafe = false; this.battle.playerInvuln = 0.8; }
+    const b = this.battle;
+    const s = this.spectate;
     const el = $('#battle');
     if (el) el.classList.remove('is-spectate');
+    if (!b) return;
+    const p = b.player;
+    if (p && s) {
+      // 관전하던 그 자리(지면)로 내려와 바로 싸운다 — 예전 플레이어 자리로 순간이동하지 않는다.
+      // 전장 반경 안으로만 들어오게 하고, 보던 방향 그대로 서서 내려온다.
+      const lim = Math.max(4, (b.arenaR || 60) * 0.94);
+      p.x = clamp(s.x, -lim, lim);
+      p.z = clamp(s.z, -lim, lim);
+      p.yaw = s.yaw;
+      p.moveAmt = 0;
+      p.pitch = clamp(s.pitch + (s.pitch < 0 ? 0.28 : 0), -1.15, 0.9);
+      this.camYaw = p.yaw + Math.PI;
+      this.camPitch = p.pitch;
+      this._prevYaw = this.camYaw;
+      // 내려온 자리 주변의 적과 붙어 있어도 바로 죽지 않게 짧은 무적
+      b.playerInvuln = Math.max(b.playerInvuln || 0, 0.9);
+    }
+    this.autoSpectate = false;
+    b.playerSafe = false;
   }
 
   _toast(msg) {
@@ -687,55 +745,16 @@ class App {
     if (!b) return;
     const p = b.player;
     if (this.debugCam) { this.vm.enabled = false; p.hideModel = true; return; }
-    let shakeX = 0, shakeY = 0, shakeZ = 0;
-    if (this.fx && this.fx.shake > 0.001) {
-      const s = this.fx.shake * this.fx.shake * 0.20;
-      const t = this.time * 46;
-      shakeX = Math.sin(t * 1.7) * s * 0.5;
-      shakeY = Math.cos(t * 2.3) * s * 0.45;
-      shakeZ = Math.sin(t * 3.1) * s * 0.15;
-    }
 
     if (this.camMode === 'fp') {
       const spec = CLASSES[p.cls];
       const eye = spec.viewEye;
-      const mv = p.moveAmt || 0;
-      const ph = p.walkPhase || 0;
-      // 걸음 리듬 — 위아래 2박자, 좌우 1박자 (예전보다 절반 이하로 잔잔하게)
-      const bobY = Math.sin(ph * 2) * 0.014 * mv;
-      const bobX = Math.cos(ph) * 0.011 * mv;
-      // 호흡 (정지 시에도 사람처럼 미세하게)
-      const breathe = Math.sin(this.time * 1.55) * 0.005 + Math.sin(this.time * 0.61 + 1.7) * 0.0025;
-      // 방향 전환 시 시선 롤
-      const dYaw = angDiff(this.camYaw, this._prevYaw === undefined ? this.camYaw : this._prevYaw);
-      this._prevYaw = this.camYaw;
-      const yawRate = dYaw / Math.max(0.001, dt);
-      const targetRoll = clamp(-yawRate * 0.020, -0.038, 0.038) + Math.sin(ph) * 0.005 * mv;
-      this.camRoll = damp(this.camRoll || 0, targetRoll, dt, 110);
-      // 공격 반동 — 예비동작에서 살짝 젖히고, 타격 순간 확 밀렸다가 회수와 함께 안착
-      let rp = 0, rr = 0, fovPunch = 0;
-      if (p.attackT >= 0 && !p.dead) {
-        const imp = impactAt(p.cls), cyc = spec.cycle;
-        if (p.attackT < imp) {
-          const w = smoothstep(p.attackT / Math.max(0.001, imp));
-          rp = -0.020 * w; rr = -0.012 * w;
-        } else {
-          const k = clamp((p.attackT - imp) / Math.max(0.001, cyc - imp), 0, 1);
-          const e = Math.exp(-k * 6.0);
-          rp = 0.050 * e; rr = 0.028 * e; fovPunch = 2.4 * e;
-        }
-      }
-      // 피격 반동
-      const kick = this.fx.hitFlash;
-      const shakeAmt = (this.fx.shake || 0);
-      const sx = Math.sin(this.time * 47.3) * shakeAmt * 0.13 + (Math.sin(this.time * 31) * kick * 0.008);
-      const sy = Math.cos(this.time * 39.1) * shakeAmt * 0.10 + (Math.cos(this.time * 27) * kick * 0.006);
-      const sz = Math.sin(this.time * 33.7) * shakeAmt * 0.05;
-      this.cam.position.set(p.x + bobX + sx * 0.35, (p.dead ? 0.5 : eye) + bobY + breathe + sy * 0.4, p.z + sz * 0.35);
+      // 화면 흔들림 없음 — 걸음 헤드밥·호흡·공격/피격 반동·화면 흔들림·시선 롤을 모두 제거했다.
+      // 카메라는 눈높이에 정확히 고정되고, 시점만 드래그한 그대로 유지된다.
+      this.cam.position.set(p.x, p.dead ? 0.5 : eye, p.z);
       this.camYaw = p.yaw + Math.PI;
-      const roll = this.camRoll + rr * 0.6 + shakeAmt * 0.005 + kick * 0.005;
-      this.cam.rotation.set(this.camPitch + rp * 0.7 + sy * 0.022 + kick * 0.006, this.camYaw + sx * 0.02, roll, 'YXZ');
-      this.cam.fov = clamp(62 + mv * 1.8 + fovPunch * 0.6 + shakeAmt * 0.8, 58, 76);
+      this.cam.rotation.set(this.camPitch, this.camYaw, 0, 'YXZ');
+      this.cam.fov = 62;
       this.cam.updateProjectionMatrix();
       this.vm.enabled = !p.dead;
     } else if (this.camMode === 'tp') {
@@ -743,12 +762,13 @@ class App {
       const yaw = p.yaw + Math.PI;
       const cx = p.x + Math.sin(yaw) * dist;
       const cz = p.z + Math.cos(yaw) * dist;
-      this.cam.position.set(cx + shakeX, height + shakeY, cz + shakeZ);
-      this.cam.rotation.set(-0.12 + this.camPitch * 0.5 + shakeY * 0.02, yaw, 0, 'YXZ');
+      this.cam.position.set(cx, height, cz);
+      this.cam.rotation.set(-0.12 + this.camPitch * 0.5, yaw, 0, 'YXZ');
       this.camYaw = p.yaw + Math.PI;
       this.vm.enabled = false;
     } else {
-      // 🎬 관전 — 공중 자유 시점: 왼쪽 조이스틱으로 돌아다니고 드래그로 시선을 돌린다
+      // 🎬 관전 — 보는 방향 그대로 3D 자유 비행
+      // 왼쪽 조이스틱 = 시선 방향 전후좌우 + 위아래 고도, 오른쪽 드래그 = 시선 회전
       if (!this.spectate) this._enterSpectate();
       const s = this.spectate;
       const mx = this.input.mx || 0, mz = this.input.mz || 0;
@@ -756,12 +776,14 @@ class App {
       if (mag > 0.06) {
         this._spectateIdle = 0;
         this.autoSpectate = false;
-        const spd = 20 * mag * (s.pitch > -0.9 ? 1 : 0.6);
+        const spd = 20 * mag;
+        // 수평 — 카메라가 보는 정면(s.yaw) 그대로 조이스틱 방향으로 난다
         const d = joyToWorld(s.yaw, mx, mz);
         s.x += d.x * spd * dt;
         s.z += d.z * spd * dt;
-        // 위로 들어올리면 높이도 살짝 오르며 멀리 본다
-        s.y = clamp(s.y - s.pitch * mag * 3.2 * dt, 4, 92);
+        // 수직 — 아래를 보며 앞으로 가면 땅으로 내려가고, 위를 보며 가면 하늘로 올라간다.
+        //        뒤로 당기면 반대. 최저 1.5m = 병사 눈높이까지 내려가 구경할 수 있다.
+        s.y = clamp(s.y + Math.sin(s.pitch) * mz * spd * dt, 1.5, 92);
       } else {
         this._spectateIdle += dt;
         if (this.autoSpectate && this._spectateIdle > 2.2) s.yaw += dt * 0.055;
@@ -770,13 +792,12 @@ class App {
       s.x = clamp(s.x, -bound, bound);
       s.z = clamp(s.z, -bound, bound);
       const cp = Math.cos(s.pitch), sp2 = Math.sin(s.pitch);
-      this.cam.position.set(s.x + shakeX, s.y + shakeY, s.z + shakeZ);
+      this.cam.position.set(s.x, s.y, s.z);
       this.cam.lookAt(s.x + Math.sin(s.yaw) * cp * 60, s.y + sp2 * 60, s.z + Math.cos(s.yaw) * cp * 60);
       this.cam.fov = 66;
       this.cam.updateProjectionMatrix();
       this.vm.enabled = false;
     }
-    if (shakeX || shakeY) this.cam.position.y += shakeY * 0.15;
 
     // 플레이어 자신의 몸은 1인칭에서 숨긴다
     if (b.player) b.player.hideModel = this.camMode === 'fp';
@@ -811,6 +832,7 @@ class App {
         mx: spectating ? 0 : this.input.mx,
         mz: spectating ? 0 : this.input.mz,
         yaw: p.yaw,
+        guard: spectating ? false : !!this.input.guard,
         attack: spectating ? false : (this.input.attack || this.attackHeld)
       });
       this.input.attack = false;
@@ -949,6 +971,16 @@ class App {
       }
     } else if (e.type === 'slam') {
       this.sfx.hit('hammer', dOf(e.x, e.z), true);
+    } else if (e.type === 'block') {
+      // 🛡️ 방패 막힘 — 스파크·둥근 충격파 + 철제 "쨍" + 내가 막았을 때 토스트
+      this.sfx.block(dOf(e.x, e.z), e.heavy);
+      this.fx.spawnShieldSparks(e.x, e.y || 1.1, e.z, e.heavy);
+      if (e.unit && e.unit.isPlayer) {
+        if (!this._blockToastAt || performance.now() - this._blockToastAt > 700) {
+          this._blockToastAt = performance.now();
+          this._toast(e.heavy ? '🛡️ 강타를 막아냈다!' : '🛡️ 막았다!');
+        }
+      }
     } else if (e.type === 'explode') {
       this.sfx.explode(dOf(e.x, e.z));
     } else if (e.type === 'lightning') {
@@ -1081,16 +1113,17 @@ class App {
     if (skBtn) {
       const on = p.cls === 'blademaster';
       skBtn.classList.toggle('is-on', on);
-      if (on) {
-        const cd = p.cd.petal || 0;
-        const mask = skBtn.querySelector('.cd-mask');
-        const num = skBtn.querySelector('.cd-num');
-        skBtn.classList.toggle('is-cd', cd > 0.05);
-        mask.style.transform = `scaleY(${clamp(cd / 6.0, 0, 1)})`;
-        num.textContent = cd > 0 ? Math.ceil(cd) : '';
-        skBtn.querySelector('.sk-label').textContent = cd > 0 ? '충전' : '매화 일섬';
-      }
+      const cd = p.cd.petal || 0;
+      const mask = skBtn.querySelector('.cd-mask');
+      const num = skBtn.querySelector('.cd-num');
+      skBtn.classList.toggle('is-cd', cd > 0.05);
+      mask.style.transform = `scaleY(${clamp(cd / SKILL.cooldown, 0, 1)})`;
+      num.textContent = cd > 0 ? Math.ceil(cd) : '';
+      skBtn.querySelector('.sk-label').textContent = cd > 0 ? '충전' : '매화 일섬';
     }
+    // 🛡️ 일반 병사만 막기 버튼
+    const gdBtn = $('#guardBtn');
+    if (gdBtn) gdBtn.classList.toggle('is-on', p.cls === 'soldier');
     const atkBtn = $('#attackBtn');
     atkBtn.style.display = p.cls === 'wizard' ? 'none' : '';
     if (p.cls !== 'wizard') {
@@ -1148,13 +1181,27 @@ window.BA = {
       growth: growthLabel(b.playerKills),
       localStorageKills: loadProgress().kills,
       player: p ? {
-        cls: p.cls, x: p.x, z: p.z, yaw: p.yaw, hp: p.hp, maxHp: p.maxHp,
-        dead: p.dead, attackT: p.attackT, cd: { ...p.cd }, kills: b.playerKills
+        cls: p.cls, x: p.x, z: p.z, yaw: p.yaw, pitch: p.pitch, hp: p.hp, maxHp: p.maxHp,
+        dead: p.dead, attackT: p.attackT, guard: !!p.guard, cd: { ...p.cd }, kills: b.playerKills
       } : null,
       spells: b.spells.length,
       drawCalls: app.renderer ? app.renderer.info.render.calls : 0,
       triangles: app.renderer ? app.renderer.info.render.triangles : 0,
       camMode: app.camMode,
+      cam: app.cam ? {
+        x: app.cam.position.x, y: app.cam.position.y, z: app.cam.position.z,
+        pitch: app.cam.rotation.x, yaw: app.cam.rotation.y, roll: app.cam.rotation.z,
+        fov: app.cam.fov
+      } : null,
+      camPitch: app.camPitch,
+      camYaw: app.camYaw,
+      spectate: app.spectate ? {
+        x: app.spectate.x, y: app.spectate.y, z: app.spectate.z,
+        yaw: app.spectate.yaw, pitch: app.spectate.pitch
+      } : null,
+      playerSafe: !!b.playerSafe,
+      playerInvuln: b.playerInvuln || 0,
+      arenaR: b.arenaR || 0,
       ctxLost: app.renderer ? app.renderer.getContext().isContextLost() : null,
       glError: app.renderer ? app.renderer.getContext().getError() : null,
       hitStop: b.hitStop,
@@ -1166,6 +1213,8 @@ window.BA = {
     };
   },
   config: () => ({ ...app.cfg }),
+  /* 밸런스 스펙 (테스트·디버그) */
+  specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS }),
   setConfig(cfg) {
     Object.assign(app.cfg, cfg || {});
     app._syncHome();
@@ -1187,7 +1236,7 @@ window.BA = {
   home() { app.toHome(); },
   setCameraMode(m) {
     app.camMode = m;
-    if (m === 'spectate') app.spectate = { yaw: Math.PI, pitch: 0.5, dist: 30, tx: 0, tz: 0 };
+    if (m === 'spectate') { app.spectate = null; app._enterSpectate(); }
   },
   cast(key) { app.castSpell(key); },
   skill() { app.useSkill(); },
@@ -1316,6 +1365,7 @@ window.BA = {
         b.update(1 / 60, {
           mx: app.input.mx || 0, mz: app.input.mz || 0,
           yaw: b.player ? b.player.yaw : 0,
+          guard: !!app.input.guard,
           attack: !!(app.input.attack || app.attackHeld)
         });
         for (let k = 0; k < b.units.length; k++) computePose(b.units[k], app.time + i / 60, 1 / 60);

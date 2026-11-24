@@ -233,6 +233,10 @@
             <span class="sk-label">매화 일섬</span>
             <span class="cd-mask"></span><span class="cd-num"></span>
           </button>
+          <button class="skill-btn guard-btn" id="guardBtn">
+            <span class="sk-icon">🛡️</span>
+            <span class="sk-label">막기</span>
+          </button>
           <button class="attack-btn" id="attackBtn">
             <span class="ab-icon">⚔️</span>
             <span class="ab-label">베기</span>
@@ -255,12 +259,15 @@
       </div>
     </div>
 
-    <!-- 결과 -->
+    <!-- 결과 — 화면을 가리지 않는 작은 미니 카드 (✕ 로 닫고 전장을 계속 구경) -->
     <div class="result" id="result">
       <div class="result-card">
-        <div class="res-emblem" id="resEmblem">⚔️</div>
-        <h2 id="resTitle">승리</h2>
-        <p id="resSub">적군을 전멸시켰다</p>
+        <button class="res-close" id="resClose" aria-label="결과 닫고 전장 구경">✕</button>
+        <div class="res-head">
+          <span class="res-emblem" id="resEmblem">⚔️</span>
+          <h2 id="resTitle">승리</h2>
+          <span class="res-sub" id="resSub">적군을 전멸시켰다</span>
+        </div>
         <div class="res-stats">
           <div><span>처치</span><b id="resKills">0</b></div>
           <div><span>아군 생존</span><b id="resAlive">0</b></div>

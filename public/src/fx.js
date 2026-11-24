@@ -938,6 +938,23 @@ export class FX {
     }
   }
 
+  /* 🛡️ 방패 막힘 — 방패 앞에서 튀는 불꽃과 둥근 충격파 */
+  spawnShieldSparks(x, y, z, heavy) {
+    const n = heavy ? 16 : 9;
+    for (let i = 0; i < n; i++) {
+      const a = this.rng() * TAU;
+      const up = this.rng() * 2.2;
+      this.sparks.spawn({
+        x: x + (this.rng() - 0.5) * 0.16, y: y + (this.rng() - 0.5) * 0.16, z: z + (this.rng() - 0.5) * 0.16,
+        vx: Math.cos(a) * (1.2 + this.rng() * 3.4), vy: up,
+        vz: Math.sin(a) * (1.2 + this.rng() * 3.4),
+        life: 0.16 + this.rng() * 0.26, size: 0.035 + this.rng() * 0.05,
+        r: 1, g: 0.92, b: 0.62, gravity: -2.4, drag: 2.6, fade: 1.4
+      });
+    }
+    this.ring(x, y, z, heavy ? 1.1 : 0.7, 0xffe6a8, heavy ? 0.34 : 0.22);
+  }
+
   ring(x, y, z, r, color, life) {
     const g = this.rings[this.ringIdx++ % this.rings.length];
     g.mesh.position.set(x, y, z);

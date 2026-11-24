@@ -116,6 +116,18 @@ export class Sfx {
     }
   }
 
+  block(dist, strong) {
+    if (!this.ready || !this.enabled) return;
+    const att = this._atten(dist, 28);
+    if (att <= 0.02) return;
+    const g = att * (strong ? 1.2 : 1);
+    // 철제 방패에 강철이 부딪히는 "쨍" — 높은 금속음 + 짧은 노이즈
+    this._tone('triangle', 1180, 620, 0.16, 0.20 * g);
+    this._tone('sine', 1760, 980, 0.12, 0.13 * g, 0.005);
+    this._noise(0.10, 'highpass', 3200, 6200, 0.22 * g, 1.4);
+    this._tone('sine', 240, 120, 0.10, 0.10 * g);
+  }
+
   spell(key, dist) {
     if (!this.ready || !this.enabled) return;
     const att = this._atten(dist, 55);

@@ -113,6 +113,7 @@ export class Battle {
       moveAmt: 0, walkPhase: sd.r2 * TAU, animPhase: sd.r0 * TAU,
       mirror: 0,
       staggerT: 0, staggerSide: 1, freezeT: 0, slowT: 0,
+      guard: false, guardT: 0, guardCheckT: 0.9 + sd.r1 * 1.4, guardFlash: 0,
       cd: { fire: 0, lightning: 0, ice: 0, petal: 0 },
       dashT: -1, dashHit: null, dashCount: 0,
       casts: 0, kills: 0, growl: 1,
@@ -272,22 +273,31 @@ export class Battle {
     return n;
   }
 
-  /* 빈자리만큼 진영 쪽에서 다음 병사를 순차 소환 */
+  /* 전장에 살아 있는 병사 수 (시체는 자리를 차지하지 않는다) */
+  aliveCount(team) {
+    let n = 0;
+    for (const u of this.units) if (u.team === team && !u.dead && !u.removed) n++;
+    return n;
+  }
+
+  /* 빈자리만큼 진영 쪽에서 다음 병사를 순차 소환
+     · 시체가 아직 남아 있어도 상관없다 — "살아 있는 병사"가 상한보다 적으면 바로 소환한다.
+     · 간격을 0.08~0.12초로 줄여 죽자마자 즉시 충원되는 느낌을 준다 (대규모는 한 번에 여러 명). */
   reinforce(dt) {
     if (!this.remain) return;
     for (const team of ['ally', 'enemy']) {
       const rem = this.remain[team];
       if (!rem || this.reserveTotal(team) <= 0) continue;
       this.reinT[team] = (this.reinT[team] || 0) + dt;
-      const interval = this.crowd ? 0.32 : 0.6;
+      const interval = this.crowd ? 0.08 : 0.12;
       if (this.reinT[team] < interval) continue;
       this.reinT[team] = 0;
       const cap = this.fieldCapTotal[team] || 0;
-      let onField = this.fieldCount(team);
-      if (team === 'ally' && this.player && !this.player.removed) onField -= 1;  // 플레이어는 예비와 무관
+      let onField = this.aliveCount(team);
+      if (team === 'ally' && this.player && !this.player.dead && !this.player.removed) onField -= 1;  // 플레이어는 예비와 무관
       let slots = cap - onField;
       if (slots <= 0) continue;
-      let n = Math.min(slots, this.crowd ? 4 : 2);
+      let n = Math.min(slots, this.crowd ? 6 : 2);
       const born = [];
       while (n > 0) {
         let cls = null;
@@ -405,7 +415,28 @@ export class Battle {
     if (target.dead) return 0;
     // 🎬 관전 중인 플레이어는 맞지 않는다 (관전하다 죽어서 리스폰되는 일 방지)
     if (target.isPlayer && (this.playerSafe || this.playerInvuln > 0)) return 0;
-    const dmg = amount * (1 - target.armor);
+    // 🛡️ 일반 병사의 방패 막기 — 정면에서 오는 타격을 대폭 막아낸다.
+    //    가벼운 타격은 83% 경감, 기사·검객·마법사의 100+ 강타는 66% 경감 + 방패가 깨진다.
+    let raw = amount;
+    if (target.cls === 'soldier' && target.guard) {
+      let frontal = true;
+      if (source && source.x !== undefined) {
+        const a = Math.abs(angDiff(Math.atan2(source.x - target.x, source.z - target.z), target.yaw));
+        frontal = a < 1.25;      // 뒤에서 맞으면 막지 못한다
+      }
+      if (frontal) {
+        const heavy = amount >= 100;
+        raw = amount * (heavy ? 0.34 : 0.17);
+        target.guardFlash = 0.22;
+        if (heavy) { target.guard = false; target.guardT = 0; }
+        this.emit({
+          type: 'block', unit: target, source: source || null, heavy,
+          x: target.x + Math.sin(target.yaw) * 0.45, z: target.z + Math.cos(target.yaw) * 0.45,
+          y: (target.isPlayer ? 1.35 : 1.12), dmg: raw
+        });
+      }
+    }
+    const dmg = raw * (1 - target.armor);
     target.hp -= dmg;
     target.lastHitBy = source ? source.id : 0;
     const lethal = target.hp <= 0;
@@ -433,6 +464,7 @@ export class Battle {
     target.staggerT = 0;
     target.attackT = -1;
     target.moveAmt = 0;
+    target.guard = false; target.guardT = 0;
     target.vx = target.vz = 0;
     this.emit({ type: 'death', unit: target, by: source || null, kind });
     if (source) {
@@ -666,13 +698,15 @@ export class Battle {
     if (p && !p.dead && input && !this.autoPlayer) {
       const mx = input.mx || 0, mz = input.mz || 0;
       const len = Math.hypot(mx, mz);
+      // 🛡️ 일반 병사 방패 막기 — 버튼/키를 누르고 있는 동안
+      p.guard = p.cls === 'soldier' ? !!input.guard : false;
       if (len > 0.04) {
         const nx = mx / Math.max(1, len), nz = mz / Math.max(1, len);
         const yaw = input.yaw || 0;
         // 조이스틱 방향 = 화면(시선) 기준 전후좌우. 부호가 뒤집혀 있지 않은지 util.joyToWorld 하나로 모았다.
         const dir = joyToWorld(yaw, nx, nz);
         let wx = dir.x, wz = dir.z;
-        const sp = CLASSES[p.cls].speed * clamp(len, 0, 1);
+        const sp = CLASSES[p.cls].speed * clamp(len, 0, 1) * (p.guard ? 0.55 : 1);
         // 앞을 막는 적/아군이 있으면 그 방향 성분을 지운다 (몸으로 밀고 들어가지 못함)
         const nx2 = p.x + wx * sp * dt, nz2 = p.z + wz * sp * dt;
         const blocked = this.blockedBy(p, nx2, nz2);
@@ -692,8 +726,8 @@ export class Battle {
         p.moveAmt += (0 - p.moveAmt) * Math.min(1, dt * 9);
       }
       p.yaw = input.yaw || p.yaw;
-      // 플레이어 공격 진행
-      if (input.attack && p.cooldown <= 0 && p.attackT < 0) {
+      // 플레이어 공격 진행 (방패를 들고 있으면 베지 않는다)
+      if (input.attack && !p.guard && p.cooldown <= 0 && p.attackT < 0) {
         this.startAttack(p);
       }
     }
@@ -712,6 +746,8 @@ export class Battle {
       const u = order[(startAt + oi) % order.length];
       // 타이머
       if (u.cooldown > 0) u.cooldown -= dt;
+      if (u.guardT > 0) { u.guardT -= dt; if (u.guardT <= 0) { u.guardT = 0; if (!u.isPlayer) u.guard = false; } }
+      if (u.guardFlash > 0) u.guardFlash = Math.max(0, u.guardFlash - dt);
       if (u.staggerT > 0) u.staggerT -= dt;
       if (u.freezeT > 0) {
         u.freezeT -= dt;
@@ -769,6 +805,7 @@ export class Battle {
       const spec = CLASSES[u.cls];
       if (!t) {
         // 사거리에 적이 없으면 전장 중앙으로 진군한다
+        u.guard = false; u.guardT = 0;
         const gz = u.team === 'ally' ? 12 : -12;
         const dx2 = -u.x * 0.6, dz2 = gz - u.z;
         const dd = Math.hypot(dx2, dz2) || 1;
@@ -834,12 +871,28 @@ export class Battle {
         }
       }
 
+      // 🛡️ 일반 병사(AI) — 적과 맞붙으면 확률적으로 방패를 든다 (아군·적군 완전 동일 규칙)
+      if (u.cls === 'soldier') {
+        if (!u.guard && u.guardT <= 0) {
+          u.guardCheckT -= dt;
+          if (u.guardCheckT <= 0) {
+            u.guardCheckT = 1.0 + this.rng() * 1.3;
+            const threat = d < spec.reach + 3.0 &&
+              (u.cooldown > 0 || (t.attackT >= 0 && t.attackT < impactAt(t.cls)));
+            if (threat && this.rng() < 0.45) {
+              u.guard = true; u.guardT = 0.45 + this.rng() * 0.30;
+              u.attackT = -1;        // 방패를 들면 휘두르던 손을 거둔다
+            }
+          }
+        }
+      }
+
       // 근접: 사거리까지 접근 후 공격
       const stopDist = spec.reach * 0.72 + t.radius * 0.5;
       const attacking = u.attackT >= 0;
       if (d > stopDist) {
         const close = clamp((d - stopDist) / 2.2, 0, 1);
-        const sp = spec.speed * (0.55 + 0.45 * close) * (attacking ? 0.25 : 1);
+        const sp = spec.speed * (0.55 + 0.45 * close) * (attacking ? 0.25 : 1) * (u.guard ? 0.55 : 1);
         // 접근 방향에 약간의 회전(대형이 뭉치지 않게)
         const ux = dx / d, uz = dz / d;
         const side = (((u.mirror || 0) % 7) - 3) * 0.06 * (u.team === 'ally' ? 1 : -1);
@@ -852,10 +905,10 @@ export class Battle {
         u.walkPhase += dt * (spec.speed * 2.1);
       } else {
         u.moveAmt += (0 - u.moveAmt) * Math.min(1, dt * 9);
-        if (u.cooldown <= 0 && u.attackT < 0) this.startAttack(u);
+        if (!u.guard && u.cooldown <= 0 && u.attackT < 0) this.startAttack(u);
       }
       // 사거리 안이면 즉시 공격
-      if (d <= spec.reach + t.radius && u.cooldown <= 0 && u.attackT < 0) this.startAttack(u);
+      if (!u.guard && d <= spec.reach + t.radius && u.cooldown <= 0 && u.attackT < 0) this.startAttack(u);
       u.yaw = angLerp(u.yaw, desiredYaw, Math.min(1, dt * (attacking ? 3.2 : 7)));
       u.lookYaw = 0;
     }

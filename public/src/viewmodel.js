@@ -372,6 +372,8 @@ export class ViewModel {
     this.palm.scale.setScalar(0.66);
     this.root.add(this.palm);
 
+    this.guardK = 0;
+
     this.castGlow = new THREE.Sprite(new THREE.SpriteMaterial({
       map: glowTexture('rgba(255,255,255,1)', 'rgba(150,215,255,0.45)'),
       color: 0xbfe8ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0
@@ -396,6 +398,7 @@ export class ViewModel {
     for (const k in this.models) this.models[k].visible = k === cls;
     this.className = cls;
     this.palm.visible = cls === 'wizard';
+    this.guardK = 0;
     this.swapT = 0;
     const cur = CURVES[cls];
     this.root.position.set(cur.idle.p[0], cur.idle.p[1], cur.idle.p[2]);
@@ -466,6 +469,20 @@ export class ViewModel {
     this.root.position.z += recoil * 0.6;
     this.root.position.y -= recoil * 0.25;
     this.root.rotation.x -= recoil * 0.5;
+
+    // 🛡️ 검으로 막기 — 누르는 동안 검을 얼굴 앞으로 가로·대각선으로 치켜들어 막는 자세
+    const wantGuard = (this.className === 'soldier' && player && player.guard && !player.dead) ? 1 : 0;
+    this.guardK = lerp(this.guardK || 0, wantGuard, Math.min(1, dt * 14));
+    const gk = this.guardK;
+    if (gk > 0.001) {
+      const gp = [0.02, -0.30, -0.50], gr = [-0.35, 0.95, 0.35];
+      this.root.position.x = lerp(this.root.position.x, gp[0], gk);
+      this.root.position.y = lerp(this.root.position.y, gp[1], gk);
+      this.root.position.z = lerp(this.root.position.z, gp[2], gk);
+      this.root.rotation.x = lerp(this.root.rotation.x, gr[0], gk);
+      this.root.rotation.y = lerp(this.root.rotation.y, gr[1], gk);
+      this.root.rotation.z = lerp(this.root.rotation.z, gr[2], gk);
+    }
 
     // 마법사 손바닥
     if (this.className === 'wizard') {

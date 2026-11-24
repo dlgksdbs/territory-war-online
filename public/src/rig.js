@@ -1092,7 +1092,7 @@ export class UnitRenderer {
         const dx = u.x - camPos.x, dz = u.z - camPos.z;
         const d2 = dx * dx + dz * dz;
         // 바로 코앞의 아군 몸이 1인칭 시야를 가리지 않게 잠깐 숨긴다 (적은 1.5m 이내만)
-        if (!u.isPlayer && (d2 < 2.25 || (u.team === 'ally' && d2 < 9))) {
+        if (!u.isPlayer && (d2 < 2.56 || (u.team === 'ally' && d2 < 23))) {
           if (u._tier !== -2) {
             this.releaseDetail(u);
             if (u.slot != null && u.slot >= 0) c.silhouette.setMatrixAt(u.slot, _hiddenM);

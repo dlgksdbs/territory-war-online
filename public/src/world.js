@@ -510,9 +510,17 @@ void main(){
   rocks.castShadow = true; rocks.receiveShadow = true;
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pv = new THREE.Vector3();
   for (let i = 0; i < 140; i++) {
-    const a = rng() * TAU, r = 8 + Math.pow(rng(), 0.6) * 62;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    const s = 0.16 + Math.pow(rng(), 2) * 1.5;
+    let x = 0, z = 0, s = 0.3;
+    // 중앙 전투로(폭 9m)와 양쪽 진영 스폰 지점 근처에는 바위를 두지 않는다 — 시야 가림 방지
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const a = rng() * TAU, r = 8 + Math.pow(rng(), 0.6) * 62;
+      x = Math.cos(a) * r; z = Math.sin(a) * r;
+      s = 0.16 + Math.pow(rng(), 2) * 1.5;
+      const inLane = Math.abs(x) < 4.6 && Math.abs(z) < 42;
+      const nearSpawn = Math.hypot(x, Math.abs(z) - 12) < 8;
+      if (!inLane && !nearSpawn) break;
+      x = 0; z = 0; s = 0;     // 자리를 못 찾으면 안 보이게
+    }
     pv.set(x, terrainHeight(x, z) + s * 0.32, z);
     q.setFromEuler(new THREE.Euler(rng() * TAU, rng() * TAU, rng() * TAU));
     sc.set(s * (0.8 + rng() * 0.7), s * (0.55 + rng() * 0.5), s * (0.8 + rng() * 0.7));

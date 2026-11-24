@@ -516,7 +516,7 @@ class App {
     if (!b || !el) return;
     const p = b.player;
     const show = this.state === 'battle' && p && !p.dead && this.camMode !== 'spectate' && !this.debugCam;
-    let best = null, bestT = 42;
+    let best = null, bestT = 26;   // 26m 안쪽 적만 표시
     let blocker = null;
     if (show) {
       this.cam.getWorldDirection(_aimDir);
@@ -526,7 +526,7 @@ class App {
         const u = units[i];
         if (u.dead || u === p) continue;
         const dx = u.x - cx, dz = u.z - cz;
-        if (dx * dx + dz * dz > 50 * 50) continue;      // 멍리 적은 계산도 건너봄다
+        if (dx * dx + dz * dz > 26 * 26) continue;      // 멍리 적은 계산도 건너봄다
         const uy = 1.05 * (u.cls === 'knight' ? 1.12 : 1) + (u.y || 0);
         const vy = uy - cy;
         const t = dx * _aimDir.x + vy * _aimDir.y + dz * _aimDir.z;

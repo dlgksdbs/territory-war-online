@@ -4,7 +4,7 @@
    홈(병력 편성) → 3D 전장(1인칭 참전 / 관전) → 결과 · 다시 싸우기
    ============================================================================= */
 import * as THREE from 'three';
-import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt } from './config.js';
+import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_ELITES, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt } from './config.js';
 import { buildWorld } from './world.js';
 import { UnitRenderer } from './rig.js';
 import { Battle } from './battle.js';
@@ -27,15 +27,16 @@ const SPEC_PITCH_SENS = 0.0056;  // 관전 카메라 상하
 const SPECTATE_MIN_Y = 1.2;
 const SPECTATE_MAX_Y = 120;
 const _aimDir = new THREE.Vector3();
-const UNIT_KR = { soldier: '병사', knight: '기사', wizard: '마법사', blademaster: '검객' };
+const UNIT_KR = { soldier: '병사', elite: '고급 병사', knight: '기사', wizard: '마법사', blademaster: '검객' };
+const BUCKET_KEYS = ['soldier', 'elite', 'knight', 'wizard', 'blademaster'];
 
 class App {
   constructor() {
     this.progress = loadProgress();
     this.cfg = {
       playerClass: 'soldier',
-      allySoldiers: 60, allyKnights: 2, allyWizards: 1, allyBlademasters: 1,
-      enemySoldiers: 60, enemyKnights: 2, enemyWizards: 1, enemyBlademasters: 1
+      allySoldiers: 60, allyElites: 0, allyKnights: 2, allyWizards: 1, allyBlademasters: 1,
+      enemySoldiers: 60, enemyElites: 0, enemyKnights: 2, enemyWizards: 1, enemyBlademasters: 1
     };
     this.state = 'home';
     this.paused = false;
@@ -135,7 +136,8 @@ class App {
     $$('.class-card').forEach((c) => c.classList.toggle('is-on', c.dataset.cls === this.cfg.playerClass));
     const note = {
       soldier: '검과 방패, 민첩한 연속 베기. 적을 벨 때마다 <b>+0.001%</b>씩 영구히 강해진다.',
-      knight: '큰 망치를 든 중갑 장군. 내려치기 한 번에 <b>최대 5명</b>을 으스러뜨린다.',
+      elite: '금장 판금과 방패를 든 베테랑. 병사보다 <b>체력·이속·공속 +10%</b>, 정면 공격을 <b>5번</b>까지 완전히 막는다 (19초 재충전).',
+      knight: '큰 망치를 든 중갑 장군. 내려치기 한 번에 <b>최대 100명</b>을 으스러뜨린다.',
       wizard: '몸은 약하지만 <b>화염·번개·빙결</b> 세 마법으로 전장을 지운다. 버튼으로 직접 시전.',
       blademaster: '가장 빠른 연속 베기와 기동력. <b>🌸 매화 일섬</b>으로 전방을 돌진하며 쓸어버린다.'
     };
@@ -146,11 +148,12 @@ class App {
       const input = row.querySelector('input[type=range]');
       const num = row.querySelector('input.num');
       const out = row.querySelector('output');
-      const v = this.cfg[key];
+      const v = this.cfg[key] || 0;
       input.value = v;
       if (num) num.value = v;
       if (out) out.textContent = v;
-      const pct = unit === 'soldier' ? (v / MAX_SOLDIERS) * 100 : (v / MAX_SPECIALS) * 100;
+      const max = Number(input.max) || MAX_SOLDIERS;
+      const pct = (v / max) * 100;
       input.style.setProperty('--p', Math.max(2, pct) + '%');
     });
     const r = rosterOf(this.cfg);
@@ -158,14 +161,15 @@ class App {
     $$('.class-card').forEach((card) => {
       const cls = card.dataset.cls;
       const s = CLASSES[cls];
+      if (!s) return;
       const hp = card.querySelector('[data-stat=hp]');
       const dmg = card.querySelector('[data-stat=dmg]');
       const pw = card.querySelector('[data-stat=power]');
-      if (hp) hp.textContent = cls === 'wizard' ? s.hp : s.hp;
+      if (hp) hp.textContent = Math.round(s.hp);
       if (dmg) dmg.textContent = cls === 'wizard' ? SPELLS.fire.damage : s.damage;
       if (pw && !card.dataset.power) {
-        const m = cls === 'wizard' ? 2.4 : cls === 'knight' ? 2.0 : cls === 'blademaster' ? 2.2 : 1.0;
-        pw.textContent = m.toFixed(1) + '×';
+        const m = cls === 'wizard' ? 2.4 : cls === 'knight' ? 2.6 : cls === 'blademaster' ? 3.2 : cls === 'elite' ? 1.12 : 1.0;
+        pw.textContent = m.toFixed(m < 1.2 ? 2 : 1) + '×';
         card.dataset.power = '1';
       }
     });
@@ -190,7 +194,7 @@ class App {
       this.cfg[key] = v;
       if (range.value !== String(v)) range.value = v;
       if (num && num.value !== String(v)) num.value = v;
-      const pct = unit === 'soldier' ? (v / MAX_SOLDIERS) * 100 : (v / MAX_SPECIALS) * 100;
+      const pct = (v / max) * 100;
       range.style.setProperty('--p', Math.max(2, pct) + '%');
       $('#rosterTotal').textContent = `총 ${rosterTotal(rosterOf(this.cfg)).toLocaleString()}명 출전`;
     };
@@ -211,19 +215,22 @@ class App {
       const b = e.target.closest('button');
       if (!b) return;
       const p = b.dataset.preset;
-      const set = (a, k, w, es, ek, ew) => {
+      const set = (a, k, w, es, ek, ew, ab, eb, el, eel) => {
         this.cfg.allySoldiers = a; this.cfg.allyKnights = k; this.cfg.allyWizards = w;
         this.cfg.enemySoldiers = es; this.cfg.enemyKnights = ek; this.cfg.enemyWizards = ew;
+        this.cfg.allyBlademasters = ab || 0; this.cfg.enemyBlademasters = eb || 0;
+        this.cfg.allyElites = el || 0; this.cfg.enemyElites = eel || 0;
       };
-      const bm = this.cfg.allyBlademasters;
-      if (p === 'duel') { set(0, 1, 0, 0, 1, 0); this.cfg.allyBlademasters = 0; this.cfg.enemyBlademasters = 0; }
-      else if (p === 'clash') { set(60, 2, 1, 60, 2, 1); this.cfg.allyBlademasters = 1; this.cfg.enemyBlademasters = 1; }
-      else if (p === 'epic') { set(400, 12, 6, 400, 12, 6); this.cfg.allyBlademasters = 4; this.cfg.enemyBlademasters = 4; }
-      else if (p === 'horde') { set(3000, 8, 4, 3000, 8, 4); this.cfg.allyBlademasters = 3; this.cfg.enemyBlademasters = 3; this.cfg.playerClass = 'blademaster'; }
-      else if (p === 'insane') { set(10000, 10, 4, 10000, 10, 4); this.cfg.allyBlademasters = 4; this.cfg.enemyBlademasters = 4; this.cfg.playerClass = 'blademaster'; }
-      else if (p === 'magic') { set(0, 0, 20, 0, 0, 20); this.cfg.allyBlademasters = 0; this.cfg.enemyBlademasters = 0; this.cfg.playerClass = 'wizard'; }
-      else if (p === 'blade') { set(0, 0, 0, 0, 0, 0); this.cfg.allyBlademasters = 20; this.cfg.enemyBlademasters = 20; this.cfg.playerClass = 'blademaster'; }
-      else if (p === 'underdog') { this.cfg.playerClass = 'blademaster'; set(0, 0, 0, 1000, 0, 0); this.cfg.allyBlademasters = 0; this.cfg.enemyBlademasters = 0; }
+      if (p === 'duel') { set(0, 1, 0, 0, 1, 0); }
+      else if (p === 'clash') { set(60, 2, 1, 60, 2, 1, 1, 1, 6, 6); }
+      else if (p === 'epic') { set(400, 12, 6, 400, 12, 6, 4, 4, 40, 40); }
+      else if (p === 'horde') { set(3000, 8, 4, 3000, 8, 4, 3, 3, 120, 120); this.cfg.playerClass = 'blademaster'; }
+      else if (p === 'insane') { set(10000, 10, 4, 10000, 10, 4, 4, 4, 200, 200); this.cfg.playerClass = 'blademaster'; }
+      else if (p === 'elite') { set(0, 0, 0, 0, 0, 0, 0, 0, 300, 300); this.cfg.playerClass = 'elite'; }
+      else if (p === 'veteran') { set(0, 4, 2, 0, 4, 2, 4, 4, 500, 500); this.cfg.playerClass = 'elite'; }
+      else if (p === 'magic') { set(0, 0, 20, 0, 0, 20); this.cfg.playerClass = 'wizard'; }
+      else if (p === 'blade') { set(0, 0, 0, 0, 0, 0, 20, 20); this.cfg.playerClass = 'blademaster'; }
+      else if (p === 'underdog') { this.cfg.playerClass = 'blademaster'; set(0, 0, 0, 1000, 0, 0); }
       this._syncHome();
     });
     $('#countQuick').addEventListener('click', (e) => {
@@ -408,6 +415,8 @@ class App {
     if (p.get('ek')) this.cfg.enemyKnights = Number(p.get('ek'));
     if (p.get('aw')) this.cfg.allyWizards = Number(p.get('aw'));
     if (p.get('ew')) this.cfg.enemyWizards = Number(p.get('ew'));
+    if (p.get('ae')) this.cfg.allyElites = Number(p.get('ae'));
+    if (p.get('ee')) this.cfg.enemyElites = Number(p.get('ee'));
   }
 
   /* ------------------------------------------------------------------ 전투 */
@@ -422,6 +431,11 @@ class App {
     this.paused = false;
     this.debugLock = null;
     this.debugCam = false;
+    this._pendingResult = null;
+    this._pendingT = 0;
+    this._resultShown = false;
+    this.input.aimId = 0;
+    this.input.aimPart = 'body';
 
     // 기존 유닛 렌더러 정리
     if (this.unitRenderer) { this.unitRenderer.dispose(); this.unitRenderer = null; }
@@ -434,15 +448,20 @@ class App {
     }).start();
 
     // 클래스별 버킷
-    const buckets = { soldier: [], knight: [], wizard: [], blademaster: [] };
+    const buckets = {};
+    for (const k of BUCKET_KEYS) buckets[k] = [];
     for (const u of this.battle.units) {
       if (!buckets[u.cls]) buckets[u.cls] = [];
       buckets[u.cls].push(u);
     }
-    this.unitRenderer = new UnitRenderer(this.scene, { shadowUnits: this.quality !== 'low' && this.battle.units.length <= 160 });
+    this.unitRenderer = new UnitRenderer(this.scene, {
+      shadowUnits: this.quality !== 'low' && this.battle.units.length <= 160,
+      // 전장이 클수록 상세 모델 예산을 줄여 프레임을 지킨다 (실루엣이 나머지를 채운다)
+      detailCap: this.battle.units.length > 1600 ? 70 : this.battle.units.length > 800 ? 100 : 140
+    });
     // 예비 병력이 나중에 들어와도 그릴 자리가 있도록 클래스별 수용량을 미리 잡아둔다
     const caps = {};
-    for (const cls of ['soldier', 'knight', 'wizard', 'blademaster']) {
+    for (const cls of BUCKET_KEYS) {
       caps[cls] = (this.battle.roster.ally[cls] || 0) + (this.battle.roster.enemy[cls] || 0) + (cls === this.cfg.playerClass ? 1 : 0);
     }
     this.unitRenderer.build(buckets, caps);
@@ -578,7 +597,8 @@ class App {
     this._toastT = setTimeout(() => { t.style.opacity = '0'; }, 900);
   }
 
-  /* 🎯 조준점 아래 적 체력 — 크로스헤어가 적 위에 오면 즉시 표시 */
+  /* 🎯 조준점 아래 적 체력 — 크로스헤어가 적 위에 오면 즉시 표시
+     + 조준 높이로 🩸 부위(머리·팔·다리)를 판정해 전투에 넘긴다 */
   _updateAimInfo() {
     const b = this.battle;
     const el = document.getElementById('aimInfo');
@@ -586,7 +606,7 @@ class App {
     const p = b.player;
     const show = this.state === 'battle' && p && !p.dead && this.camMode !== 'spectate' && !this.debugCam;
     let best = null, bestT = 26;   // 26m 안쪽 적만 표시
-    let blocker = null;
+    let hitY = 0, hitX = 0, hitZ = 0;
     if (show) {
       this.cam.getWorldDirection(_aimDir);
       const cx = this.cam.position.x, cy = this.cam.position.y, cz = this.cam.position.z;
@@ -595,7 +615,7 @@ class App {
         const u = units[i];
         if (u.dead || u === p) continue;
         const dx = u.x - cx, dz = u.z - cz;
-        if (dx * dx + dz * dz > 26 * 26) continue;      // 멍리 적은 계산도 건너봄다
+        if (dx * dx + dz * dz > 26 * 26) continue;
         const uy = 1.05 * (u.cls === 'knight' ? 1.12 : 1) + (u.y || 0);
         const vy = uy - cy;
         const t = dx * _aimDir.x + vy * _aimDir.y + dz * _aimDir.z;
@@ -604,25 +624,42 @@ class App {
         const perp2 = px * px + py * py + pz * pz;
         const lim = 0.38 + t * 0.042 + (u.radius || 0.4);
         if (perp2 > lim * lim) continue;
-        if (t < bestT) { bestT = t; best = u; }   // 시선에 걸리는 가장 가까운 유닛
+        if (t < bestT) {
+          bestT = t; best = u;
+          hitY = cy + _aimDir.y * t; hitX = cx + _aimDir.x * t; hitZ = cz + _aimDir.z * t;
+        }
       }
       // 가장 가까운 것이 아군이면 적은 가려져 있다 → 체력을 띄우지 않는다
-      if (best && best.team === p.team) { blocker = best; best = null; }
+      if (best && best.team === p.team) { best = null; }
     }
     if (!best) {
       if (this._aimOn) { el.classList.remove('is-on'); this._aimOn = false; this._aimKey = ''; }
+      this.input.aimId = 0; this.input.aimPart = 'body';
       return;
     }
+    // 부위 판정 — 조준선이 유닛의 어느 높이·어느 쪽에 닿았는지
+    const sc = best.scale || 1;
+    const relY = (hitY - (best.y || 0)) / (1.72 * sc);
+    const rx = Math.cos(best.yaw), rz = -Math.sin(best.yaw);          // 유닛 기준 오른쪽
+    const lx = (hitX - best.x) * rx + (hitZ - best.z) * rz;
+    let part = 'body';
+    if (relY > 0.80) part = 'head';
+    else if (relY < 0.42) part = lx < 0 ? 'legR' : 'legL';
+    else if (relY > 0.50 && Math.abs(lx) > 0.16) part = lx < 0 ? 'armR' : 'armL';
+    this.input.aimId = best.id;
+    this.input.aimPart = part;
+    this._aimUnit = best;
     if (!this._aimOn) { el.classList.add('is-on'); this._aimOn = true; }
     const hp = Math.max(0, Math.ceil(best.hp));
     const mx = Math.max(1, Math.ceil(best.maxHp));
-    const key = best.id + ':' + hp;
+    const key = best.id + ':' + hp + ':' + part;
     if (key !== this._aimKey) {
       this._aimKey = key;
       const nEl = document.getElementById('aiName');
       const hEl = document.getElementById('aiHp');
       const bar = document.getElementById('aiBar');
-      if (nEl) nEl.textContent = '적 ' + (UNIT_KR[best.cls] || '병사');
+      const partTxt = part === 'head' ? ' · 머리' : part === 'armL' || part === 'armR' ? ' · 팔' : part === 'legL' || part === 'legR' ? ' · 다리' : '';
+      if (nEl) nEl.textContent = '적 ' + (UNIT_KR[best.cls] || '병사') + partTxt;
       if (hEl) hEl.textContent = hp + ' / ' + mx;
       if (bar) {
         bar.style.width = clamp((hp / mx) * 100, 0, 100) + '%';
@@ -817,28 +854,34 @@ class App {
     if (this.state !== 'battle' || !this.battle) return;
     this.time += dt;
 
-    // 히트스톱
+    // 히트스톱 — 내가 때린 순간만 짧게 무게를 준다. (AI 타격까지 겹치면 전장이 영원히 느려지던 문제)
     let scale = 1;
     if (this.battle.hitStop > 0) {
-      this.battle.hitStop = Math.max(0, this.battle.hitStop - dt);
-      scale = 0.12;
+      this.battle.hitStop = Math.min(0.10, Math.max(0, this.battle.hitStop - dt));
+      scale = 0.35;
     }
 
     const p = this.battle.player;
     const spectating = this.camMode === 'spectate';
-    // 입력 → 전투
+    // 입력 → 전투 (프레임이 길어지면 잘게 나눠 시뮬레이션한다 — 접촉 프레임을 놓치지 않게)
     if (!this.paused && !this.debugLock) {
       this.input.mx = this.input.mx || 0;
       if (this.attackHeld && p.cooldown <= 0 && p.attackT < 0) {
         if (!spectating) this._aimAssist();
       }
-      this.battle.update(dt * scale, {
+      const cmd = {
         mx: spectating ? 0 : this.input.mx,
         mz: spectating ? 0 : this.input.mz,
         yaw: p.yaw,
         guard: spectating ? false : !!this.input.guard,
-        attack: spectating ? false : (this.input.attack || this.attackHeld)
-      });
+        attack: spectating ? false : (this.input.attack || this.attackHeld),
+        aimPart: this.input.aimPart || 'body',
+        aimId: this.input.aimId || 0
+      };
+      const total = dt * scale;
+      const sub = Math.min(3, Math.max(1, Math.ceil(total / (1 / 60))));
+      const sdt = total / sub;
+      for (let s = 0; s < sub; s++) this.battle.update(sdt, cmd);
       this.input.attack = false;
       // 키보드 이동
       if (!spectating && this.keys && (this.keys.KeyW || this.keys.KeyA || this.keys.KeyS || this.keys.KeyD)) {
@@ -876,16 +919,13 @@ class App {
     }
     this._lastAtkT = p ? p.attackT : -1;
 
-    // 포즈 계산 — 카메라 근처 유닛만 (원거리는 실루엣)
+    // 포즈 계산 — 상세 모델로 그려지는 유닛만 (실루엣은 yaw 만으로 그린다 → 대규모에서 큰 절약)
     const units = this.battle.units;
-    const camP = this.cam.position;
-    const NEAR2 = 46 * 46;
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
+      if (!u.isPlayer && u.dslot < 0) continue;
       if (u.dead && u.deadT > 4.2) continue;
-      const dx = u.x - camP.x, dz = u.z - camP.z;
-      if (u.isPlayer || dx * dx + dz * dz < NEAR2) computePose(u, this.time, dt);
-      else if (((i + this.frames) & 3) === 0) computePose(u, this.time, dt);
+      computePose(u, this.time, dt);
     }
 
     this.updateCamera(dt);
@@ -937,6 +977,16 @@ class App {
           }
         }
         this._prevAtk = atkNow;
+      }
+    }
+
+    // 승패 배너는 마지막 사망 모션이 끝난 뒤에 — 판정되자마자 화면을 덮지 않는다
+    if (this._pendingResult) {
+      this._pendingT = (this._pendingT || 0) + dt;
+      if (this._pendingT >= (this._pendingDelay || 1.4)) {
+        const w = this._pendingResult;
+        this._pendingResult = null;
+        this._finish(w);
       }
     }
 
@@ -997,11 +1047,25 @@ class App {
     } else if (e.type === 'death') {
       const u = e.unit;
       this.sfx.death(u ? dOf(u.x, u.z) : 0);
+    } else if (e.type === 'sever') {
+      // 🩸 부위 절단 — 금속이 갈라지는 소리, 내 몸이면 화면에 알린다
+      this.sfx.sever(dOf(e.x, e.z), e.part === 'head');
+      if (e.unit && e.unit.isPlayer && e.part !== 'head') {
+        this.fx.hitFlash = Math.max(this.fx.hitFlash, 0.95);
+        this._toast((e.part === 'armL' || e.part === 'armR') ? '🩸 팔이 잘렸다 — 공속 30% 감소' : '🩸 다리가 잘렸다 — 이속 30% 감소');
+      }
+    } else if (e.type === 'guardEmpty') {
+      if (e.unit && e.unit.isPlayer) this._toast('🛡️ 방패 충전을 다 썼다 — 19초 재충전');
+    } else if (e.type === 'guardReady') {
+      if (e.unit && e.unit.isPlayer) this._toast('🛡️ 방패 5회 회복');
     } else if (e.type === 'levelUp') {
       this.sfx.levelUp();
     }
     if (e.type === 'end') {
-      this._finish(e.winner);
+      // 🏆 마지막 적의 사망 모션이 끝날 때까지 배너를 미룬다 (사망 모션을 끊지 않는다)
+      this._pendingResult = e.winner;
+      this._pendingDelay = e.delay || 1.4;
+      this._pendingT = 0;
     } else if (e.type === 'playerDown') {
       this._toast('쓰러졌다 — 잠시 후 부활');
     } else if (e.type === 'levelUp') {
@@ -1021,13 +1085,17 @@ class App {
 
   _finish(winner) {
     const b = this.battle;
+    if (!b) return;
+    if (this._resultShown) return;
+    this._resultShown = true;
     if (this._aimOn) { const el = document.getElementById('aimInfo'); if (el) el.classList.remove('is-on'); this._aimOn = false; }
     const won = winner === 'ally';
     $('#resEmblem').textContent = won ? '🏆' : '💀';
     $('#resTitle').textContent = won ? '승리' : '패배';
     $('#resSub').textContent = won ? '적군을 전멸시켰다' : '아군이 전멸했다';
-    $('#resKills').textContent = b.playerKills;
-    $('#resAlive').textContent = b.countAlive('ally');
+    $('#resKills').textContent = b.playerKills.toLocaleString();
+    // 🤝 아군 생존 수도 플레이어 본인을 빼고 센다
+    $('#resAlive').textContent = Math.max(0, b.countAlive('ally') - 1).toLocaleString();
     $('#resGrow').textContent = growthLabel(this.progress.kills);
     $('#result').classList.add('is-on');
     this.progress.kills = b.playerKills;
@@ -1041,21 +1109,25 @@ class App {
     const b = this.battle;
     if (!b) return;
     const p = b.player;
-    const ally = b.countAlive('ally'), enemy = b.countAlive('enemy');
+    const tal = b.tally;
+    let allyRaw = 0, enemy = 0;
+    for (const c of BUCKET_KEYS) { allyRaw += tal.ally[c] || 0; enemy += tal.enemy[c] || 0; }
+    // ⚔️ 상단 전장/예비/총 아군 수에는 '플레이어 본인'을 세지 않는다
+    const ally = Math.max(0, allyRaw - (p && !p.dead && !p.removed ? 1 : 0));
     const aRes = b.reserveTotal ? b.reserveTotal('ally') : 0;
     const eRes = b.reserveTotal ? b.reserveTotal('enemy') : 0;
-    const totalA = Math.max(1, this._initialAlly || 1);
+    const totalA = Math.max(1, (this._initialAlly || 1) - 1);
     const totalE = Math.max(1, this._initialEnemy || 1);
     const cache = this._hudCache;
-    if (force || cache.ally !== ally) { $('#allyCount').textContent = ally; cache.ally = ally; }
-    if (force || cache.enemy !== enemy) { $('#enemyCount').textContent = enemy; cache.enemy = enemy; }
+    if (force || cache.ally !== ally) { $('#allyCount').textContent = ally.toLocaleString(); cache.ally = ally; }
+    if (force || cache.enemy !== enemy) { $('#enemyCount').textContent = enemy.toLocaleString(); cache.enemy = enemy; }
     if (force || cache.aRes !== aRes) {
-      const el = $('#allyReserve'); if (el) el.textContent = '+' + aRes;
-      const row = $('#allyCount').parentElement; if (row) row.title = '전장 ' + ally + '명 · 예비 ' + aRes + '명 (합계 ' + (ally + aRes) + '명)';
+      const el = $('#allyReserve'); if (el) el.textContent = '+' + aRes.toLocaleString();
+      const row = $('#allyCount').parentElement; if (row) row.title = '전장 ' + ally + '명(플레이어 제외) · 예비 ' + aRes + '명 (합계 ' + (ally + aRes) + '명)';
       cache.aRes = aRes;
     }
     if (force || cache.eRes !== eRes) {
-      const el = $('#enemyReserve'); if (el) el.textContent = '+' + eRes;
+      const el = $('#enemyReserve'); if (el) el.textContent = '+' + eRes.toLocaleString();
       const row = $('#enemyCount').parentElement; if (row) row.title = '전장 ' + enemy + '명 · 예비 ' + eRes + '명 (합계 ' + (enemy + eRes) + '명)';
       cache.eRes = eRes;
     }
@@ -1063,9 +1135,16 @@ class App {
     $('#enemyBar').style.width = clamp(((enemy + eRes) / totalE) * 100, 0, 100) + '%';
     const hpPct = clamp((p.hp / Math.max(1, p.maxHp)) * 100, 0, 100);
     $('#hpBar').style.width = hpPct + '%';
-    $('#hpText').textContent = `${Math.max(0, Math.ceil(p.hp))} / ${Math.ceil(p.maxHp)}`;
-    $('#psClass').textContent = CLASSES[p.cls].icon;
-    $('#psGrow').textContent = growthLabel(this.progress.kills);
+    const hpTxt = `${Math.max(0, Math.ceil(p.hp))} / ${Math.ceil(p.maxHp)}`;
+    if (force || cache.hp !== hpTxt) { $('#hpText').textContent = hpTxt; cache.hp = hpTxt; }
+    if (force || cache.cls !== p.cls) {
+      $('#psClass').textContent = CLASSES[p.cls].icon;
+      cache.cls = p.cls;
+    }
+    if (force || cache.grow !== this.progress.kills) {
+      $('#psGrow').textContent = growthLabel(this.progress.kills);
+      cache.grow = this.progress.kills;
+    }
     if (this._savedKills !== b.playerKills) {
       this._savedKills = b.playerKills;
       this.progress.kills = b.playerKills;
@@ -1077,19 +1156,19 @@ class App {
       $('#killPct').textContent = growthLabel(b.playerKills);
       cache.kills = b.playerKills;
     }
-    // 에임 아래 공속 게이지
+    // 에임 아래 공속 게이지 (팔을 잃으면 느려진 주기를 그대로 반영)
     const gauge = $('#aimGauge');
     if (gauge) {
-      const g = CLASSES[p.cls];
-      // 타격 직후부터 '무기를 거두는 동안' 게이지가 차오른다 (회수 모션과 정확히 동기화)
+      const cyc = p.cycle || CLASSES[p.cls].cycle;
+      const imp = impactAt(p.cls);
       let k;
       if (p.attackT >= 0 && !p.dead) {
-        const imp = impactAt(p.cls);
-        k = clamp((p.attackT - imp) / Math.max(0.001, g.cycle - imp), 0, 1);
+        k = clamp((p.attackT - imp) / Math.max(0.001, cyc - imp), 0, 1);
       } else {
-        k = 1 - clamp(p.cooldown / Math.max(0.001, g.cycle), 0, 1);
+        k = 1 - clamp(p.cooldown / Math.max(0.001, cyc), 0, 1);
       }
-      gauge.querySelector('i').style.width = (k * 100).toFixed(1) + '%';
+      const w = (k * 100).toFixed(1) + '%';
+      if (force || cache.gauge !== w) { gauge.querySelector('i').style.width = w; cache.gauge = w; }
       gauge.classList.toggle('is-ready', p.cooldown <= 0.02 && !p.dead);
       gauge.classList.toggle('is-knight', p.cls === 'knight');
       gauge.classList.toggle('is-wizard', p.cls === 'wizard');
@@ -1125,9 +1204,18 @@ class App {
       num.textContent = cd > 0 ? Math.ceil(cd) : '';
       skBtn.querySelector('.sk-label').textContent = cd > 0 ? '충전' : '매화 일섬';
     }
-    // 🛡️ 일반 병사만 막기 버튼
+    // 🛡️ 막기 버튼 — 일반 병사(검 막기) / 고급 병사(방패 막기) · 횟수 제한 없음
     const gdBtn = $('#guardBtn');
-    if (gdBtn) gdBtn.classList.toggle('is-on', p.cls === 'soldier');
+    if (gdBtn) {
+      const canGuard = p.cls === 'soldier' || p.cls === 'elite';
+      gdBtn.classList.toggle('is-on', canGuard);
+      const chEl = document.getElementById('guardCharges');
+      if (chEl) chEl.style.display = 'none';
+      gdBtn.classList.remove('is-empty');
+      const lbl = gdBtn.querySelector('.sk-label');
+      const want = p.cls === 'elite' ? '방패 막기' : '검 막기';
+      if (lbl && lbl.textContent !== want) lbl.textContent = want;
+    }
     const atkBtn = $('#attackBtn');
     atkBtn.style.display = p.cls === 'wizard' ? 'none' : '';
     if (p.cls !== 'wizard') {
@@ -1142,7 +1230,7 @@ class App {
       veil.classList.add('is-on');
       $('#respawnT').textContent = Math.max(0, Math.ceil(3.6 - b.playerDeadT));
     } else veil.classList.remove('is-on');
-    // 피격 비네트 — 맞으면 가장자리가 확 붉게 번지고 빠르게 깜포다
+    // 피격 비네트 — 맞으면 가장자리가 확 붉게 번지고 빠르게 깜빡인다
     const hv = $('#hitVignette');
     const hf = this.fx ? this.fx.hitFlash : 0;
     hv.style.opacity = String(clamp(hf * 1.15, 0, 0.92));
@@ -1186,7 +1274,9 @@ window.BA = {
       localStorageKills: loadProgress().kills,
       player: p ? {
         cls: p.cls, x: p.x, z: p.z, yaw: p.yaw, pitch: p.pitch, hp: p.hp, maxHp: p.maxHp,
-        dead: p.dead, attackT: p.attackT, guard: !!p.guard, cd: { ...p.cd }, kills: b.playerKills
+        dead: p.dead, attackT: p.attackT, guard: !!p.guard, cd: { ...p.cd }, kills: b.playerKills,
+        severed: { ...p.severed },
+        speed: p.speed, cycle: p.cycle, behead: !!p.behead, deathKind: p.deathKind || null
       } : null,
       spells: b.spells.length,
       drawCalls: app.renderer ? app.renderer.info.render.calls : 0,
@@ -1211,8 +1301,10 @@ window.BA = {
       hitStop: b.hitStop,
       practice: !!b.practice,
       field: { ally: b.countAlive('ally'), enemy: b.countAlive('enemy') },
+      allyNoPlayer: Math.max(0, b.countAlive('ally') - (p && !p.dead ? 1 : 0)),
       reserve: { ally: b.reserveTotal('ally'), enemy: b.reserveTotal('enemy') },
       totals: { ally: b.initialTotalAlly, enemy: b.initialTotalEnemy },
+      resultDelay: b.resultDelay, overAt: b.endAt,
       over: b.over
     };
   },
@@ -1234,6 +1326,8 @@ window.BA = {
       if (cfg.ew !== undefined) app.cfg.enemyWizards = Number(cfg.ew);
       if (cfg.ab !== undefined) app.cfg.allyBlademasters = Number(cfg.ab);
       if (cfg.eb !== undefined) app.cfg.enemyBlademasters = Number(cfg.eb);
+      if (cfg.ae !== undefined) app.cfg.allyElites = Number(cfg.ae);
+      if (cfg.ee !== undefined) app.cfg.enemyElites = Number(cfg.ee);
     }
     app.startBattle();
   },

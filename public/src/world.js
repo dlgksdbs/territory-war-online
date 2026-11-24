@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { terrainMaps, stoneMaps, woodMaps, bannerTexture, glowTexture, cloudTexture, runeTexture, blobTexture, flameTexture, smokeTexture } from './textures.js';
 import { mulberry32, clamp, lerp, fbm, noise2, TAU } from './util.js';
 
-const SUN_DIR = new THREE.Vector3(-0.78, 0.42, 0.34).normalize();
+const SUN_DIR = new THREE.Vector3(-0.62, 0.72, 0.36).normalize();   // 해를 조금 더 높여 그림자를 줄이고 전장을 밝게
 
 function terrainHeight(x, z) {
   const r = Math.hypot(x, z);
@@ -39,13 +39,13 @@ void main() {
   vec3 col = mix(horizonColor, topColor, t);
   // 지평선 근처 따뜻한 띠
   float band = exp(-pow(abs(d.y) * 7.0, 1.6));
-  col += vec3(1.0, 0.46, 0.18) * band * 0.30;
+  col += vec3(1.0, 0.74, 0.50) * band * 0.10;
   // 해 주변 광휘
   float sd = max(dot(d, normalize(sunDir)), 0.0);
-  col += sunColor * pow(sd, 22.0) * 0.95;
-  col += sunColor * pow(sd, 4.0) * 0.18;
+  col += sunColor * pow(sd, 22.0) * 1.05;
+  col += sunColor * pow(sd, 4.0) * 0.22;
   // 지평선 아래는 어둡게
-  col = mix(col, vec3(0.035, 0.045, 0.06), smoothstep(0.0, -0.14, d.y));
+  col = mix(col, vec3(0.10, 0.12, 0.15), smoothstep(0.0, -0.14, d.y));
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -56,9 +56,9 @@ export function buildWorld(scene, renderer) {
   /* ---------------------------------------------------------------- 하늘 */
   const skyMat = new THREE.ShaderMaterial({
     uniforms: {
-      topColor: { value: new THREE.Color(0x1d3557) },
-      horizonColor: { value: new THREE.Color(0xe9a271) },
-      sunColor: { value: new THREE.Color(0xffd39a) },
+      topColor: { value: new THREE.Color(0x3f80c6) },
+      horizonColor: { value: new THREE.Color(0xfbd9b4) },
+      sunColor: { value: new THREE.Color(0xffe7c2) },
       sunDir: { value: SUN_DIR.clone() }
     },
     vertexShader: SKY_VERT,
@@ -126,7 +126,7 @@ void main(){
   float h = clamp((vW.y + 6.0) / 96.0, 0.0, 1.0);
   vec3 col = mix(uBase, uTop, pow(h, 0.75));
   // 지평선 쪽은 더 뿌옇게(대기 원근)
-  col = mix(col, vec3(0.86, 0.66, 0.55), clamp(uHaze * (1.0 - h * 0.85), 0.0, 1.0));
+  col = mix(col, vec3(0.90, 0.85, 0.78), clamp(uHaze * (1.0 - h * 0.85), 0.0, 1.0));
   gl_FragColor = vec4(col, 1.0);
 }`,
       fog: false,
@@ -136,9 +136,9 @@ void main(){
     return mat;
   };
   const ridgeMats = [
-    makeRidgeMat(0xa08d87, 0xd3b29a, 0.55),   // 가장 먼 능선 — 안개에 잠김
-    makeRidgeMat(0x8a8195, 0xb99fa4, 0.32),   // 중간 능선
-    makeRidgeMat(0x5b5470, 0x877a8f, 0.12)    // 가까운 능선
+    makeRidgeMat(0xa8aebb, 0xdcd6cb, 0.50),   // 가장 먼 능선 — 안개에 잠김
+    makeRidgeMat(0x939aab, 0xc3bcb8, 0.30),   // 중간 능선
+    makeRidgeMat(0x66698a, 0x93899a, 0.10)    // 가까운 능선
   ];
   // 봉우리 능선을 이어 붙인 한 장의 산맥 띠 — 종이 삼각형이 아니라 부드러운 실루엣
   const buildRidge = (layer) => {
@@ -186,8 +186,8 @@ void main(){
   cNor.needsUpdate = true;
   const castleMat = new THREE.MeshStandardMaterial({
     map: cTex, normalMap: cNor, normalScale: new THREE.Vector2(1.1, 1.1),
-    color: 0xbdb0a1, emissive: 0x2e231b, emissiveIntensity: 0.9,
-    roughness: 0.94, metalness: 0.02, envMapIntensity: 0.45
+    color: 0xcdc2b4, emissive: 0x3a2d22, emissiveIntensity: 0.9,
+    roughness: 0.94, metalness: 0.02, envMapIntensity: 0.55
   });
   const roofMat = new THREE.MeshStandardMaterial({ color: 0x353039, roughness: 0.7, metalness: 0.1, envMapIntensity: 0.6 });
   const darkStoneMat = new THREE.MeshStandardMaterial({ map: cTex, color: 0x93887c, emissive: 0x201812, emissiveIntensity: 0.85, roughness: 0.95, metalness: 0.02 });
@@ -326,16 +326,16 @@ void main(){
   const envGeo = new THREE.SphereGeometry(60, 24, 16);
   const envMat = new THREE.ShaderMaterial({
     uniforms: {
-      topColor: { value: new THREE.Color(0x36567f) },
-      horizonColor: { value: new THREE.Color(0xf0a878) },
-      sunColor: { value: new THREE.Color(0xffe0b0) },
+      topColor: { value: new THREE.Color(0x4a7bb0) },
+      horizonColor: { value: new THREE.Color(0xf8bd93) },
+      sunColor: { value: new THREE.Color(0xfff0cc) },
       sunDir: { value: SUN_DIR.clone() }
     },
     vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide
   });
   envScene.add(new THREE.Mesh(envGeo, envMat));
   const groundDisc = new THREE.Mesh(new THREE.CircleGeometry(50, 24),
-    new THREE.MeshBasicMaterial({ color: 0x4a3626 }));
+    new THREE.MeshBasicMaterial({ color: 0x6a5140 }));
   groundDisc.rotation.x = -Math.PI / 2; groundDisc.position.y = -1.2;
   envScene.add(groundDisc);
   const envSun = new THREE.Mesh(new THREE.SphereGeometry(4.5, 12, 8),
@@ -349,13 +349,13 @@ void main(){
   pmrem.dispose();
 
   /* ------------------------------------------------------------- 안개 */
-  scene.fog = new THREE.FogExp2(0xb69a86, 0.0022);
+  scene.fog = new THREE.FogExp2(0xd9d4c8, 0.0011);
 
   /* ------------------------------------------------------------- 조명 */
-  const hemi = new THREE.HemisphereLight(0xa6c8f5, 0x3a3028, 0.82);
+  const hemi = new THREE.HemisphereLight(0xcde6ff, 0x5e5240, 1.18);
   scene.add(hemi);
 
-  const key = new THREE.DirectionalLight(0xffd2a0, 3.0);
+  const key = new THREE.DirectionalLight(0xfff0d6, 3.30);
   key.position.copy(SUN_DIR).multiplyScalar(70);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -372,16 +372,16 @@ void main(){
   scene.add(key.target);
   out.key = key;
 
-  const fill = new THREE.DirectionalLight(0x93b8ea, 0.82);
+  const fill = new THREE.DirectionalLight(0xa8c8f2, 1.02);
   fill.position.set(-40, 30, -50);
   scene.add(fill);
 
-  const rim = new THREE.DirectionalLight(0xff9450, 0.7);
+  const rim = new THREE.DirectionalLight(0xffa468, 0.62);
   rim.position.set(30, 12, -60);
   scene.add(rim);
 
   /* 정면 아래에서 부드럽게 받쳐 주는 빛 — 그림자 쪽이 탁해지지 않게 */
-  const bounce = new THREE.DirectionalLight(0xbfd2e8, 0.34);
+  const bounce = new THREE.DirectionalLight(0xd2e2f6, 0.48);
   bounce.position.set(6, 7, -34);
   scene.add(bounce);
 
@@ -393,10 +393,10 @@ void main(){
   tGeo.rotateX(-Math.PI / 2);
   const pos = tGeo.attributes.position;
   const col = new Float32Array(pos.count * 3);
-  const cDirt = new THREE.Color(0xa88d6b);
-  const cMud = new THREE.Color(0x6f573d);
-  const cGrass = new THREE.Color(0x8d9668);
-  const cStone = new THREE.Color(0xa9a08d);
+  const cDirt = new THREE.Color(0xc6ad8c);
+  const cMud = new THREE.Color(0x8f7658);
+  const cGrass = new THREE.Color(0xa4b27c);
+  const cStone = new THREE.Color(0xbcb3a2);
   const tmpC = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
@@ -416,11 +416,10 @@ void main(){
     map: maps.albedo,
     normalMap: maps.normal,
     normalScale: new THREE.Vector2(0.55, 0.55),
-    roughnessMap: maps.rough,
-    roughness: 0.92,
-    metalness: 0.03,
+    roughness: 1.0,
+    metalness: 0.0,
     vertexColors: true,
-    envMapIntensity: 0.5,
+    envMapIntensity: 0.30,
     color: 0xffffff
   });
   const terrain = new THREE.Mesh(tGeo, terrainMat);
@@ -442,7 +441,7 @@ void main(){
   /* ----------------------------------------------------- 기둥·폐허 */
   const ruinMat = new THREE.MeshStandardMaterial({
     map: stone.albedo, normalMap: stone.normal, roughness: 0.86, metalness: 0.06,
-    color: 0x9a958b, envMapIntensity: 0.75
+    color: 0xb3ada2, envMapIntensity: 0.85
   });
   const pillarGeo = new THREE.CylinderGeometry(0.62, 0.74, 6.4, 12, 4);
   const capGeo = new THREE.BoxGeometry(1.5, 0.42, 1.5);
@@ -510,7 +509,7 @@ void main(){
 
   /* ------------------------------------------------------ 바위·풀 */
   const rockGeo = new THREE.IcosahedronGeometry(1, 1);
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x77716a, roughness: 0.95, metalness: 0.03, flatShading: true, envMapIntensity: 0.5 });
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x8d877e, roughness: 0.95, metalness: 0.03, flatShading: true, envMapIntensity: 0.6 });
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, 140);
   rocks.castShadow = true; rocks.receiveShadow = true;
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), pv = new THREE.Vector3();
@@ -771,7 +770,7 @@ void main() {
     sm.position.set(Math.cos(a) * r, 0.55 + rng() * 0.5, Math.sin(a) * r);
     const sc = 12 + rng() * 16;
     sm.scale.set(sc, sc * 0.42, 1);
-    sm.material.opacity = 0.06 + rng() * 0.07;
+    sm.material.opacity = 0.04 + rng() * 0.05;
     sm.renderOrder = 2;
     scene.add(sm);
     groundMist.push({ s: sm, ph: rng() * TAU, x: sm.position.x, z: sm.position.z, sc });
@@ -881,7 +880,7 @@ void main() {
     for (const gm of groundMist) {
       gm.s.position.x = gm.x + Math.sin(t * 0.12 + gm.ph) * 1.6;
       gm.s.position.z = gm.z + Math.cos(t * 0.1 + gm.ph) * 1.6;
-      gm.s.material.opacity = 0.05 + Math.sin(t * 0.35 + gm.ph) * 0.028;
+      gm.s.material.opacity = 0.035 + Math.sin(t * 0.35 + gm.ph) * 0.02;
     }
     // 그림자 카메라를 플레이어 근처로 (원거리 해상도 확보)
     if (camPos) {

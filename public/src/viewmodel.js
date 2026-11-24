@@ -181,6 +181,28 @@ function buildStaff(env) {
   return g;
 }
 
+/* 🛡️ 고급 병사 — 금장 장검과 왼팔 방패(화면 아래 왼쪽에 살짝 보인다) */
+function buildEliteSword() {
+  const g = buildSword();
+  const gold = matGold();
+  // 장검의 금장 가드 장식
+  g.add(box(0.30, 0.05, 0.05, gold, [0, 0.062, 0]));
+  g.add(sph(0.035, gold, [0, 0.062, 0.03], [1, 0.6, 0.8]));
+  // 방패
+  const sh = new THREE.Group();
+  sh.position.set(-0.60, -0.50, -0.60);
+  sh.rotation.set(0.16, 0.44, 0.10);
+  const face = matCloth(0x2b4a63);
+  sh.add(box(0.46, 0.60, 0.035, face, [0, 0, 0]));
+  sh.add(box(0.50, 0.055, 0.05, gold, [0, 0.29, 0]));
+  sh.add(box(0.50, 0.055, 0.05, gold, [0, -0.29, 0]));
+  sh.add(box(0.055, 0.60, 0.05, gold, [-0.23, 0, 0]));
+  sh.add(box(0.055, 0.60, 0.05, gold, [0.23, 0, 0]));
+  sh.add(sph(0.085, matSteel(), [0, 0, 0.03], [1, 1, 0.55]));
+  g.add(sh);
+  return g;
+}
+
 function buildKatana() {
   const g = new THREE.Group();
   const steel = matSteel(), gold = matGold();
@@ -310,9 +332,17 @@ const CURVES = {
   }
 };
 
+/* 고급 병사 — 병사보다 짧고 빠른 장검 모션 */
+CURVES.elite = (() => {
+  const src = CURVES.soldier;
+  const k = 0.84 / 0.92;
+  return { idle: src.idle, dur: 0.84, keys: src.keys.map((o) => ({ ...o, t: o.t * k })) };
+})();
+
 /* 막기 자세 — 무기를 화면 대각선으로 세워 상체 앞을 가린다 (병사·검객은 검날이 얼굴을 가로지름) */
 const GUARD = {
   soldier: { p: [0.10, -0.40, -0.62], r: [-0.30, 0.72, 0.30] },
+  elite: { p: [0.04, -0.34, -0.58], r: [-0.26, 0.66, 0.24] },
   blademaster: { p: [0.12, -0.38, -0.60], r: [-0.22, 0.80, 0.42] },
   knight: { p: [0.00, -0.40, -0.62], r: [-0.12, 0.52, -0.48] },
   wizard: { p: [-0.16, -0.44, -0.56], r: [0.12, -0.26, -0.16] }
@@ -370,6 +400,7 @@ export class ViewModel {
     this.className = 'soldier';
     this.models = {
       soldier: buildSword(),
+      elite: buildEliteSword(),
       knight: buildHammer(),
       wizard: buildStaff(),
       blademaster: buildKatana()
@@ -411,7 +442,7 @@ export class ViewModel {
     this.palm.visible = cls === 'wizard';
     this.guardK = 0;
     this.swapT = 0;
-    const cur = CURVES[cls];
+    const cur = CURVES[cls] || CURVES.soldier;
     this.root.position.set(cur.idle.p[0], cur.idle.p[1], cur.idle.p[2]);
     this.root.rotation.set(cur.idle.r[0], cur.idle.r[1], cur.idle.r[2]);
     if (cls === 'wizard') {
@@ -430,7 +461,7 @@ export class ViewModel {
     const swap = easeOutCubic(this.swapT);
 
     const spr = CLASSES[this.className] || CLASSES.soldier;
-    const atk = player && player.attackT >= 0 ? player.attackT * ((cur.dur || spr.animDur) / Math.max(0.001, spr.cycle)) : -1;
+    const atk = player && player.attackT >= 0 ? player.attackT * ((cur.dur || spr.animDur) / Math.max(0.001, player.cycle || spr.cycle)) : -1;
     let p = this._p, r = this._r;
     if (atk >= 0 && atk < cur.dur) {
       sample(cur.keys, atk, p, r);

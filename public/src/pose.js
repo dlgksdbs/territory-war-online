@@ -43,9 +43,30 @@ const BASE = {
     ROT('shinL', 0.14, 0, 0),
     ROT('footL', -0.10, 0, 0)
   ],
+  elite: [
+    ROT('pelvis', 0.01, 0, 0),
+    ROT('spine', 0.07, -0.05, 0),
+    ROT('chest', -0.02, 0.05, 0),
+    ROT('neck', 0.02, 0, 0),
+    ROT('head', -0.06, 0.05, 0),
+    /* 오른손 장검은 살짝 앞으로, 왼팔은 방패를 세워 몸 앞을 가린다 */
+    ROT('shR', 0, 0, -0.07),
+    ROT('armR', -0.30, 0, 0.20),
+    ROT('elbR', -0.72, 0.10, 0),
+    ROT('handR', 0.66, -0.10, 0.18),
+    ROT('shL', 0.02, 0.10, 0.10),
+    ROT('armL', -0.68, -0.18, -0.16),
+    ROT('elbL', -1.24, 0, 0),
+    ROT('handL', 0.12, 0.30, -0.12),
+    ROT('thighR', -0.07, 0, 0.10),
+    ROT('shinR', 0.20, 0, 0),
+    ROT('footR', -0.13, 0, 0),
+    ROT('thighL', 0.07, 0, -0.10),
+    ROT('shinL', 0.18, 0, 0),
+    ROT('footL', -0.12, 0, 0)
+  ],
   knight: [
-    ROT('pelvis', 0.02, 0, 0),
-    ROT('spine', 0.08, 0.02, 0),
+    ROT('pelvis', 0.02, 0, 0),    ROT('spine', 0.08, 0.02, 0),
     ROT('chest', 0.02, -0.02, 0),
     ROT('neck', 0.03, 0, 0),
     ROT('head', -0.08, 0.02, 0),
@@ -143,6 +164,41 @@ const ATTACK = {
         root: [-0.02, 0.09]
       }, ease: 'inout' },
       { t: 0.92, j: {}, ease: 'inout' }
+    ]
+  },
+  elite: {
+    dur: 0.84,
+    keys: [
+      { t: 0.00, j: {} },
+      { t: 0.08, j: { spine: [0.14, 0.20, 0], chest: [0.05, 0.12, 0], armR: [-0.44, 0.16, 0.40], elbR: [-1.02, 0.1, 0], armL: [-0.52, -0.10, -0.24], root: [-0.012, -0.02] }, ease: 'inout' },
+      { t: 0.26, j: {
+        spine: [-0.10, 0.80, 0.09], chest: [-0.06, 0.46, 0.09], neck: [0, -0.32, 0], head: [0.02, -0.48, 0.04],
+        armR: [0.38, 0.36, 1.02], elbR: [-1.36, 0.1, 0], handR: [-0.58, -0.38, 0.42],
+        armL: [-0.62, -0.14, -0.34], elbL: [-1.48, 0, 0],
+        thighR: [0.24, 0, 0.10], shinR: [0.36, 0, 0], thighL: [-0.18, 0, -0.09], shinL: [0.28, 0, 0],
+        root: [-0.058, -0.05]
+      }, ease: 'out' },
+      { t: 0.38, j: {
+        spine: [0.38, -0.58, -0.07], chest: [0.20, -0.42, -0.07], neck: [0.04, 0.14, 0], head: [0.06, 0.10, 0],
+        armR: [-1.22, -0.24, 0.02], elbR: [-0.08, 0, 0], handR: [1.04, 0.22, -0.14],
+        armL: [-0.86, 0.08, -0.50], elbL: [-1.52, 0, 0],
+        thighR: [-0.50, 0, 0.11], shinR: [0.56, 0, 0], thighL: [0.30, 0, -0.10], shinL: [0.36, 0, 0],
+        root: [-0.09, 0.20]
+      }, ease: 'out' },
+      { t: 0.52, j: {
+        spine: [0.26, -0.82, -0.04], chest: [0.09, -0.40, 0], head: [0.02, 0.16, 0],
+        armR: [-0.50, -0.40, -0.32], elbR: [-0.66, 0, 0], handR: [0.44, 0.28, -0.26],
+        armL: [-0.72, 0.06, -0.44], elbL: [-1.40, 0, 0],
+        thighR: [-0.36, 0, 0.11], shinR: [0.42, 0, 0], thighL: [0.22, 0, -0.10],
+        root: [-0.058, 0.22]
+      }, ease: 'inout' },
+      { t: 0.66, j: {
+        spine: [0.10, -0.44, 0], chest: [0.02, -0.20, 0],
+        armR: [-0.54, -0.16, 0.02], elbR: [-1.02, 0, 0], handR: [0.60, 0.02, 0.04],
+        armL: [-0.60, 0, -0.26], elbL: [-1.20, 0, 0],
+        root: [-0.022, 0.10]
+      }, ease: 'inout' },
+      { t: 0.84, j: {}, ease: 'inout' }
     ]
   },
   knight: {
@@ -335,10 +391,12 @@ function applyLocomotion(p, cls, phase, move, t, u) {
 }
 
 /* ---------------------------------------------------------------------------
-   사망 모션 — 무릎 꿇고 쓰러진다
+   사망 모션 — 무릎 꿇고 쓰러진다 / 🩸 목이 베이면 잠시 서 있다가 머리 없이 쓰러진다
    --------------------------------------------------------------------------- */
 const KNEEL_T = 0.62, FALL_T = 0.40;
-export function applyDeath(p, cls, t) {
+export function applyDeath(p, cls, t, kind) {
+  if (kind === 'behead') { applyBehead(p, cls, t); return; }
+  if (kind === 'bleed') { applyBleed(p, cls, t); return; }
   // t: 사망 후 경과 시간(초)
   const heavy = cls === 'knight' ? 1.15 : cls === 'wizard' ? 0.92 : 1;
   const hitP = smoothstep(seg(t, 0, 0.16));
@@ -401,6 +459,90 @@ export function applyDeath(p, cls, t) {
   p.rootAdd[2] += 0.06 * sk;
 }
 
+/* 🩸 양팔·양다리를 잃은 사망 — 무릎을 꿇고 발악하다 과다출혈로 고꾸라진다 */
+function applyBleed(p, cls, t) {
+  const heavy = cls === 'knight' ? 1.12 : cls === 'wizard' ? 0.95 : 1;
+  const kneel = smoothstep(seg(t, 0.02, 0.34 * heavy));
+  R(p, J.pelvis, 0.26 * kneel, 0, 0);
+  R(p, J.thighR, -1.35 * kneel, 0, 0.12 * kneel);
+  R(p, J.thighL, -1.25 * kneel, 0, -0.12 * kneel);
+  R(p, J.shinR, 2.15 * kneel, 0, 0);
+  R(p, J.shinL, 2.05 * kneel, 0, 0);
+  R(p, J.footR, -0.60 * kneel, 0, 0);
+  R(p, J.footL, -0.55 * kneel, 0, 0);
+  R(p, J.spine, 0.52 * kneel, 0, 0);
+  R(p, J.chest, 0.24 * kneel, 0, 0);
+  R(p, J.head, 0.30 * kneel, 0, 0);
+  p.rootAdd[0] -= 0.62 * kneel;
+
+  // 발악 — 무릎 꿇은 채 상체를 부르르 떨며 팔을 휘젓는다
+  const th = seg(t, 0.18, 0.95 * heavy);
+  const osc = Math.sin(th * 17) * (1 - th);
+  const up = Math.max(0, osc), dn = Math.max(0, -osc);
+  R(p, J.spine, 0.06 * Math.abs(osc), 0.20 * osc, 0.10 * osc);
+  R(p, J.chest, 0, 0.10 * osc, 0);
+  R(p, J.head, -0.10 * Math.abs(osc), -0.18 * osc, 0);
+  R(p, J.armR, -0.90 * up, 0, 0.55 * up);
+  R(p, J.armL, -0.85 * dn, 0, -0.55 * dn);
+  R(p, J.elbR, -0.70 * Math.abs(osc), 0, 0);
+  R(p, J.elbL, -0.70 * Math.abs(osc), 0, 0);
+
+  // 앞으로 고꾸라진다
+  const fall = easeInCubic(seg(t, 0.95 * heavy, 1.45 * heavy));
+  p.rot[0] += fall * 1.25;
+  p.rootAdd[0] -= 0.12 * fall;
+  R(p, J.spine, 0.20 * fall, 0, 0);
+  R(p, J.armR, -0.30 * fall, 0, -0.40 * fall);
+  R(p, J.armL, -0.26 * fall, 0, 0.40 * fall);
+}
+
+/* 🩸 목이 대각선으로 베인 사망 — 몸이 잠시 서서 휘청이다가 머리 없이 쓰러진다 */
+function applyBehead(p, cls, t) {
+  const heavy = cls === 'knight' ? 1.16 : cls === 'wizard' ? 0.94 : 1;
+  const hitP = smoothstep(seg(t, 0, 0.15));
+  // 베인 순간 — 목이 젖혀지고 몸이 굳는다
+  R(p, J.spine, -0.30 * hitP, 0.12 * hitP, 0.07 * hitP);
+  R(p, J.chest, -0.14 * hitP, 0.07 * hitP, 0);
+  R(p, J.pelvis, 0.05 * hitP, 0, 0);
+  R(p, J.armR, -0.34 * hitP, 0, 0.42 * hitP);
+  R(p, J.armL, -0.42 * hitP, 0, -0.46 * hitP);
+  R(p, J.elbR, -0.40 * hitP, 0, 0);
+  R(p, J.elbL, -0.46 * hitP, 0, 0);
+  R(p, J.handR, 0.30 * hitP, 0, 0);
+  R(p, J.handL, 0.30 * hitP, 0, 0);
+  p.rootAdd[0] -= 0.03 * hitP;
+
+  // 서 있는 동안의 휘청임 (0.15~0.85초)
+  const swayT = seg(t, 0.15, 0.85 * heavy);
+  const sway = Math.sin(swayT * 5.4) * 0.055 * (1 - swayT * 0.7);
+  R(p, J.spine, 0.10 * swayT + sway * 0.8, sway * 1.6, sway * 0.6);
+  R(p, J.chest, 0.05 * swayT, sway * 0.7, 0);
+  R(p, J.pelvis, 0, sway * 0.9, -sway * 0.4);
+  R(p, J.armR, 0.20 * swayT + sway * 2.0, 0, -0.10 * swayT);
+  R(p, J.armL, 0.24 * swayT - sway * 2.0, 0, 0.10 * swayT);
+  p.rootAdd[0] -= 0.035 * swayT;
+  p.rootAdd[2] += sway * 0.30;
+
+  // 무릎이 풀리며 앞으로 꺾어지고, 머리 없는 몸이 바닥에 내려앉는다
+  const collapse = easeInCubic(seg(t, 0.70 * heavy, 1.16 * heavy));
+  const kneeB = smoothstep(seg(t, 0.60 * heavy, 0.92 * heavy));
+  R(p, J.thighR, -1.05 * kneeB, 0, 0.12 * kneeB);
+  R(p, J.thighL, -0.92 * kneeB, 0, -0.12 * kneeB);
+  R(p, J.shinR, 1.85 * kneeB, 0, 0);
+  R(p, J.shinL, 1.70 * kneeB, 0, 0);
+  R(p, J.footR, -0.50 * kneeB, 0, 0);
+  R(p, J.footL, -0.44 * kneeB, 0, 0);
+  p.rootAdd[0] -= 0.46 * kneeB;
+  p.rot[0] += collapse * 1.52;
+  R(p, J.spine, 0.30 * collapse, 0.10 * collapse, 0);
+  R(p, J.armR, -0.30 * collapse, 0, -0.60 * collapse);
+  R(p, J.armL, -0.26 * collapse, 0, 0.60 * collapse);
+  R(p, J.elbR, -0.44 * collapse, 0, 0);
+  R(p, J.elbL, -0.40 * collapse, 0, 0);
+  p.rootAdd[0] -= 0.05 * collapse;
+  p.rootAdd[2] += 0.10 * collapse;
+}
+
 /* ---------------------------------------------------------------------------
    메인 포즈 계산
    --------------------------------------------------------------------------- */
@@ -434,9 +576,20 @@ export function computePose(u, t, dt) {
   // 공격
   if (u.attackT !== undefined && u.attackT >= 0) {
     const def = ATTACK[cls] || ATTACK.soldier;
-    const s = CLASSES[cls] || CLASSES.soldier;
-    const norm = (u.attackT / Math.max(0.001, s.cycle)) * def.dur;
+    const cyc = u.cycle || s.cycle;          // 팔을 잃으면 주기가 길어진다
+    const norm = (u.attackT / Math.max(0.001, cyc)) * def.dur;
     if (norm <= def.dur) applyKeys(p, cls, Math.min(norm, def.dur));
+    // 🩸 오른팔을 잃었으면 남은 왼팔로 크게 가로지르며 몸을 비튼다
+    if (u.severed && u.severed.armR) {
+      const k = clamp(norm / def.dur, 0, 1);
+      const sw = Math.sin(k * Math.PI);
+      R(p, J.shL, -0.20 * sw, 0.55 * sw, 0.10 * sw);
+      R(p, J.armL, -1.35 * sw, -0.55 * sw, 0.45 * sw);
+      R(p, J.elbL, -0.85 * sw, 0, 0);
+      R(p, J.handL, 0.30 * sw, -0.20 * sw, 0);
+      R(p, J.spine, 0, -0.24 * sw, 0.06 * sw);
+      R(p, J.chest, 0, -0.13 * sw, 0);
+    }
   }
 
   // 피격 경직 — 맞은 방향으로 젖혀지고 무릎이 꿇리는 반동
@@ -486,6 +639,16 @@ export function computePose(u, t, dt) {
       R(p, J.armL, -0.52, -0.34, 0.34);
       R(p, J.elbL, -1.30, 0, 0);
       R(p, J.handL, 0.10, 0.24, -0.16);
+    } else if (cls === 'elite') {
+      // 🛡️ 방패를 얼굴 앞으로 당겨 세우고 장검을 방패 위에 얹는다
+      R(p, J.shL, 0.06, 0.34, 0.06);
+      R(p, J.armL, -1.34, -0.30, 0.10);
+      R(p, J.elbL, -1.72, 0, 0);
+      R(p, J.handL, 0.0, 0.55, -0.10);
+      R(p, J.shR, 0.10, -0.22, -0.16);
+      R(p, J.armR, -1.16, -0.26, -0.44);
+      R(p, J.elbR, -1.32, 0, 0);
+      R(p, J.handR, 0.10, -1.02, 0.36);
     } else if (cls === 'knight') {
       // 망치 자루를 가슴 앞에 비스듬히 받치고 어깨로 밀어내는 자세
       R(p, J.shR, 0.14, -0.30, -0.20);
@@ -526,9 +689,42 @@ export function computePose(u, t, dt) {
     p.rootAdd[0] -= 0.12 * lunge;
   }
 
+  // 🩸 한쪽 팔을 잃은 전용 자세 — 어깨를 말고 몸을 비틀어 균형을 잡는다
+  if (u.armsLost === 1) {
+    const lostR = !!u.severed.armR;
+    R(p, lostR ? J.shR : J.shL, 0.12, lostR ? 0.26 : -0.26, lostR ? 0.34 : -0.34);
+    R(p, lostR ? J.armR : J.armL, 0.34, 0, lostR ? 0.26 : -0.26);
+    R(p, lostR ? J.elbR : J.elbL, 0.30, 0, 0);
+    R(p, J.pelvis, 0, lostR ? -0.06 : 0.06, lostR ? 0.04 : -0.04);
+    R(p, J.spine, 0.04, lostR ? -0.17 : 0.17, lostR ? -0.05 : 0.05);
+    R(p, J.chest, 0, lostR ? 0.10 : -0.10, 0);
+    R(p, J.neck, 0, lostR ? 0.08 : -0.08, 0);
+    R(p, J.head, 0, lostR ? 0.12 : -0.12, 0);
+  }
+  // 🩸 한쪽 다리를 잃은 전용 모션 — 남은 다리로 깡충 뛰며 절뚝인다
+  if (u.legsLost === 1) {
+    const lostR = !!u.severed.legR;
+    const ph = u.walkPhase || 0;
+    const bob = Math.abs(Math.sin(ph * 0.5)) * clamp(move, 0, 1);
+    const sway = Math.sin(ph * 0.5) * clamp(move, 0, 1);
+    R(p, J.pelvis, 0.10 * move, sway * 0.10, (lostR ? -0.26 : 0.26) * move);
+    R(p, J.spine, 0.10 * move, -sway * 0.12, (lostR ? 0.16 : -0.16) * move);
+    R(p, J.chest, 0.03 * move, 0, (lostR ? 0.10 : -0.10) * move);
+    R(p, J.neck, -0.06 * move, 0, 0);
+    R(p, J.head, -0.05 * move - bob * 0.06, sway * 0.10, (lostR ? -0.10 : 0.10) * move);
+    // 남은 다리를 크게 접었다 편다
+    R(p, lostR ? J.thighL : J.thighR, -0.80 * bob, 0, 0);
+    R(p, lostR ? J.shinL : J.shinR, 1.15 * bob, 0, 0);
+    R(p, lostR ? J.footL : J.footR, -0.40 * bob, 0, 0);
+    // 잘린 쪽 어깨·몸이 그쪽으로 흘러내린다
+    p.rootAdd[0] += bob * 0.11 - 0.13;
+    p.rootAdd[2] += (lostR ? 0.02 : -0.02) * move;
+  }
+
   // 사망
   if (u.dead) {
-    applyDeath(p, cls, u.deadT || 0);
+    const kind = u.behead ? 'behead' : (u.deathKind === 'bleed' ? 'bleed' : null);
+    applyDeath(p, cls, u.deadT || 0, kind);
   }
 
   // 루트 위치·회전

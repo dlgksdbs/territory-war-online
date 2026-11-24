@@ -127,12 +127,12 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 .army-col.ally .army-col-head { color: #8fd0ff; }
 .army-col.enemy .army-col-head { color: #ff9d8c; }
 .army-col-head i { font-style: normal; font-size: 8px; vertical-align: 1px; }
-.row { display: grid; grid-template-columns: 44px 1fr 46px; align-items: center; gap: 5px; margin: 5px 0; }
-.row label { font-size: 9.5px; color: #c9d2e0; white-space: nowrap; display: flex; align-items: center; gap: 3px; }
+.row { display: grid; grid-template-columns: 52px 1fr 40px; align-items: center; gap: 4px; margin: 5px 0; }
+.row label { font-size: 9px; color: #c9d2e0; white-space: nowrap; display: flex; align-items: center; gap: 2px; letter-spacing: -0.01em; }
 .ru-icon { font-size: 10px; }
 .row output { font-size: 11px; text-align: right; color: #ffe6b8; font-variant-numeric: tabular-nums; font-weight: 600; }
 .row input.num {
-  width: 100%; height: 20px; padding: 0 3px; text-align: center;
+  width: 100%; height: 20px; padding: 0 2px; text-align: center;
   font-size: 10.5px; font-weight: 600; color: #ffe6b8; font-variant-numeric: tabular-nums;
   background: rgba(10, 14, 20, .62); border: 1px solid rgba(232, 194, 122, .32); border-radius: 5px;
   outline: none; -moz-appearance: textfield;
@@ -462,6 +462,19 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   color: #08131f; }
 .guard-btn.is-on { display: flex; }
 .guard-btn.is-held { filter: brightness(1.25); box-shadow: 0 0 18px rgba(150, 210, 255, .75), inset 0 0 10px rgba(255,255,255,.5); transform: scale(1.04); }
+/* 🛡️ 고급 병사 방패 충전 표시 */
+.gc-num {
+  position: absolute; right: 3px; top: 3px; min-width: 16px; height: 14px; padding: 0 3px;
+  display: grid; place-items: center; border-radius: 7px;
+  font-size: 8px; font-weight: 800; letter-spacing: 0; color: #0b1118;
+  background: linear-gradient(180deg, #bfe6ff, #7fb6e8);
+  box-shadow: 0 1px 5px rgba(0,0,0,.45);
+}
+.guard-btn.is-empty { border-color: rgba(255, 130, 110, .55); }
+.guard-btn.is-empty .gc-num {
+  background: linear-gradient(180deg, #ff9a86, #b04a3a); color: #1a0806;
+}
+.class-card[data-cls="elite"] .cc-icon { filter: drop-shadow(0 0 7px rgba(232,194,122,.55)); }
 
 /* 가로 모드 */
 @media (orientation: landscape) and (max-height: 520px) {
@@ -495,8 +508,20 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   .brand-text h1 { font-size: 16px; }
   .growth-badge { padding: 5px 7px; }
   .army-grid { gap: 6px; }
-  .row { grid-template-columns: 40px 1fr 26px; }
+  .row { grid-template-columns: 50px 1fr 34px; gap: 3px; }
   .spell-btn { width: 46px; height: 46px; }
   .attack-btn { width: 78px; height: 78px; }
   .joy { width: 96px; height: 96px; }
+}
+
+/* 좁은 화면(폰 390px) — 브랜드 부제와 성장 뱃지가 겹치지 않게 */
+@media (max-width: 430px) {
+  .brand-text p { display: none; }
+  .gb-label { display: none; }
+  .growth-badge { padding: 4px 7px; gap: 3px; }
+  .growth-badge strong { font-size: 14px; }
+  .brand-mark { width: 36px; height: 36px; flex: 0 0 36px; font-size: 19px; }
+  .brand-text h1 { font-size: 15px; }
+  .foot-note { font-size: 9px; gap: 6px; }
+  .foot-note span { font-size: 9px; }
 }

@@ -306,15 +306,63 @@ export class FX {
       this.fireballs.push({ g, light: null, used: false });
     }
 
-    /* 번개 줄기 */
-    this.bolts = [];
-    for (let i = 0; i < 8; i++) {
-      const g = new THREE.Group();
-      g.visible = false;
-      scene.add(g);
-      this.bolts.push({ g, life: 0, max: 0.3 });
+    /* 번개 줄기 — 미리 잡아 둔 선분 버퍼에 점만 다시 적는다 (예전엔 시전마다 지오메트리를 새로 만들어 GPU 메모리가 샜다) */
+    this.boltMaxSeg = 420;
+    this.boltPos = new Float32Array(this.boltMaxSeg * 6);
+    const boltGeo = new THREE.BufferGeometry();
+    boltGeo.setAttribute('position', new THREE.BufferAttribute(this.boltPos, 3).setUsage(THREE.DynamicDrawUsage));
+    boltGeo.setDrawRange(0, 0);
+    this.boltMatCore = new THREE.LineBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    this.boltMatGlow = new THREE.LineBasicMaterial({
+      color: 0x9fdcff, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    this.boltCore = new THREE.LineSegments(boltGeo, this.boltMatCore);
+    this.boltGlow = new THREE.LineSegments(boltGeo, this.boltMatGlow);
+    for (const b of [this.boltCore, this.boltGlow]) {
+      b.frustumCulled = false; b.renderOrder = 6; b.visible = false; scene.add(b);
     }
-    this.boltIdx = 0;
+    this.boltGeo = boltGeo;
+    this.boltLife = 0; this.boltMax = 0.28;
+
+    /* 🩸 절단 파츠 풀 — 잘린 팔·다리·머리가 튀어오른다 (인스턴스 3콜 · 수명 6초) */
+    const limbMat = new THREE.MeshStandardMaterial({
+      color: 0x9e7657, roughness: 0.72, metalness: 0.05, envMapIntensity: 0.5
+    });
+    const limbGeo = {
+      arm: new THREE.CapsuleGeometry(0.062, 0.28, 3, 8),
+      leg: new THREE.CapsuleGeometry(0.078, 0.34, 3, 8),
+      head: new THREE.SphereGeometry(0.125, 10, 8)
+    };
+    this.limbPool = {};
+    for (const k of ['arm', 'leg', 'head']) {
+      const cap = k === 'head' ? 12 : 24;
+      const m = new THREE.InstancedMesh(limbGeo[k], limbMat, cap);
+      m.frustumCulled = false;
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      const hid = new THREE.Matrix4().makeScale(0, 0, 0);
+      for (let i = 0; i < cap; i++) m.setMatrixAt(i, hid);
+      scene.add(m);
+      this.limbPool[k] = { mesh: m, cap, data: [], idx: 0 };
+    }
+    /* 목에서 뿜어지는 피 분수 (머리 베임 — 몸이 서 있는 동안) */
+    this.jets = [];
+    /* 발밑에 고이는 핏물 */
+    const poolTex = glowTexture('rgba(150,10,12,0.95)', 'rgba(90,4,6,0.0)');
+    this.bloodPools = [];
+    for (let i = 0; i < 18; i++) {
+      const m = new THREE.Mesh(new THREE.CircleGeometry(0.5, 14), new THREE.MeshBasicMaterial({
+        map: poolTex, transparent: true, opacity: 0, depthWrite: false, color: 0x8c0d10
+      }));
+      m.rotation.x = -Math.PI / 2;
+      m.position.y = 0.028;
+      m.visible = false;
+      m.renderOrder = 2;
+      scene.add(m);
+      this.bloodPools.push({ m, life: 0, max: 12, r: 1 });
+    }
+    this.bloodPoolIdx = 0;
 
     /* 얼음 파편 (인스턴스) */
     const shardGeo = new THREE.ConeGeometry(0.16, 0.9, 5);
@@ -457,6 +505,7 @@ export class FX {
         case 'playerDown': this.hitFlash = 1; break;
         case 'levelUp': this.onLevelUp(e, battle); break;
         case 'petalDash': this.onPetalDash(e, battle); break;
+        case 'sever': this.onSever(e, battle); break;
         default: break;
       }
     }
@@ -482,17 +531,9 @@ export class FX {
     // 상흔
     this.spawnWound(t, heavy ? 'crush' : 'blade', e.angle);
     if (petal) {
-      for (let i = 0; i < 22; i++) {
-        const a2 = this.rng() * TAU;
-        this.petals.spawn({
-          x: px, y: py, z: pz,
-          vx: Math.cos(a2) * (0.5 + this.rng() * 3.0), vy: 0.4 + this.rng() * 2.4, vz: Math.sin(a2) * (0.5 + this.rng() * 3.0),
-          life: 0.7 + this.rng() * 0.9, size: 0.07 + this.rng() * 0.08,
-          r: 1, g: 0.82, b: 0.92, alpha: 0.95, gravity: -3.2, drag: 1.4, grow: 0.05, fade: 1.1
-        });
-      }
-      this.spawnArc(px, py, pz, e.angle || 0, 2.1, 'blade', 0.16, 0xffb4d8);
-      this.flash(px, py, pz, 0.8, 0xffd0e8, 0.1);
+      this.petalBurst(px, py, pz, e.angle || 0, 30, 1.15);
+      this.spawnArc(px, py, pz, e.angle || 0, 2.2, 'blade', 0.17, 0xffb4d8);
+      this.flash(px, py, pz, 0.9, 0xffd0e8, 0.11);
     }
     // 불꽃
     const n = near ? (heavy ? 30 : 18) : (heavy ? 12 : 7);
@@ -564,6 +605,8 @@ export class FX {
       }
     }
     if (u.isPlayer) this.addShake(0.5);
+    // 🩸 쓰러진 자리에 피가 흥건하게 고인다 (베임이면 더 크게)
+    if (dist < 90) this.bloodPool(px, pz, (e.behead ? 1.35 : 0.95) + (u.radius || 0.4) * 0.8);
   }
 
   onSlam(e, battle) {
@@ -735,71 +778,73 @@ export class FX {
   onLightning(e, battle) {
     const targets = e.targets || [];
     const u = e.unit;
-    if (!targets.length) return;
-    const color = 0xbfe8ff;
+    if (!targets.length || !u) return;
+    const rng = this.rng;
+    const pos = this.boltPos;
+    const maxV = this.boltMaxSeg * 2;
+    let vi = 0;
+    const push = (ax, ay, az, bx, by, bz) => {
+      if (vi + 2 > maxV) return;
+      pos[vi * 3] = ax; pos[vi * 3 + 1] = ay; pos[vi * 3 + 2] = az; vi++;
+      pos[vi * 3] = bx; pos[vi * 3 + 1] = by; pos[vi * 3 + 2] = bz; vi++;
+    };
+    this.unitPoint(u, 'handL', 0, 1.0, 0.02, _v1);
+    const hx = _v1.x, hy = _v1.y, hz = _v1.z;
     let prev = null;
-    const from = this.unitPoint(u, 'handL', 0, 1.0, 0.02, new THREE.Vector3());
-    const b = this.bolts[this.boltIdx++ % this.bolts.length];
-    b.g.clear();
-    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
-    const mat2 = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
     for (let ti = 0; ti < targets.length; ti++) {
       const t = targets[ti].o;
       const tx = t.x, tz = t.z, ty = 1.15 * (t.scale || 1);
-      // 하늘에서 내리꽂는 줄기
-      const pts = [];
-      const start = new THREE.Vector3(tx + (this.rng() - 0.5) * 3, 17 + this.rng() * 4, tz + (this.rng() - 0.5) * 3);
-      const mid = new THREE.Vector3((start.x + tx) / 2, 8, (start.z + tz) / 2);
-      const q0 = new THREE.QuadraticBezierCurve3(start, mid, new THREE.Vector3(tx, ty, tz));
-      const N = 16;
-      for (let i = 0; i <= N; i++) {
-        const p = q0.getPoint(i / N);
-        p.x += (this.rng() - 0.5) * 0.9;
-        p.z += (this.rng() - 0.5) * 0.9;
-        pts.push(p);
+      // 하늘에서 내리꽂는 줄기 — 완만한 포물선을 따라 지그재그로
+      const sx = tx + (rng() - 0.5) * 3, sy = 17 + rng() * 4, sz = tz + (rng() - 0.5) * 3;
+      const mx = (sx + tx) / 2, my = 8, mz = (sz + tz) / 2;
+      const N = 14;
+      let px = sx, py = sy, pz = sz;
+      for (let i = 1; i <= N; i++) {
+        const k = i / N, ik = 1 - k;
+        let qx = ik * ik * sx + 2 * ik * k * mx + k * k * tx;
+        let qy = ik * ik * sy + 2 * ik * k * my + k * k * ty;
+        let qz = ik * ik * sz + 2 * ik * k * mz + k * k * tz;
+        if (i < N) { qx += (rng() - 0.5) * 0.9; qz += (rng() - 0.5) * 0.9; }
+        push(px, py, pz, qx, qy, qz);
+        px = qx; py = qy; pz = qz;
       }
-      const lg = new THREE.BufferGeometry().setFromPoints(pts);
-      const line = new THREE.Line(lg, mat);
-      b.g.add(line);
-      const line2 = new THREE.Line(lg, mat2);
-      line2.scale.setScalar(1.0);
-      b.g.add(line2);
-      // 연쇄
+      // 연쇄 — 앞 대상에서 이 대상으로 짧은 번개
       if (prev) {
-        const cp = [];
-        for (let i = 0; i <= 8; i++) {
-          const k = i / 8;
-          cp.push(new THREE.Vector3(
-            lerp(prev.x, tx, k) + (this.rng() - 0.5) * 0.5,
-            lerp(prev.y || 1.15, ty, k) + Math.sin(k * Math.PI) * 0.6,
-            lerp(prev.z, tz, k) + (this.rng() - 0.5) * 0.5));
+        let ax = prev.x, ay = prev.y, az = prev.z;
+        for (let i = 1; i <= 7; i++) {
+          const k = i / 7;
+          const qx = lerp(prev.x, tx, k) + (rng() - 0.5) * 0.5;
+          const qy = lerp(prev.y, ty, k) + Math.sin(k * Math.PI) * 0.6;
+          const qz = lerp(prev.z, tz, k) + (rng() - 0.5) * 0.5;
+          push(ax, ay, az, qx, qy, qz);
+          ax = qx; ay = qy; az = qz;
         }
-        b.g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(cp), mat));
       }
-      prev = { x: tx, z: tz, y: ty };
+      prev = { x: tx, y: ty, z: tz };
       // 대상 주변 스파크
-      for (let i = 0; i < 18; i++) {
-        const a = this.rng() * TAU;
+      for (let i = 0; i < 16; i++) {
+        const a = rng() * TAU;
         this.sparks.spawn({
-          x: tx, y: ty + (this.rng() - 0.5) * 0.8, z: tz,
-          vx: Math.cos(a) * (1 + this.rng() * 4), vy: 0.3 + this.rng() * 3, vz: Math.sin(a) * (1 + this.rng() * 4),
-          life: 0.2 + this.rng() * 0.35, size: 0.06 + this.rng() * 0.1,
+          x: tx, y: ty + (rng() - 0.5) * 0.8, z: tz,
+          vx: Math.cos(a) * (1 + rng() * 4), vy: 0.3 + rng() * 3, vz: Math.sin(a) * (1 + rng() * 4),
+          life: 0.2 + rng() * 0.35, size: 0.06 + rng() * 0.1,
           r: 0.7, g: 0.95, b: 1, gravity: -6, drag: 2.2
         });
       }
       this.flash(tx, ty, tz, 1.9, 0xcfefff, 0.18);
       this.flashGround(tx, tz, 1.0);
     }
-    // 시작 손에서도
-    b.g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
-      from, new THREE.Vector3(from.x, from.y + 3, from.z)]), mat));
-    b.life = 0; b.max = 0.28;
-    b.g.visible = true;
+    // 시전 손에서 하늘로 솟는 줄기
+    push(hx, hy, hz, hx + (rng() - 0.5) * 0.4, hy + 3, hz + (rng() - 0.5) * 0.4);
+    this.boltGeo.setDrawRange(0, vi);
+    this.boltGeo.attributes.position.needsUpdate = true;
+    this.boltLife = 0;
+    this.boltMax = 0.30;
+    this.boltCore.visible = true;
+    this.boltGlow.visible = true;
+    this.boltGeo.computeBoundingSphere();
     this.addShake(0.22);
-    this.lightFlash(prev.x, 2, prev.z, 0xaad8ff, 0.25, 55);
-    // 다 쓴 지오메트리는 잠시 후 정리
-    b.deadlines = b.deadlines || [];
-    b.deadlines.push({ t: this.time + 1.2, g: b.g });
+    if (prev) this.lightFlash(prev.x, 2, prev.z, 0xaad8ff, 0.25, 55);
   }
 
   onIce(e, battle) {
@@ -853,20 +898,10 @@ export class FX {
     const u = e.unit;
     if (!u) return;
     this.addShake(u.isPlayer ? 0.18 : 0.08);
-    for (let i = 0; i < 22; i++) {
-      const a = this.rng() * TAU;
-      this.petals.spawn({
-        x: u.x + Math.cos(a) * 0.5, y: 0.5 + this.rng() * 1.0, z: u.z + Math.sin(a) * 0.5,
-        vx: Math.cos(a) * (0.6 + this.rng() * 1.8) + Math.sin(u.yaw) * 2.2,
-        vy: 0.6 + this.rng() * 2.0,
-        vz: Math.sin(a) * (0.6 + this.rng() * 1.8) + Math.cos(u.yaw) * 2.2,
-        life: 0.8 + this.rng() * 0.8, size: 0.07 + this.rng() * 0.08,
-        r: 1, g: 0.8, b: 0.92, alpha: 0.95, gravity: -3.0, drag: 1.2, grow: 0.04, fade: 1.1
-      });
-    }
+    this.petalBurst(u.x + Math.sin(u.yaw) * 0.6, 0.95, u.z + Math.cos(u.yaw) * 0.6, u.yaw, 34, 1.1);
     this.ring(u.x, 0.06, u.z, 2.2, 0xff9ec8, 0.45);
     // 돌진 궤적을 따라 초승달 검기가 연달아 피어난다
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       const d = 0.9 + i * 1.5;
       this.spawnArc(u.x + Math.sin(u.yaw) * d, 0.75 + i * 0.12, u.z + Math.cos(u.yaw) * d, u.yaw, 1.9 + i * 0.35, 'blade', 0.2, 0xffb4d8);
     }
@@ -885,6 +920,103 @@ export class FX {
         vx: Math.cos(a) * 0.7, vy: 1.2 + this.rng() * 1.2, vz: Math.sin(a) * 0.7,
         life: 0.5 + this.rng() * 0.4, size: 0.05 + this.rng() * 0.08,
         r: 1, g: 0.82, b: 0.4, gravity: 1.4, drag: 2.4
+      });
+    }
+  }
+
+  /* 🩸 부위 절단 — 잘린 파츠가 피를 뿌리며 떨어지고, 바닥에 고인다 */
+  onSever(e, battle) {
+    const part = e.part;
+    const kind = part === 'head' ? 'head' : (part === 'armL' || part === 'armR') ? 'arm' : 'leg';
+    const yaw = e.yaw || 0;
+    const side = e.side || 1;
+    const px = e.x, py = e.y, pz = e.z;
+    const dist = this.camera.position.distanceTo(_v1.set(px, py, pz));
+    const near = dist < 40;
+    // 베인 쪽 바깥으로 튀어나간다
+    const ox = Math.cos(yaw) * side, oz = -Math.sin(yaw) * side;
+    const out = (kind === 'head' ? 1.6 : 2.2) + this.rng() * 2.4;
+    this.spawnLimb(kind, px + ox * 0.18, py, pz + oz * 0.18,
+      ox * out + Math.sin(yaw) * 0.8, kind === 'head' ? 1.6 + this.rng() * 1.6 : 2.2 + this.rng() * 2.0,
+      oz * out + Math.cos(yaw) * 0.8, yaw, kind === 'head' ? 1 : 1);
+    // 피 — 베인 자리에서
+    const n = kind === 'head' ? 46 : 28;
+    for (let i = 0; i < n; i++) {
+      const a = this.rng() * TAU;
+      const sp = kind === 'head' ? 1.6 + this.rng() * 5.2 : 0.8 + this.rng() * 3.4;
+      this.sparks.spawn({
+        x: px + (this.rng() - 0.5) * 0.2, y: py + (this.rng() - 0.5) * 0.2, z: pz + (this.rng() - 0.5) * 0.2,
+        vx: Math.cos(a) * sp + ox * 1.6, vy: 0.6 + this.rng() * (kind === 'head' ? 4.6 : 2.8), vz: Math.sin(a) * sp + oz * 1.6,
+        life: 0.25 + this.rng() * 0.5, size: 0.045 + this.rng() * 0.075,
+        r: 0.62, g: 0.03, b: 0.04, gravity: -11, drag: 1.9, fade: 1.4
+      });
+    }
+    for (let i = 0; i < (near ? 10 : 4); i++) {
+      const a = this.rng() * TAU;
+      this.dust.spawn({
+        x: px, y: py, z: pz,
+        vx: Math.cos(a) * (0.4 + this.rng() * 1.6), vy: 0.1 + this.rng() * 1.2, vz: Math.sin(a) * (0.4 + this.rng() * 1.6),
+        life: 0.4 + this.rng() * 0.5, size: 0.18 + this.rng() * 0.34,
+        r: 0.30, g: 0.02, b: 0.02, alpha: 0.55, gravity: -5, drag: 2.0, grow: 0.6, fade: 1.3
+      });
+    }
+    this.bloodPool(px, pz, kind === 'head' ? 1.15 : 0.8);
+    this.flash(px, py, pz, kind === 'head' ? 1.2 : 0.8, 0xff5a5a, 0.10);
+    if (kind === 'head') {
+      // 목에서 뿜어지는 피 — 몸이 서 있는 동안 계속
+      this.jets.push({ x: px, y: py, z: pz, t: 0, life: 0.95, acc: 0 });
+      this.addShake(0.14);
+    }
+  }
+
+  spawnLimb(kind, x, y, z, vx, vy, vz, yaw, scale) {
+    const pool = this.limbPool[kind];
+    if (!pool) return;
+    const i = pool.idx % pool.cap;
+    pool.idx++;
+    let d = pool.data[i];
+    if (!d) { d = pool.data[i] = {}; }
+    d.x = x; d.y = y; d.z = z;
+    d.vx = vx; d.vy = vy; d.vz = vz;
+    d.rx = this.rng() * TAU; d.ry = yaw + this.rng() * TAU; d.rz = this.rng() * TAU;
+    d.sx = (this.rng() - 0.5) * 14; d.sy = (this.rng() - 0.5) * 14; d.sz = (this.rng() - 0.5) * 14;
+    d.life = 0; d.max = 6.5; d.s = scale || 1; d.bounced = 0;
+  }
+
+  bloodPool(x, z, r) {
+    const p = this.bloodPools[this.bloodPoolIdx++ % this.bloodPools.length];
+    p.m.position.set(x, 0.028 + (this.rng() - 0.5) * 0.004, z);
+    p.m.rotation.z = this.rng() * TAU;
+    p.m.scale.setScalar(r * 0.6);
+    p.m.visible = true;
+    p.m.material.opacity = 0.78;
+    p.life = 0; p.max = 12; p.r = r;
+  }
+
+  /* 🌸 매화 꽃잎 — 나선으로 휘날리며 피어오르는 꽃잎 다발 */
+  petalBurst(x, y, z, yaw, n, power) {
+    const rng = this.rng;
+    const pw = power === undefined ? 1 : power;
+    for (let i = 0; i < n; i++) {
+      const a = yaw + (rng() - 0.5) * 2.4 + (i / Math.max(1, n)) * 3.2;
+      const sp = (0.7 + rng() * 2.4) * pw;
+      const up = (0.5 + rng() * 2.4) * pw;
+      this.petals.spawn({
+        x: x + (rng() - 0.5) * 0.4, y: y + (rng() - 0.5) * 0.5, z: z + (rng() - 0.5) * 0.4,
+        vx: Math.sin(a) * sp, vy: up, vz: Math.cos(a) * sp,
+        life: 1.0 + rng() * 1.2, size: 0.085 + rng() * 0.105,
+        r: 1, g: 0.80 + rng() * 0.14, b: 0.90 + rng() * 0.08,
+        alpha: 0.96, gravity: -2.1, drag: 1.05, grow: 0.02, fade: 0.85
+      });
+    }
+    // 꽃잎 사이로 새어나오는 분홍빛 안개
+    for (let i = 0; i < Math.round(n * 0.35); i++) {
+      const a = rng() * TAU;
+      this.mist.spawn({
+        x: x + Math.cos(a) * 0.3, y: y + (rng() - 0.5) * 0.4, z: z + Math.sin(a) * 0.3,
+        vx: Math.cos(a) * 0.8, vy: 0.35 + rng() * 0.8, vz: Math.sin(a) * 0.8,
+        life: 0.55 + rng() * 0.6, size: 0.22 + rng() * 0.35,
+        r: 1, g: 0.72, b: 0.86, gravity: 0.1, drag: 1.7, grow: 0.7, fade: 1.3
       });
     }
   }
@@ -1021,6 +1153,8 @@ export class FX {
   }
 
   spawnWound(unit, kind, angle) {
+    // 상세 모델로 그려지는 유닛에만 상흔을 붙인다 (실루엣 유닛은 관절 행렬이 없어 엉뚱한 곳에 그려진다)
+    if (!unit || unit.dslot === undefined || unit.dslot < 0) return;
     const w = this.wounds[this.woundIdx++ % this.wounds.length];
     w.unit = unit;
     w.life = 0;
@@ -1230,24 +1364,12 @@ export class FX {
     for (let i = fi; i < this.fireballs.length; i++) this.fireballs[i].g.visible = false;
 
     /* 번개 */
-    for (const b of this.bolts) {
-      if (b.life > b.max) { if (b.g.visible) b.g.visible = false; continue; }
-      b.life += dt;
-      const k = clamp(1 - b.life / b.max, 0, 1);
-      b.g.traverse((o) => { if (o.isLine) o.material.opacity = k; });
-      if (b.life > b.max) b.g.visible = false;
-    }
-    for (const b of this.bolts) {
-      if (b.deadlines) {
-        b.deadlines = b.deadlines.filter((d) => {
-          if (this.time > d.t) {
-            d.g.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
-            d.g.clear();
-            return false;
-          }
-          return true;
-        });
-      }
+    if (this.boltLife <= this.boltMax) {
+      this.boltLife += dt;
+      const k = clamp(1 - this.boltLife / this.boltMax, 0, 1);
+      this.boltMatCore.opacity = 0.95 * k;
+      this.boltMatGlow.opacity = 0.55 * k * k;
+      if (this.boltLife > this.boltMax) { this.boltCore.visible = false; this.boltGlow.visible = false; }
     }
 
     /* 얼음 파편 */
@@ -1308,6 +1430,88 @@ export class FX {
       for (; i < 70; i++) this.debris.setMatrixAt(i, _hiddenM4);
       this.debris.instanceMatrix.needsUpdate = true;
       this.debrisData = this.debrisData.filter((d) => d.life < 1.6);
+    }
+
+    /* 🩸 절단 파츠 — 중력으로 떨어져 튕기고, 6.5초 뒤 사라진다 */
+    for (const k of ['arm', 'leg', 'head']) {
+      const pool = this.limbPool[k];
+      if (!pool) continue;
+      const mesh = pool.mesh;
+      let n = 0;
+      for (let i = 0; i < pool.cap; i++) {
+        const d = pool.data[i];
+        if (!d || d.life > d.max) continue;
+        d.life += dt;
+        d.vy -= 17 * dt;
+        d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt;
+        if (d.y < 0.07) {
+          d.y = 0.07;
+          if (d.bounced < 3) { d.vy *= -0.32; d.vx *= 0.6; d.vz *= 0.6; d.bounced++; }
+          else { d.vy = 0; d.vx *= 0.85; d.vz *= 0.85; }
+        }
+        // 살아 있는 유닛과 부딪히면 통과하지 않고 튕겨 나간다
+        if (battle && battle.grid && d.y < 1.95) {
+          const near = battle.grid.query(d.x, d.z, 1.0, this._limbTmp || (this._limbTmp = []), 10);
+          for (let q = 0; q < near.length; q++) {
+            const o = near[q];
+            if (o.dead || o.removed) continue;
+            const ox = d.x - o.x, oz = d.z - o.z;
+            const dist2 = Math.hypot(ox, oz);
+            const minD = (o.radius || 0.38) + 0.13;
+            if (dist2 >= minD) continue;
+            const nx = dist2 > 0.001 ? ox / dist2 : 1;
+            const nz = dist2 > 0.001 ? oz / dist2 : 0;
+            d.x = o.x + nx * minD;
+            d.z = o.z + nz * minD;
+            const vn = d.vx * nx + d.vz * nz;
+            if (vn < 0) { d.vx -= 2 * vn * nx; d.vz -= 2 * vn * nz; }
+            d.vx *= 0.55; d.vz *= 0.55; d.vy = Math.max(d.vy * 0.6, 1.2);
+            d.sx *= 0.82; d.sy *= 0.82; d.sz *= 0.82;
+            break;
+          }
+        }
+        d.rx += d.sx * dt; d.ry += d.sy * dt; d.rz += d.sz * dt;
+        const shrink = clamp(d.max - d.life, 0, 1);
+        _v1.set(d.x, d.y, d.z);
+        _q1.setFromEuler(_e1.set(d.rx, d.ry, d.rz));
+        _v2.setScalar((d.s || 1) * shrink);
+        _m1.compose(_v1, _q1, _v2);
+        mesh.setMatrixAt(n++, _m1);
+      }
+      for (let i = n; i < pool.cap; i++) mesh.setMatrixAt(i, _hiddenM4);
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.visible = n > 0;
+    }
+
+    /* 목에서 솟는 피 — 머리가 베인 몸이 서 있는 짧은 시간 동안 */
+    for (let i = this.jets.length - 1; i >= 0; i--) {
+      const j = this.jets[i];
+      j.t += dt;
+      if (j.t > j.life) { this.jets.splice(i, 1); continue; }
+      j.acc += dt;
+      const fade = 1 - j.t / j.life;
+      while (j.acc > 1 / 55) {
+        j.acc -= 1 / 55;
+        const a = this.rng() * TAU;
+        const sp = 0.25 + this.rng() * 0.8;
+        this.sparks.spawn({
+          x: j.x, y: j.y, z: j.z,
+          vx: Math.cos(a) * sp, vy: 1.6 + (1.4 + this.rng() * 2.2) * fade, vz: Math.sin(a) * sp,
+          life: 0.32 + this.rng() * 0.4, size: 0.045 + this.rng() * 0.07,
+          r: 0.66, g: 0.03, b: 0.04, gravity: -9, drag: 1.1, fade: 1.2
+        });
+      }
+    }
+
+    /* 핏물 — 번지듯 퍼졌다가 천천히 마른다 */
+    for (const bp of this.bloodPools) {
+      if (bp.life > bp.max) { if (bp.m.visible) bp.m.visible = false; continue; }
+      bp.life += dt;
+      const k = bp.life / bp.max;
+      const grow = clamp(bp.life / 0.5, 0, 1);
+      const e = 1 - (1 - grow) * (1 - grow);
+      bp.m.scale.setScalar(bp.r * 1.7 * (0.45 + 0.55 * e) * (1 + k * 0.10));
+      bp.m.material.opacity = 0.78 * clamp(1 - k * k * 0.9, 0, 1) * clamp(bp.life / 0.12, 0, 1);
     }
 
     /* 지면 섬광 */
@@ -1423,6 +1627,18 @@ export class FX {
     for (const p of this.smokePuffs) { p.life = p.max + 1; p.s.visible = false; }
     for (const s of this.scorches) { s.life = s.max + 1; s.m.visible = false; }
     for (const s of this.shells) { s.unit = null; s.mesh.visible = false; }
+    for (const k of ['arm', 'leg', 'head']) {
+      const pool = this.limbPool[k];
+      if (!pool) continue;
+      pool.idx = 0;
+      for (const d of pool.data) if (d) d.life = d.max + 1;
+      for (let i = 0; i < pool.cap; i++) pool.mesh.setMatrixAt(i, _hiddenM4);
+      pool.mesh.instanceMatrix.needsUpdate = true;
+      pool.mesh.visible = false;
+    }
+    this.jets.length = 0;
+    for (const bp of this.bloodPools) { bp.life = bp.max + 1; bp.m.visible = false; }
+    this.boltLife = 1e9; this.boltCore.visible = false; this.boltGlow.visible = false;
     this.shards.length = 0;
     this.debrisData.length = 0;
     this.playerTrail.clear();

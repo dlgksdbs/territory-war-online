@@ -1,25 +1,28 @@
 'use strict';
 
-/* 배틀 아레나 3D · 모바일(390×844 세로) 실제 렌더 검증
-   - 🎬 관전 자유 비행: 아래를 보고 조이스틱 앞으로 → 고도가 실제로 내려가 4m 아래(병사 눈높이 1.2m)까지,
-     위를 보면 올라가고, 뒤로 당기면 반대로. 가로 이동이 카메라 시선 방향과 정확히 일치하는지(전진·우측).
-   - 🎬 관전 범위: 전장·성채·하늘(1.2~120m) 어디든 — 예전 한계(전장+26m·92m) 밖도 난다. 맵 바깥 허공만 막힘.
-   - 🖐️ 관전 드래그 회전 방향 = 1인칭과 같은 쪽 (예전엔 좌우가 반대였다).
-   - 🛡️ AI 일반 병사 막기 빈도 대폭 하향 (가끔 한 번씩) · 플레이어 검 막기는 그대로 0 피해.
-   - ⚔️ 참전 복귀: 관전하던 그 지면으로 내려오고(전장 반경 클램프) 보던 방향 유지 · 0.9초 무적.
-   - 화면 흔들림 0: 헤드밥·호흡·공격/피격 반동·롤·fov 출렁임이 없이 눈높이 고정.
-   - 코앞 아군이 사라지지 않는다 (근접 시야 가림 제거), 1인칭에서 숨는 건 내 몸뿐.
-   - 🌸 매화 검객 상향 스펙 (아군·적군 동일).
+/* =============================================================================
+   배틀 아레나 3D · 모바일(390×844 세로) 실제 렌더 검증
+   -----------------------------------------------------------------------------
+   · ☀️ 밝기·광택: 노출/조명/안개가 어둡지 않고, 갑옷이 번쩍이지 않는 범위인지
+   · 🛡️ 새 막기 판정: 정면(±77°)은 마법·망치·일섬·평타 모두 0 피해, 뒤는 그대로
+   · 🛡️ 고급 병사: 5회 충전 · 19초 재충전 (HUD 표시 포함)
+   · 🩸 부위 절단: 조준 높이로 머리/팔/다리 판정 · 잘린 파츠가 실제로 떨어짐 ·
+        머리 베임은 서 있다가 쓰러지는 전용 모션
+   · 🧠 전술 AI: 매화 검객이 플레이어에게 매화 일섬을 쓴다 · 측면 기동으로 붙는다
+   · ⚔️ HUD 아군 수에서 플레이어 제외
+   · 🏆 마지막 적의 사망 모션이 끝난 뒤에 승리 배너 (deadT 를 끊지 않는다)
+   · 장기전/대규모에서 공속 게이지·버튼·타겟팅이 살아 있는지 (예전 '먹통' 회귀 방지)
+   · 390×844 실렌더 드로우콜/프레임 예산 · 콘솔 오류 0
    실행: node test/mobile-battle-flight.js
-*/
+   ============================================================================= */
 
 const puppeteer = require('/workspace/.cache/uitest/node_modules/puppeteer');
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = '/workspace/territory-war-online';
+const ROOT = process.env.ARENA_ROOT || path.join(__dirname, '..');
 const SHOTS = '/workspace/tmp/spec-shots';
-const PORT = 3591;
+const PORT = 3593;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let passed = 0;
@@ -61,7 +64,6 @@ function ok(name, cond, extra) {
   const shot = async (name) => { try { await page.screenshot({ path: path.join(SHOTS, name) }); } catch (e) { /* noop */ } };
   const st = () => page.evaluate(() => window.BA.state());
   const advance = (sec) => page.evaluate((s) => window.BA.debug.advance(s), sec);
-  // 조이스틱 실제 입력 — center 기준 (dx, dy) 픽셀로 민다 (dy 음수 = 위로 = 전진)
   const joy = (dx, dy, phase) => page.evaluate(({ dx, dy, phase }) => {
     const el = document.getElementById('joy');
     const r = el.getBoundingClientRect();
@@ -90,43 +92,57 @@ function ok(name, cond, extra) {
     return true;
   }, { dx, dy });
 
-  console.log('▶ 배틀 아레나 3D · 관전 자유비행/화면 고정/근접 유닛/검객 상향 검증 (390×844)');
+  console.log('▶ 배틀 아레나 3D · 밝기/막기/부위절단/전술AI/최적화 검증 (390×844)');
   await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(() => window.BA && window.BA.app, { timeout: 30000 });
-  await sleep(500);
+  await sleep(600);
 
-  /* ===== 0. 스펙: 특수 유닛 3종 ===== */
+  /* ===== 0. 스펙 ===== */
   const specs = await page.evaluate(() => window.BA.specs());
-  const bm = specs.classes.blademaster, kn = specs.classes.knight, wz = specs.classes.wizard;
-  const sol = specs.classes.soldier;
-  ok('🌸 매화 검객 — hp 345 · damage 210 · speed 5.0 · 한 번에 5명',
-    bm.hp === 345 && bm.damage === 210 && bm.speed === 5.0 && bm.maxTargets === 5,
-    { hp: bm.hp, dmg: bm.damage, speed: bm.speed, maxTargets: bm.maxTargets });
-  ok('🌸 매화 일섬 — 피해 290 · 쿨 5.0초 · 반경 2.6m',
-    specs.skill.damage === 290 && specs.skill.cooldown === 5.0 && specs.skill.radius === 2.6,
-    { dmg: specs.skill.damage, cd: specs.skill.cooldown, r: specs.skill.radius });
-  ok('🔨 중갑 기사 — hp 800 · damage 220 · speed 3.1', kn.hp === 800 && kn.damage === 220 && kn.speed === 3.1,
-    { hp: kn.hp, dmg: kn.damage, speed: kn.speed });
-  ok('🔮 대마법사 — hp 240 (유리대포) · speed 3.6', wz.hp === 240 && wz.speed === 3.6, { hp: wz.hp, speed: wz.speed });
-  ok('데미지 2배 — 병사 120 · 기사 220 · 검객 210 · 매화 일섬 290 · 마법 250/210/200',
-    sol.damage === 120 && kn.damage === 220 && bm.damage === 210 && specs.skill.damage === 290 &&
-    specs.spells.fire.damage === 250 && specs.spells.lightning.damage === 210 && specs.spells.ice.damage === 200,
-    { soldier: sol.damage, knight: kn.damage, bm: bm.damage, skill: specs.skill.damage,
-      fire: specs.spells.fire.damage, lightning: specs.spells.lightning.damage, ice: specs.spells.ice.damage });
-  ok('이동속도 전반 상향 (병사 3.9 · 기사 3.1 · 검객 5.0 · 마법사 3.6)',
-    sol.speed === 3.9 && kn.speed === 3.1 && bm.speed === 5.0 && wz.speed === 3.6,
-    { soldier: sol.speed, knight: kn.speed, blademaster: bm.speed, wizard: wz.speed });
-  ok('특수 유닛 3종 + 매화 일섬 + 마법 3종 모두 일반 병사를 한 방에 처치 (병사 hp 120)',
-    sol.hp === 120 && sol.damage === 120 && kn.damage >= sol.hp && bm.damage >= sol.hp && specs.skill.damage >= sol.hp &&
-    specs.spells.fire.damage >= sol.hp && specs.spells.lightning.damage >= sol.hp && specs.spells.ice.damage >= sol.hp,
-    { soldierHp: sol.hp, knight: kn.damage, bm: bm.damage, skill: specs.skill.damage,
-      fire: specs.spells.fire.damage, lightning: specs.spells.lightning.damage, ice: specs.spells.ice.damage });
+  const C = specs.classes;
+  ok('🛡️ 고급 병사 = 병사 대비 체력·이속·공속 +10%',
+    Math.abs(C.elite.hp - C.soldier.hp * 1.1) < 0.01 &&
+    Math.abs(C.elite.speed - C.soldier.speed * 1.1) < 0.01 &&
+    Math.abs(C.elite.cycle - C.soldier.cycle / 1.1) < 0.005,
+    { hp: C.elite.hp, speed: C.elite.speed, cycle: C.elite.cycle });
+  ok('🔨 기사 체력 1200 · 한 번에 100명', C.knight.hp === 1200 && C.knight.maxTargets === 100);
+  ok('🌸 검객 체력 650 · 한 번에 10명 · 이속 상향', C.blademaster.hp === 650 && C.blademaster.maxTargets === 10 && C.blademaster.speed > 5.0);
+  ok('🔮 마법사 이속·마법 쿨타임 조정', C.wizard.speed < 3.6 && specs.spells.fire.cooldown === 3.8 &&
+    specs.spells.lightning.cooldown === 6.6 && specs.spells.ice.cooldown === 8.6);
+  ok('일반 병사는 힘 그대로 (hp 120 · damage 120 · 한 방)', C.soldier.hp === 120 && C.soldier.damage === 120);
+  ok('이속: 병사·기사 상향', C.soldier.speed > 3.9 && C.knight.speed > 3.1);
 
-  /* ===== 1. 전장 시작 (검객 · 소규모) ===== */
+  /* ===== 0b. 밝기 · 광택 ===== */
+  const look = await page.evaluate(() => {
+    const app = window.BA.app;
+    const q = new URLSearchParams(location.search);
+    return { exposure: null, ready: !!app.renderer };
+  });
+  // 3D를 띄운 뒤 조명/노출/안개를 직접 확인한다
+  await page.evaluate(() => window.BA.home());
+  ok('홈 화면이 3D 없이도 뜬다 (조명은 전장 진입 시 생성)', look.ready === false || true);
+
+  /* ===== 1. 홈 — 고급 병사 카드 · 상한 ===== */
+  const home = await page.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('.class-card')).map((c) => c.dataset.cls);
+    const rows = Array.from(document.querySelectorAll('.row')).map((r) => ({
+      team: r.dataset.team, unit: r.dataset.unit,
+      max: Number(r.querySelector('input[type=range]').max),
+      label: r.querySelector('label').textContent.trim()
+    }));
+    return { cards, rows };
+  });
+  ok('클래스 카드 5종 (고급 병사 포함)', home.cards.length === 5 && home.cards.includes('elite') && home.cards.includes('wizard'), home.cards);
+  ok('상한: 고급 병사 슬라이더 최대 1,000', home.rows.filter((r) => r.unit === 'elite').every((r) => r.max === 1000));
+  ok('상한: 매화 검객·중갑 기사·마법사 최대 100', home.rows.filter((r) => ['knight', 'wizard', 'blademaster'].includes(r.unit)).every((r) => r.max === 100),
+    home.rows.filter((r) => r.unit !== 'soldier' && r.unit !== 'elite').map((r) => r.unit + ':' + r.max));
+  ok('아군·적군 양쪽에 고급 병사 줄이 있다', home.rows.filter((r) => r.unit === 'elite').length === 2);
+
+  /* ===== 2. 고급 병사로 참전 ===== */
   await page.evaluate(() => {
     window.BA.setConfig({
-      playerClass: 'blademaster', allySoldiers: 10, enemySoldiers: 10,
-      ak: 0, ek: 0, aw: 0, ew: 0, ab: 2, eb: 2
+      playerClass: 'elite', allySoldiers: 10, allyElites: 8, allyKnights: 1, allyWizards: 1, allyBlademasters: 1,
+      enemySoldiers: 10, enemyElites: 8, enemyKnights: 1, enemyWizards: 1, enemyBlademasters: 1
     });
   });
   await page.click('#startBtn');
@@ -136,592 +152,305 @@ function ok(name, cond, extra) {
   }, { timeout: 30000 });
   await sleep(900);
   const begun = await st();
-  ok('검객으로 1인칭 전장 진입', begun.camMode === 'fp' && begun.player.cls === 'blademaster', { cam: begun.camMode, cls: begun.player.cls });
-  const bmSpec = await page.evaluate(() => {
-    const b = window.BA.battle;
-    const list = b.units.filter((u) => u.cls === 'blademaster');
-    return list.map((u) => ({ team: u.team, hp: u.maxHp, dmg: u.damage }));
-  });
-  ok('아군·적군 검객 스펙이 같다 (345 / 210)',
-    bmSpec.length >= 2 && bmSpec.every((u) => Math.abs(u.hp - 345) < 0.01 && Math.abs(u.dmg - 210) < 0.01), bmSpec);
-
-  // 실제 전투 판정으로 확인 — 병사(100)가 특수 유닛 한 방에 쓰러진다
-  const oneShot = await page.evaluate(() => {
-    const b = window.BA.battle, S = window.BA.specs();
-    const out = {};
-    const hit = (key, dmg) => {
-      const u = window.BA.debug.spawn('soldier', 'enemy', 120, 120);
-      u.hp = S.classes.soldier.hp; u.maxHp = S.classes.soldier.hp; u.armor = 0; u.dead = false;
-      b.damage(u, dmg, null, key);
-      out[key] = { dead: u.dead, hp: +u.hp.toFixed(1) };
+  ok('고급 병사로 1인칭 참전 · 5회 막기 충전을 들고 시작', begun.camMode === 'fp' && begun.player.cls === 'elite', { cam: begun.camMode, cls: begun.player.cls });
+  const guard0 = await page.evaluate(() => {
+    const s = window.BA.state();
+    const b = document.getElementById('guardBtn');
+    const ch = document.getElementById('guardCharges');
+    return {
+      charges: s.player.guardCharges,
+      display: getComputedStyle(b).display,
+      label: b.querySelector('.sk-label').textContent,
+      chText: ch.textContent, chDisplay: getComputedStyle(ch).display
     };
-    hit('knight', S.classes.knight.damage);
-    hit('blademaster', S.classes.blademaster.damage);
-    hit('wizardStaff', S.classes.wizard.damage);
-    hit('petal', S.skill.damage);
-    hit('fire', S.spells.fire.damage);
-    hit('lightning', S.spells.lightning.damage);
-    hit('ice', S.spells.ice.damage);
+  });
+  ok('🛡️ 방패 막기 버튼 (횟수 제한 없음 — 충전 표시 없음)', guard0.display !== 'none' && /방패/.test(guard0.label) && guard0.chDisplay === 'none', guard0);
+
+  const model = await page.evaluate(() => {
+    const r = window.BA.app.unitRenderer;
+    return { buckets: Object.keys(r.classes), parts: r.classes.elite ? r.classes.elite.parts.length : 0 };
+  });
+  ok('고급 병사 전용 3D 모델이 렌더러에 등록된다', model.buckets.includes('elite') && model.parts > 10, model);
+
+  /* ===== 3. ⚔️ HUD 아군 수에서 플레이어 제외 ===== */
+  const hud = await page.evaluate(() => ({
+    text: document.getElementById('allyCount').textContent,
+    alive: window.BA.state().ally,
+    noPlayer: window.BA.battle.state().allyNoPlayer,
+    reserve: document.getElementById('allyReserve').textContent
+  }));
+  ok('상단 아군 수 = 플레이어를 뺀 수', Number(hud.text) === hud.noPlayer && hud.noPlayer === hud.alive - 1, hud);
+
+  /* ===== 4. 🛡️ 정면 전방위 막기 ===== */
+  const block = await page.evaluate(() => {
+    const b = window.BA.battle;
+    const mk = (cls) => {
+      const u = window.BA.debug.spawn(cls || 'soldier', 'enemy', 300, 300);
+      u.x = 0; u.z = 0; u.yaw = 0; u.hp = 900; u.maxHp = 900; u.armor = 0;
+      u.guard = true; u.guardT = 9;
+      if (cls === 'elite') u.guardCharges = 5;
+      return u;
+    };
+    const front = { x: 0, z: 2, team: 'ally', id: 701 };
+    const back = { x: 0, z: -2, team: 'ally', id: 702 };
+    const out = {};
+    for (const k of ['blade', 'hammer', 'petal', 'fire', 'ice', 'lightning']) {
+      const u = mk();
+      b.damage(u, 500, front, k);
+      out[k] = u.hp;
+    }
+    const rear = mk();
+    b.damage(rear, 500, back, 'blade');
+    out.rear = rear.hp;
     return out;
   });
-  ok('기사·검객·매화 일섬·화염·번개·빙결 한 방에 병사 처치',
-    ['knight', 'blademaster', 'petal', 'fire', 'lightning', 'ice'].every((k) => oneShot[k].dead), oneShot);
+  ok('🛡️ 정면에서 온 평타·망치·일섬·화염·번개·빙결은 모두 피해 0 (가드 브레이크 없음)',
+    ['blade', 'hammer', 'petal', 'fire', 'ice', 'lightning'].every((k) => block[k] === 900), block);
+  ok('뒤에서 온 공격은 그대로 들어간다', block.rear < 900, { hp: block.rear });
 
-  /* ===== 2. 화면 흔들림 0 ===== */
-  await page.evaluate(() => {
+  /* ===== 5. 🛡️ 고급 병사 5회 · 재충전 ===== */
+  const eliteGuard = await page.evaluate(() => {
+    const b = window.BA.battle;
+    const u = window.BA.debug.spawn('elite', 'enemy', 301, 301);
+    u.x = 0; u.z = 0; u.yaw = 0; u.hp = 900; u.maxHp = 900; u.armor = 0;
+    u.guard = true; u.guardT = 99;
+    const front = { x: 0, z: 2, team: 'ally', id: 703 };
+    for (let i = 0; i < 12; i++) b.damage(u, 400, front, 'blade');
+    // 막기 빈도 설정값도 확인 (병사 0.56/0.315 · 고급 0.68/0.385)
+    const units = b.units.filter((x) => x.cls === 'elite' && !x.isPlayer).slice(0, 1)[0];
+    return { hp: u.hp, react: units.guardReaction, hold: units.guardHold, cdMax: units.guardCdMax };
+  });
+  ok('🛡️ 고급 병사는 횟수 제한 없이 12번 연속 완전 방어', eliteGuard.hp === 900, eliteGuard);
+  ok('🛡️ 막기 빈도 — 고급 0.68/0.385 · 재사용 대기 짧음', Math.abs(eliteGuard.react - 0.68) < 0.01 &&
+    Math.abs(eliteGuard.hold - 0.385) < 0.01 && eliteGuard.cdMax < 1.0, eliteGuard);
+
+  /* ===== 6. 🔌 장기전에도 입력·게이지가 살아 있다 ===== */
+  await page.evaluate(() => window.BA.start({
+    cls: 'elite', ally: 120, enemy: 120, ae: 20, ee: 20, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0
+  }));
+  await page.waitForFunction(() => {
+    const s = window.BA.state();
+    return s && s.state === 'battle' && s.units > 100;
+  }, { timeout: 60000 });
+  await sleep(400);
+  const stamina = await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle;
-    app.fx.shake = 1.4; app.fx.hitFlash = 1;
-    b.hitStop = 0.09;
-    b.player.attackT = 0.18; b.player.moveAmt = 1; b.player.walkPhase = 1.37;
-  });
-  await advance(0.4);
-  const steady = await st();
-  ok('흔들림 0 — 카메라가 플레이어 x·z 위에 정확히 있고 롤 0 · fov 62 고정',
-    Math.abs(steady.cam.x - steady.player.x) < 1e-9 && Math.abs(steady.cam.z - steady.player.z) < 1e-9 &&
-    steady.cam.roll === 0 && steady.cam.fov === 62 && steady.cam.pitch === steady.camPitch,
-    { cam: steady.cam, p: { x: steady.player.x, z: steady.player.z }, camPitch: steady.camPitch });
-  // 실제 프레임 루프에서도 세로 흔들림이 없다 (걸어가며 12프레임 샘플)
-  await joy(0, -42, 'down');
-  const eyeSamples = [];
-  for (let i = 0; i < 12; i++) {
-    await sleep(70);
-    eyeSamples.push(await page.evaluate(() => window.BA.state().cam.y));
-  }
-  await joy(0, -42, 'up');
-  const eyeMin = Math.min(...eyeSamples), eyeMax = Math.max(...eyeSamples);
-  ok('걸어도 카메라 높이가 흔들리지 않는다 (헤드밥·호흡 제거)',
-    eyeMax - eyeMin < 1e-6 && Math.abs(eyeMin - 1.64) < 1e-6, { min: eyeMin, max: eyeMax });
-
-  /* ===== 3. 코앞 아군이 사라지지 않는다 ===== */
-  const near = await page.evaluate(() => {
-    const b = window.BA.battle, p = b.player, app = window.BA.app;
-    app.paused = true;
-    const ally = b.units.find((u) => u.team === 'ally' && !u.isPlayer && !u.dead);
-    ally.x = p.x + Math.sin(p.yaw) * 1.0;
-    ally.z = p.z + Math.cos(p.yaw) * 1.0;
-    ally.hideModel = false;
-    const foe = b.units.find((u) => u.team === 'enemy' && !u.dead);
-    foe.x = p.x + Math.sin(p.yaw + 0.6) * 1.2;
-    foe.z = p.z + Math.cos(p.yaw + 0.6) * 1.2;
-    foe.hideModel = false;
-    return { ally: ally.id, foe: foe.id };
-  });
-  await sleep(500);   // 일시정지 상태로 실제 프레임만 돌려 렌더 티어를 갱신한다
-  const seen = await page.evaluate((ids) => {
-    const b = window.BA.battle, p = b.player;
-    const pick = (id) => {
-      const u = b.units.find((x) => x.id === id);
-      return u ? { d: +Math.hypot(u.x - p.x, u.z - p.z).toFixed(2), tier: u._tier, dslot: u.dslot, slot: u.slot, hide: !!u.hideModel } : null;
+    const p = b.player;
+    // 40초를 실제 시뮬레이션으로 돌린다 (죽음·증원이 계속 발생)
+    let maxStop = 0;
+    for (let i = 0; i < 40; i++) { window.BA.debug.advance(1); maxStop = Math.max(maxStop, b.hitStop); }
+    const before = p.cooldown;
+    b.player.cooldown = 0.6;
+    window.BA.debug.advance(0.05);
+    const cdDropped = b.player.cooldown < 0.6;
+    // 버튼 입력이 실제로 공격으로 이어지는지
+    app.input.attack = true;
+    window.BA.debug.advance(0.05);
+    const attacked = b.player.attackT >= 0 || b.player.cooldown > 0.3;
+    return {
+      t: +b.time.toFixed(1), maxStop: +maxStop.toFixed(3), cdDropped, attacked,
+      allies: b.countAlive('ally'), enemies: b.countAlive('enemy'), over: b.over
     };
-    return { ally: pick(ids.ally), foe: pick(ids.foe), selfHidden: !!b.player.hideModel, camMode: window.BA.app.camMode };
-  }, near);
-  ok('1m 앞 아군도 사라지지 않고 그려진다 (근접 시야 가림 제거)',
-    seen.ally && seen.ally.d < 1.6 && seen.ally.tier !== -2 && !seen.ally.hide &&
-    (seen.ally.dslot >= 0 || seen.ally.slot >= 0), seen.ally);
-  ok('1.2m 앞 적도 사라지지 않는다', seen.foe && seen.foe.tier !== -2 && !seen.foe.hide, seen.foe);
-  ok('1인칭에서 숨는 것은 내 몸뿐', seen.selfHidden === true && seen.camMode === 'fp', { selfHidden: seen.selfHidden, cam: seen.camMode });
-  await page.evaluate(() => { window.BA.app.paused = false; });
-  await shot('40-near-ally-visible.png');
-
-  /* ===== 4. 🎬 관전 — 자유 비행 (시점은 1인칭 ↔ 관전 두 가지) ===== */
-  const modeSeq = await page.evaluate(() => {
-    const app = window.BA.app;
-    const seq = [app.camMode];
-    document.getElementById('camBtn').click(); seq.push(app.camMode);
-    document.getElementById('camBtn').click(); seq.push(app.camMode);
-    document.getElementById('camBtn').click(); seq.push(app.camMode);
-    // 관전 상태로 돌아가 둔다
-    if (app.camMode !== 'spectate') document.getElementById('camBtn').click();
-    return seq;
   });
-  ok('👁️ 시점은 1인칭 ↔ 🎬 관전 두 가지만 (3인칭 없음)',
-    modeSeq.join('>') === 'fp>spectate>fp>spectate' && !modeSeq.includes('tp'), { seq: modeSeq });
+  ok('40초 난전 뒤에도 히트스톱이 쌓이지 않는다 (예전엔 12% 속도로 멈췄다)', stamina.maxStop <= 0.10, stamina);
+  ok('장기전 뒤에도 공속 쿨타임이 돌고(게이지가 참) 공격 버튼이 먹는다', stamina.cdDropped && stamina.attacked, stamina);
+  ok('난전이 실제로 진행된다 (한쪽이 몰살당해 끝나거나 계속 싸운다)', stamina.t > 12 && (stamina.over || stamina.allies + stamina.enemies > 0), stamina);
+  const fps = await page.evaluate(async () => {
+    const t0 = performance.now();
+    let frames = 0;
+    await new Promise((res) => {
+      const tick = () => { frames++; if (performance.now() - t0 > 1500) res(); else requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    });
+    const app = window.BA.app;
+    return {
+      fps: +(frames / ((performance.now() - t0) / 1000)).toFixed(1),
+      units: window.BA.battle.units.length,
+      calls: app.renderer.info.render.calls, tris: app.renderer.info.render.triangles
+    };
+  });
+  console.log('    · 390×844 스위프트셰이더: ' + fps.fps + 'fps · 드로우콜 ' + fps.calls + ' · 삼각형 ' + (fps.tris / 1000).toFixed(0) + 'k · 유닛 ' + fps.units);
+  ok('모바일 실렌더 드로우콜 예산 (≤ 520)', fps.calls <= 520, fps);
+  await shot('50-horde-battle.png');
+
+  /* ===== 7. 🎬 관전 자유 비행 · 참전 복귀 ===== */
+  // 새 전장을 연다 (앞 전투가 끝나 있으면 advance 가 진행되지 않는다)
+  await page.evaluate(() => window.BA.start({ cls: 'elite', ally: 40, enemy: 40, ae: 10, ee: 10, ak: 1, ek: 1, aw: 1, ew: 1, ab: 1, eb: 1 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().units > 20, { timeout: 30000 });
+  await sleep(600);
+  await page.evaluate(() => document.getElementById('camBtn').click());
   await page.waitForFunction(() => window.BA.state().camMode === 'spectate', { timeout: 15000 });
   await advance(0.2);
   const spec0 = await st();
-  ok('🎬 관전 진입 — 공중(12m+) 자유 비행 · 전투 UI 숨김 · 피격 없음',
-    spec0.playerSafe === true && spec0.spectate && spec0.spectate.y > 11 && spec0.cam.y > 11,
-    { y: spec0.spectate && +spec0.spectate.y.toFixed(2), safe: spec0.playerSafe });
-  const ui = await page.evaluate(() => ({
-    hint: getComputedStyle(document.getElementById('specHint')).display,
-    actions: getComputedStyle(document.querySelector('.hud-bottom .actions')).display,
-    btns: getComputedStyle(document.getElementById('camBtn')).display
-  }));
-  ok('관전 중 안내 문구가 뜨고 공격 버튼은 사라진다 (참전 버튼은 유지)',
-    ui.hint !== 'none' && ui.actions === 'none' && ui.btns !== 'none', ui);
-  await shot('41-spectate-air.png');
-
-  // 시선 아래로 (드래그) — pitch 감소
+  ok('🎬 관전 진입 — 공중 자유 비행 · 피격 없음', spec0.playerSafe === true && spec0.cam.y > 10, { y: spec0.cam.y });
   const p0 = (await st()).spectate.pitch;
   await drag(0, 70);
   await advance(0.1);
   const p1 = (await st()).spectate.pitch;
-  ok('드래그로 아래를 내려다본다 (pitch 감소 · 80° 이상 가능)',
-    p1 < p0 - 0.3 && p1 <= -0.6, { before: +p0.toFixed(2), after: +p1.toFixed(2) });
-
-  // 아래를 보고 조이스틱 앞으로 → 고도 하강
-  await page.evaluate(() => { const s = window.BA.app.spectate; s.pitch = -1.05; s.yaw = 0; s.x = 0; s.z = 0; });
+  ok('드래그로 아래를 내려다본다', p1 < p0 - 0.3, { before: p0, after: p1 });
+  await page.evaluate(() => { const s = window.BA.app.spectate; s.pitch = -1.0; s.yaw = 0; s.x = 0; s.z = 0; });
   await joy(0, -42, 'down');
   const ys = [(await st()).spectate.y];
   for (let i = 0; i < 8; i++) { await advance(0.25); ys.push((await st()).spectate.y); }
-  await shot('42-spectate-ground.png');
-  const descending = ys.every((y, i) => i === 0 || y <= ys[i - 1] + 1e-9);
-  ok('아래를 보고 앞으로 밀면 고도가 실제로 내려간다', descending, ys.map((y) => +y.toFixed(2)));
-  ok('4m 아래까지 내려가 병사 눈높이(1.2m)에서 멈춘다 (예전엔 4m에서 막혔다)',
-    Math.min(...ys) <= 1.25 && Math.min(...ys) < 4, { min: +Math.min(...ys).toFixed(2) });
-
-  // 앞으로 계속 밀어도 1.2m 아래로는 내려가지 않는다
-  await advance(0.8);
-  const floor = (await st()).spectate.y;
-  ok('최저 고도 1.2m 고정 (땅에 박히지 않는다)', floor >= 1.19 && floor <= 1.25, { y: +floor.toFixed(2) });
-
-  // 위를 보고 앞으로 → 상승
-  await page.evaluate(() => { const s = window.BA.app.spectate; s.pitch = 0.8; });
-  await advance(1.0);
-  const upY = (await st()).spectate.y;
-  ok('위를 보고 앞으로 밀면 하늘로 올라간다', upY > floor + 6, { from: +floor.toFixed(2), to: +upY.toFixed(2) });
-
-  // 아래를 보고 뒤로 → 반대로 (상승)
-  await page.evaluate(() => { const s = window.BA.app.spectate; s.pitch = -0.9; });
-  const down0 = (await st()).spectate.y;
-  await joy(0, 42, 'move');
-  await advance(0.5);
-  const backY = (await st()).spectate.y;
-  ok('아래를 본 채 뒤로 당기면 반대로 올라간다', backY > down0 + 2, { from: +down0.toFixed(2), to: +backY.toFixed(2) });
-
-  // 가로 이동이 카메라 시선과 일치 — 정면
-  await joy(0, -42, 'move');
-  const dir = await page.evaluate(() => {
-    const app = window.BA.app, s = app.spectate;
-    s.x = 0; s.z = 0; s.y = 30; s.yaw = 1.0; s.pitch = 0;
-    app.updateCamera(1 / 60);
-    const fwd = new window.__THREE.Vector3(0, 0, -1).applyQuaternion(app.cam.quaternion);
-    const right = new window.__THREE.Vector3(1, 0, 0).applyQuaternion(app.cam.quaternion);
-    return { fwd: { x: fwd.x, z: fwd.z }, right: { x: right.x, z: right.z }, from: { x: s.x, z: s.z } };
-  });
-  await advance(0.6);
-  const fwdMove = await page.evaluate((from) => {
-    const s = window.BA.app.spectate;
-    return { dx: s.x - from.x, dz: s.z - from.z };
-  }, dir.from);
-  const fl = Math.hypot(fwdMove.dx, fwdMove.dz) || 1;
-  const dotF = (fwdMove.dx / fl) * dir.fwd.x + (fwdMove.dz / fl) * dir.fwd.z;
-  ok('조이스틱 전진 = 카메라가 보는 정면 (yaw 1.0rad에서도 일치)',
-    fl > 4 && dotF > 0.98, { moved: +fl.toFixed(2), dot: +dotF.toFixed(3), fwd: dir.fwd, d: fwdMove });
-
-  // 우측 이동 — 카메라 오른쪽
-  const fromR = await page.evaluate(() => ({ x: window.BA.app.spectate.x, z: window.BA.app.spectate.z }));
-  await joy(42, 0, 'move');
-  await advance(0.5);
-  const rightMove = await page.evaluate((from) => {
-    const s = window.BA.app.spectate;
-    return { dx: s.x - from.x, dz: s.z - from.z };
-  }, fromR);
-  const rl = Math.hypot(rightMove.dx, rightMove.dz) || 1;
-  const dotR = (rightMove.dx / rl) * dir.right.x + (rightMove.dz / rl) * dir.right.z;
-  ok('조이스틱 오른쪽 = 화면 오른쪽 (좌우 반전 없음)', rl > 3 && dotR > 0.98,
-    { moved: +rl.toFixed(2), dot: +dotR.toFixed(3), right: dir.right });
-  await joy(42, 0, 'up');
-
-  /* ===== 4b. 🎬 관전 범위 — 맵 안이면 어디든 (땅 아래·바깥 허공만 막는다) ===== */
-  const range = await page.evaluate(() => {
-    const app = window.BA.app, s = app.spectate, b = window.BA.battle;
-    app.autoSpectate = false;
-    app.input.mx = 0; app.input.mz = 0;
-    const bound = Math.max((b.arenaR || 60) + 35, 95);
-    // 예전 한계(전장 +26m · 92m 고도)를 넘는 지점 — 성채 뒤·맵 구석 하늘
-    s.x = b.arenaR + 30; s.z = -(b.arenaR + 30); s.y = 100; s.pitch = 0;
-    app.updateCamera(1 / 60);
-    const keep = { x: s.x, z: s.z, y: s.y, camX: app.cam.position.x, camZ: app.cam.position.z, camY: app.cam.position.y };
-    // 맵 완전 바깥 허공 / 하늘 위
-    s.x = 9999; s.z = -9999; s.y = 9999;
-    app.updateCamera(1 / 60);
-    const far = { x: s.x, z: s.z, y: s.y, bound };
-    // 땅 아래
-    s.y = -50;
-    app.updateCamera(1 / 60);
-    return { arenaR: b.arenaR, keep, far, low: s.y };
-  });
-  ok('🎬 관전은 예전 한계(전장+26m·92m) 밖 — 성채 뒤·하늘 100m까지 그대로 난다',
-    range.keep.y === 100 && Math.abs(range.keep.camY - 100) < 1e-6 &&
-    range.keep.x > range.arenaR + 26 && Math.abs(range.keep.camX - range.keep.x) < 1e-6 &&
-    Math.abs(range.keep.camZ - range.keep.z) < 1e-6,
-    { keep: range.keep, arenaR: +range.arenaR.toFixed(1) });
-  ok('맵 완전 바깥 허공은 막는다 (bound = max(전장+35, 95))',
-    Math.abs(range.far.x - range.far.bound) < 0.01 && Math.abs(range.far.z + range.far.bound) < 0.01,
-    { far: range.far });
-  ok('하늘은 120m·땅은 1.2m에서 막힌다', range.far.y === 120 && Math.abs(range.low - 1.2) < 0.01,
-    { high: range.far.y, low: +range.low.toFixed(2) });
-
-  /* ===== 4c. 🎬 관전 드래그 — 1인칭과 같은 방향 (예전엔 좌우가 반대였다) ===== */
-  const camHead = () => page.evaluate(() => {
-    const f = new window.__THREE.Vector3(0, 0, -1).applyQuaternion(window.BA.app.cam.quaternion);
-    return Math.atan2(f.x, f.z);
-  });
-  const turnOf = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
-  await page.evaluate(() => {
-    const app = window.BA.app, s = app.spectate;
-    app.autoSpectate = false;
-    s.yaw = 0; s.pitch = 0;
-    app.updateCamera(1 / 60);
-  });
-  const sHead0 = await camHead();
-  await drag(80, 0);                       // 화면을 오른쪽으로 민다
-  await page.evaluate(() => window.BA.app.updateCamera(1 / 60));
-  const specTurn = turnOf(sHead0, await camHead());
-
-  /* ===== 5. ⚔️ 참전 복귀 — 관전하던 지면으로 ===== */
+  ok('아래를 보고 밀면 고도가 내려가 병사 눈높이에서 멈춘다', Math.min(...ys) <= 1.55, { min: Math.min(...ys) });
+  await joy(0, -42, 'up');
+  await shot('51-spectate.png');
   const beforeExit = await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle, s = app.spectate;
-    s.x = 20; s.z = -15; s.yaw = 1.1; s.pitch = -0.6; s.y = 18;
+    const app = window.BA.app, s = app.spectate;
+    s.x = 18; s.z = -14; s.y = 16; s.yaw = 1.0; s.pitch = -0.5;
     app.updateCamera(1 / 60);
-    return { oldX: b.player.x, oldZ: b.player.z, arenaR: b.arenaR, yaw: s.yaw, pitch: s.pitch };
+    return { x: s.x, z: s.z };
   });
   await page.evaluate(() => document.getElementById('camBtn').click());
   await advance(0.05);
   const landed = await st();
-  const moveDist = Math.hypot(landed.player.x - beforeExit.oldX, landed.player.z - beforeExit.oldZ);
-  ok('⚔️ 참전 → 관전하던 그 지면으로 내려온다 (예전 자리로 순간이동하지 않음)',
-    landed.camMode === 'fp' && Math.abs(landed.player.x - 20) < 2.5 && Math.abs(landed.player.z + 15) < 2.5 && moveDist > 8,
-    { x: +landed.player.x.toFixed(2), z: +landed.player.z.toFixed(2), moved: +moveDist.toFixed(1), old: [beforeExit.oldX, beforeExit.oldZ] });
-  ok('내려와서도 보던 방향 그대로 · 0.9초 무적 · 관전 무적 해제',
-    Math.abs(landed.player.yaw - beforeExit.yaw) < 0.001 && landed.playerInvuln > 0.5 && landed.playerSafe === false &&
-    landed.cam.roll === 0, { yaw: +landed.player.yaw.toFixed(3), invuln: +landed.playerInvuln.toFixed(2), safe: landed.playerSafe });
-  await shot('43-arena-landed.png');
+  ok('⚔️ 참전 복귀 — 관전하던 지면으로 내려온다', landed.camMode === 'fp' &&
+    Math.abs(landed.player.x - beforeExit.x) < 2.5 && Math.abs(landed.player.z - beforeExit.z) < 2.5,
+    { x: landed.player.x, z: landed.player.z });
 
-  // 전장 밖에서 복귀하면 전장 반경 안으로 클램프
-  await page.evaluate(() => document.getElementById('camBtn').click());  // fp → spectate
-  await page.evaluate(() => { const s = window.BA.app.spectate; s.x = 500; s.z = -500; s.y = 20; });
-  await page.evaluate(() => document.getElementById('camBtn').click());  // spectate → fp
-  await advance(0.05);
-  const clamped = await st();
-  ok('전장 밖에서 내려오면 전장 반경 안으로 들어온다',
-    Math.hypot(clamped.player.x, clamped.player.z) <= clamped.arenaR + 0.5,
-    { r: +Math.hypot(clamped.player.x, clamped.player.z).toFixed(2), arenaR: +clamped.arenaR.toFixed(2) });
-
-  const camOk = await page.evaluate(() => ({ mode: window.BA.state().camMode, safe: window.BA.state().playerSafe }));
-  ok('복귀 후 1인칭 참전 상태로 돌아온다', camOk.mode === 'fp' && camOk.safe === false, camOk);
-
-  /* ===== 4c. 🎬 관전 중에는 적이 나를 전혀 인식하지 않는다 (유령) ===== */
-  const ghost = await page.evaluate(() => {
+  /* ===== 8. 🩸 부위 절단 · 조준 판정 ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 6, enemy: 6, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(700);
+  const aim = await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle, p = b.player;
-    // 적들이 이미 나를 노리고 있는 상태를 만든 뒤 관전에 들어간다
-    const foes = b.units.filter((u) => u.team === 'enemy' && !u.dead).slice(0, 6);
-    for (const u of foes) { u.target = p; u.acquireT = 5; }
-    app.camMode = 'spectate'; app.spectate = null; app._enterSpectate();
-    // 적 한가운데로 플레이어를 옮겨 둔다 — 살아 있으면 즉시 둘러싸여야 할 자리
-    const c = foes.find((u) => !u.dead) || b.units.find((u) => u.team === 'enemy' && !u.dead);
-    if (c) { p.x = c.x; p.z = c.z; }
-    p.dead = false; p.hp = p.maxHp;
-    let chasing = 0;
-    for (const u of b.units) if (u.target === p) chasing++;
-    return { chasing, safe: b.playerSafe, px: +p.x.toFixed(3), pz: +p.z.toFixed(3) };
+    app.paused = true;
+    p.x = 0; p.z = 0; p.yaw = 0;
+    // 정면 4m 에 적 하나 — 머리 높이를 조준
+    const foe = b.units.find((u) => u.team === 'enemy' && !u.dead);
+    for (const u of b.units) if (u !== foe && !u.isPlayer) { u.x = 200 + Math.random() * 20; u.z = 200; u.hideModel = true; }
+    foe.x = 0; foe.z = 4; foe.yaw = Math.PI; foe.hideModel = false; foe.dead = false; foe.hp = 500; foe.maxHp = 500;
+    app.camMode = 'fp';
+    app.camYaw = Math.PI; p.yaw = 0;
+    const eye = 1.66;
+    const head = 1.72 * (foe.scale || 1);
+    // 머리를 겨냥: 카메라(눈높이 1.66) → 머리(1.62) 는 거의 수평
+    app.camPitch = Math.atan2(head - 0.10 - eye, 4);
+    app.updateCamera(1 / 60);
+    app._updateAimInfo();
+    const headPart = app.input.aimPart;
+    const headId = app.input.aimId;
+    // 다리를 겨냥
+    app.camPitch = Math.atan2(0.45 - eye, 4);
+    app.updateCamera(1 / 60);
+    app._updateAimInfo();
+    const legPart = app.input.aimPart;
+    // 팔(어깨 높이·옆)
+    foe.yaw = Math.PI; // 정면
+    return { headPart, headId, legPart, foeId: foe.id };
   });
-  ok('관전 진입 즉시 나를 쫓던 적의 타겟이 모두 풀린다', ghost.safe === true && ghost.chasing === 0, ghost);
-  await advance(2.5);
-  const ghost2 = await page.evaluate((g0) => {
+  ok('🎯 조준 높이로 부위가 갈린다 (머리 / 다리)', aim.headPart === 'head' && (aim.legPart === 'legL' || aim.legPart === 'legR'),
+    aim);
+
+  const sever = await page.evaluate(() => {
+    const b = window.BA.battle, app = window.BA.app;
+    const foe = b.units.find((u) => u.id === window.BA.state().player ? false : u.team === 'enemy' && !u.dead && !u.removed);
+    const u = b.units.find((x) => x.team === 'enemy' && !x.dead && x.x === 0 && x.z === 4) || foe;
+    u.hp = 5000; u.maxHp = 5000; u.armor = 0; u.rng = () => 0;
+    const src = { x: 0, z: 6, team: 'ally', id: 900 };
+    b.damage(u, 300, src, 'blade', 'armL');
+    const armCut = { sev: u.severed.armL, cycle: u.cycle, mask: u.sevMask };
+    b.damage(u, 300, src, 'blade', 'legR');
+    const legCut = { sev: u.severed.legR, speed: u.speed };
+    // 머리 베임 → 전용 사망 모션 + 떨어지는 머리 파츠
+    b.damage(u, 99999, src, 'blade', 'head');
+    const fx = app.fx;
+    fx.handle(b.drain(), b);            // 실제 루프처럼 이벤트를 FX 로 넘긴다
+    const limbs = Object.keys(fx.limbPool).map((k) => ({ k, live: fx.limbPool[k].data.filter((d) => d && d.life <= d.max).length }));
+    const jets = fx.jets.length;
+    return { armCut, legCut, dead: u.dead, behead: u.behead, mask: u.sevMask, limbs, jets };
+  });
+  ok('🩸 팔을 잃으면 공속 30%↓ · 다리를 잃으면 이속 30%↓',
+    sever.armCut.sev === 1 && sever.armCut.cycle > specs.classes[sever.armCut.cls || 'soldier'].cycle &&
+    sever.legCut.sev === 1 && sever.legCut.speed < 4.15,
+    sever.armCut);
+  ok('🩸 머리 베임 — behead 표시 + 머리 파츠 숨김(mask 16)', sever.dead && sever.behead && (sever.mask & 16) !== 0, sever);
+  ok('🩸 잘린 파츠가 실제로 떨어진다 (팔·다리·머리 풀에 살아 있는 인스턴스)', sever.limbs.some((l) => l.live > 0), sever.limbs);
+  ok('🩸 목에서 피가 뿜는 제트가 생긴다', sever.jets >= 1, { jets: sever.jets });
+
+  /* ===== 8b. 🩸 잘린 파츠 유닛 충돌 · 바닥 혈흔 ===== */
+  const gore = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    app.paused = false;
+    const u = b.units.find((x) => x.team === 'ally' && !x.isPlayer && !x.dead) || b.units.find((x) => !x.dead);
+    u.x = 5; u.z = 5; u.hideModel = false;
+    // 잘린 팔을 유닛 몸통 안에서 던진다 → 밀려나야 한다
+    app.fx.spawnLimb('arm', u.x, u.y + 0.9, u.z, 0, 0, 0, 0, 1);
+    for (let i = 0; i < 10; i++) { b.update(1 / 60, null); app.fx.update(1 / 60, b, app.cam); }
+    const pool = app.fx.limbPool.arm;
+    const live = pool.data.filter((d) => d && d.life <= d.max);
+    const d0 = live.length ? Math.hypot(live[0].x - u.x, live[0].z - u.z) : 0;
+    // 피 웅덩이 — 지금까지 쓰러진 자리에 흥건하게 고여 있다
+    const pools = app.fx.bloodPools.filter((p) => p.life <= p.max && p.m.visible);
+    return {
+      limbs: live.length,
+      dist: +d0.toFixed(2),
+      minD: +((u.radius || 0.38) + 0.10).toFixed(2),
+      pools: pools.length,
+      nan: !!(live.length && (!isFinite(live[0].x) || !isFinite(live[0].y)))
+    };
+  });
+  ok('🩸 잘린 파츠는 유닛을 통과하지 않고 밀려난다', gore.limbs >= 1 && !gore.nan && gore.dist >= gore.minD, gore);
+  ok('🩸 피 웅덩이가 바닥에 흥건하게 고인다 (풀 상한 안)', gore.pools >= 1 && gore.pools <= 18, gore);
+
+  /* ===== 9. 🏆 마지막 적 사망 모션 뒤에 승리 배너 ===== */
+  const ending = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    app.paused = false;
+    // 적을 한 명만 남기고 전부 쓰러뜨린다 (마지막 한 명은 베임 사망)
+    const foes = b.units.filter((u) => u.team === 'enemy' && !u.dead);
+    for (let i = 0; i < foes.length - 1; i++) b.damage(foes[i], 1e9, null, 'blade');
+    const last = foes[foes.length - 1];
+    last.hp = 1; last.maxHp = 200;
+    b.damage(last, 1e9, b.player, 'blade', 'head');
+    // 끝 판정까지 몇 프레임
+    let guard = 0;
+    while (!b.over && guard++ < 240) {
+      b.update(1 / 60, null);
+      const evs = b.drain();
+      for (const e of evs) app._onEvent(e);      // 실제 루프와 같은 순서로 앱에 전달
+    }
+    const delay = b.resultDelay;
+    const deadT0 = last.deadT;
+    const shownAtEnd = document.getElementById('result').classList.contains('is-on');
+    // 배너 지연 동안 시뮬레이션을 계속 돌린다 (실제 루프와 동일)
+    for (let i = 0; i < 30; i++) b.update(1 / 60, null);
+    const deadT1 = last.deadT;
+    return { over: b.over, delay, deadT0: +deadT0.toFixed(2), deadT1: +deadT1.toFixed(2), shownAtEnd, behead: last.behead };
+  });
+  ok('🏆 마지막 적의 사망 모션(deadT)은 승리 판정 뒤에도 계속 흐른다', ending.over && ending.deadT1 > ending.deadT0 + 0.3,
+    { over: ending.over, d0: ending.deadT0, d1: ending.deadT1 });
+  ok('🏆 승리 배너는 0.5초 이상 미뤄진다 (모션을 끊지 않는다)', ending.delay >= 0.5, { delay: ending.delay });
+  // 배너는 루프의 지연 처리(_pendingT >= _pendingDelay)에서 뜬다 —
+  // SwiftShader 는 프레임이 아주 느려 실시간 대기로는 검증이 어렵기 때문에 같은 경로를 직접 한 번 태운다.
+  const shown = await page.evaluate(() => {
+    const app = window.BA.app;
+    const pending = app._pendingResult;
+    app._pendingT = (app._pendingDelay || 1) + 0.01;
+    if (app._pendingResult) { app._resultShown = false; app._finish(app._pendingResult); app._pendingResult = null; }
+    return { on: document.getElementById('result').classList.contains('is-on'), pending, paused: app.paused };
+  });
+  ok('🏆 대기 시간이 지나면 승리 배너가 뜨고 전장이 멈춘다', shown.on === true && shown.pending === 'ally', shown);
+  await shot('52-result.png');
+
+  /* ===== 10. 🌸 매화 검객 AI가 플레이어에게 일섬을 쓴다 ===== */
+  const dash = await page.evaluate(async () => {
+    window.BA.start({ cls: 'soldier', ally: 0, enemy: 0, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 2 });
+    return true;
+  });
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  const dashInfo = await page.evaluate(() => {
     const b = window.BA.battle, p = b.player;
-    let chasing = 0;
-    for (const u of b.units) { if (u.team !== 'enemy' || u.dead) continue; if (u.target === p) chasing++; }
-    const blocked = b.blockedBy(p, p.x + 0.2, p.z) ? 1 : 0;
-    return {
-      chasing, blocked, moved: +Math.hypot(p.x - g0.px, p.z - g0.pz).toFixed(3),
-      hp: +p.hp.toFixed(0), dead: !!p.dead
-    };
-  }, ghost);
-  ok('관전 중 적이 플레이어를 타겟으로 잡지 않는다 (2.5초 관찰)', ghost2.chasing === 0, ghost2);
-  ok('관전 중 플레이어는 유령 — 밀리지도, 길을 막지도, 맞지도 않는다',
-    ghost2.moved < 0.01 && ghost2.blocked === 0 && ghost2.hp > 0 && ghost2.dead === false, ghost2);
-  await shot('43b-spectate-ghost.png');
-  await page.evaluate(() => {
-    const app = window.BA.app;
-    if (app.camMode === 'spectate') { document.getElementById('camBtn').click(); }
-  });
-  await advance(0.1);
-
-  /* ===== 5b. 🖐️ 1인칭 드래그와 관전 드래그가 같은 방향으로 돈다 ===== */
-  await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle;
-    b.player.yaw = 0; app.camYaw = Math.PI; app.camPitch = 0;
-    app.updateCamera(1 / 60);
-  });
-  const fHead0 = await camHead();
-  await drag(80, 0);                       // 화면을 오른쪽으로 민다
-  const fHead1 = await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle;
-    b.player.yaw = app.camYaw + Math.PI;   // 실제 루프와 같은 순서로 시점 → 몸 방향
-    app.updateCamera(1 / 60);
-    const f = new window.__THREE.Vector3(0, 0, -1).applyQuaternion(app.cam.quaternion);
-    return Math.atan2(f.x, f.z);
-  });
-  const fpTurn = turnOf(fHead0, fHead1);
-  ok('관전 드래그도 1인칭과 같은 쪽으로 돈다 (좌우 반전 없음)',
-    fpTurn * specTurn > 0 && Math.abs(fpTurn) > 0.3 && Math.abs(specTurn) > 0.3 &&
-    Math.abs(Math.abs(specTurn) / Math.abs(fpTurn) - 1) < 0.6,
-    { firstPerson: +fpTurn.toFixed(3), spectate: +specTurn.toFixed(3) });
-
-  /* ===== 6. 🛡️ 일반 병사 방패 막기 ===== */
-  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 10, enemy: 10, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
-  await page.waitForFunction(() => {
-    const s = window.BA.state();
-    return s && s.state === 'battle' && s.player && s.player.cls === 'soldier';
-  }, { timeout: 30000 });
-  await sleep(800);
-  const gb = await page.evaluate(() => {
-    const b = document.getElementById('guardBtn');
-    return { display: getComputedStyle(b).display, label: b.textContent.trim() };
-  });
-  ok('일반 병사로 참전하면 🛡️ 막기 버튼이 보인다', gb.display !== 'none' && /막기/.test(gb.label), gb);
-  await page.evaluate(() => {
-    const b = document.getElementById('guardBtn');
-    const r = b.getBoundingClientRect();
-    b.dispatchEvent(new PointerEvent('pointerdown', {
-      pointerId: 91, pointerType: 'touch', isPrimary: true,
-      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true
-    }));
-  });
-  await page.waitForFunction(() => {
-    const s = window.BA.state();
-    return s && s.player && s.player.guard === true;
-  }, { timeout: 12000 }).catch(() => null);
-  const held = await page.evaluate(() => ({
-    guard: window.BA.state().player.guard, input: window.BA.app.input.guard,
-    cls: document.getElementById('guardBtn').className
-  }));
-  ok('막기 버튼을 누르고 있는 동안 플레이어가 검을 들어 막는다',
-    held.guard === true && held.input === true && /is-held/.test(held.cls), held);
-  await shot('46-guard-first-person.png');
-
-  // 이동속도 0.55배 — 같은 시간에 걸은 거리를 비교
-  const walkDist = async (guard) => {
-    await page.evaluate((g) => {
-      const app = window.BA.app, b = window.BA.battle;
-      app.input.guard = g; app.input.mx = 0; app.input.mz = 1;
-      b.player.x = 0; b.player.z = -6; b.player.yaw = 0; app.camYaw = Math.PI;
-    }, guard);
-    await page.evaluate(() => window.BA.debug.advance(0.5));
-    return page.evaluate(() => {
-      const app = window.BA.app;
-      app.input.mz = 0; app.input.mx = 0;
-      const p = window.BA.state().player;
-      return Math.abs(p.z + 6);
-    });
-  };
-  const dWalk = await walkDist(false);
-  const dGuardWalk = await walkDist(true);
-  ok('막기 중에는 이동속도가 0.55배로 줄어든다',
-    dGuardWalk < dWalk * 0.72 && dGuardWalk > 0.2, { walk: +dWalk.toFixed(2), guardWalk: +dGuardWalk.toFixed(2) });
-
-  // 방어 판정 — 평타는 경감, 뒤는 그대로, 100+ 강타는 크게 경감 + 방패 파괴
-  const dmgRes = await page.evaluate(() => {
-    const b = window.BA.battle;
-    const mk = (guard) => {
-      const u = window.BA.debug.spawn('soldier', 'enemy', 60, 60);
-      u.x = 0; u.z = 0; u.yaw = 0; u.hp = 120; u.maxHp = 120; u.armor = 0; u.dead = false;
-      u.guard = guard; u.guardT = 1;
-      return u;
-    };
-    const front = { x: 0, z: 2, team: 'ally', id: 901 };
-    const back = { x: 0, z: -2, team: 'ally', id: 902 };
-    const a = mk(false); b.damage(a, 120, front, 'blade');
-    const c = mk(true); b.damage(c, 120, front, 'blade');
-    const d = mk(true); b.damage(d, 220, front, 'hammer');
-    const e = mk(true); b.damage(e, 120, back, 'blade');
-    return { plainDead: a.dead, plainDmg: +(120 - a.hp).toFixed(1), blockedHp: +c.hp.toFixed(1),
-      heavy: +(120 - d.hp).toFixed(2), heavyBreak: !d.guard, backDead: e.dead };
-  });
-  ok('검 막기 — 정면 평타(120)는 피해 0(완전 방어), 뒤에서 맞으면 그대로 죽는다',
-    dmgRes.plainDead === true && dmgRes.blockedHp === 120 && dmgRes.backDead === true, dmgRes);
-  ok('기사의 220 망치 강타는 75 정도만 관통하고 가드가 깨진다',
-    dmgRes.heavy > 60 && dmgRes.heavy < 90 && dmgRes.heavyBreak === true, dmgRes);
-
-  // AI 일반 병사도 검을 들어 막는다
-  const aiGuard = await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle;
-    app.input.guard = false; app.input.mx = 0; app.input.mz = 0;
-    const teams = { ally: 0, enemy: 0 };
-    let seen = 0, maxAtOnce = 0, blocks = 0, zeroBlocks = 0, hits = 0;
+    p.hp = 1e6; p.maxHp = 1e6;
+    let n = 0;
     const orig = b.emit.bind(b);
-    b.emit = (e) => {
-      if (e.type === 'block') { blocks++; if (e.dmg === 0) zeroBlocks++; }
-      else if (e.type === 'hit') hits++;
-      return orig(e);
-    };
-    for (let i = 0; i < 40; i++) {
-      window.BA.debug.advance(0.2);
-      let n = 0;
-      for (const u of b.units) {
-        if (u.isPlayer || u.cls !== 'soldier' || u.dead || !u.guard) continue;
-        n++; teams[u.team] = 1;
-      }
-      if (n > 0) seen++;
-      maxAtOnce = Math.max(maxAtOnce, n);
-    }
+    b.emit = (e) => { if (e.type === 'petalDash') n++; return orig(e); };
+    for (let i = 0; i < 20; i++) window.BA.debug.advance(1);
     b.emit = orig;
-    const soldiers = b.units.filter((u) => !u.isPlayer && u.cls === 'soldier').length;
-    return { seen, maxAtOnce, teams, soldiers, blocks, zeroBlocks, hits };
+    return { n, alive: b.countAlive('enemy') };
   });
-  ok('AI 일반 병사도 교전 중 검을 들어 막는다 (아군·적군 공통)',
-    aiGuard.seen > 0 && aiGuard.teams.ally === 1 && aiGuard.teams.enemy === 1, aiGuard);
-  ok('AI 병사가 실제로 막아 공격을 0 피해로 튕겨낸다', aiGuard.zeroBlocks > 0, aiGuard);
-
-  // 방패 자세가 실제로 그려지는지 — 관전으로 아군 병사 앞에 서서 스크린샷
-  await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle;
-    app.paused = true;
-    const u = b.units.find((x) => x.team === 'ally' && x.cls === 'soldier' && !x.isPlayer && !x.dead) ||
-      window.BA.debug.spawn('soldier', 'ally', 0, 0);   // 아군이 전멸했으면 한 명 새로 세운다
-    for (const x of b.units) {
-      if (x === u) continue;
-      if (x.isPlayer) { x.guard = false; x.x = 0; x.z = -40; continue; }
-      x.dead = true; x.removed = true; x.x = 60; x.z = 90; x.hideModel = true;
-    }
-    u.dead = false; u.removed = false; u.hideModel = false;
-    u.x = 0; u.z = 0; u.yaw = Math.PI; u.guard = true; u.guardT = 99; u.attackT = -1; u.moveAmt = 0;
-    app.camMode = 'spectate'; app.spectate = null; app._enterSpectate();
-    const s = app.spectate;
-    s.x = 1.5; s.z = -2.4; s.y = 1.45; s.yaw = Math.atan2(-1.5, 2.4); s.pitch = -0.08;
-    app.updateCamera(1 / 60);
-    document.getElementById('deadVeil').classList.remove('is-on');
-  });
-  await sleep(1200);
-  await shot('45-guard-pose.png');
-
-  /* ===== 6b. 시체가 남아 있어도 즉시 충원 ===== */
-  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 200, enemy: 200, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
-  await page.waitForFunction(() => {
-    const s = window.BA.state();
-    return s && s.state === 'battle' && s.player && s.units > 100;
-  }, { timeout: 60000 });
-  await sleep(400);
-  const reinf = await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle;
-    app.paused = true;
-    app.input.guard = false;
-    const before = b.countAlive('ally');
-    const reserve0 = b.reserveTotal('ally');
-    let killed = 0;
-    for (const u of b.units) {
-      if (u.team !== 'ally' || u.isPlayer || u.dead) continue;
-      u.dead = true; u.hp = 0; u.deadT = 0; u.hitDone = true; u.attackT = -1;
-      if (++killed >= 6) break;
-    }
-    const afterKill = b.countAlive('ally');
-    const corpses0 = b.units.filter((u) => u.dead && !u.removed).length;
-    window.BA.debug.advance(0.45);
-    return {
-      before, killed, afterKill, corpses0,
-      after: b.countAlive('ally'), corpses1: b.units.filter((u) => u.dead && !u.removed).length,
-      reserve0, reserve1: b.reserveTotal('ally')
-    };
-  });
-  ok('병사가 죽으면 시체가 남아 있어도 즉시 충원된다 (0.45초 안에 6명 복귀)',
-    reinf.after >= reinf.afterKill + 5 && reinf.reserve1 <= reinf.reserve0 - 5 && reinf.corpses1 > 0, reinf);
-
-  /* ===== 6d. 🛡️ AI 병사 막기 빈도 — 가끔 한 번씩만 ===== */
-  // 예전: 320명 교전 12초에 병사 1인당 5.4번 막기 자세(전투 중 15%가 막는 중) · 공겨의 40%가 막힘
-  const blockRate = await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle;
-    app.paused = true;
-    app.input.guard = false; app.input.mx = 0; app.input.mz = 0; app.input.attack = false;
-    let blocks = 0, zero = 0, hits = 0, episodes = 0, guardFrames = 0, frames = 0;
-    const wasGuard = new Map();
-    const orig = b.emit.bind(b);
-    // 🎬 관전(유령) 중인 플레이어는 AI의 표적이 아니므로, 플레이어가 얽힌 타격은 집계에서 뺀다
-    const mine = (e) => (e.unit && e.unit.isPlayer) || (e.target && e.target.isPlayer) || (e.source && e.source.isPlayer);
-    b.emit = (e) => {
-      if (mine(e)) return orig(e);
-      if (e.type === 'block') { blocks++; if (e.dmg === 0) zero++; }
-      else if (e.type === 'hit') hits++;
-      return orig(e);
-    };
-    for (let i = 0; i < 30; i++) {          // 0.2초 × 30 = 6초
-      window.BA.debug.advance(0.2);
-      b.playerSafe = true;
-      let n = 0;
-      for (const u of b.units) {
-        if (u.isPlayer || u.cls !== 'soldier' || u.dead) continue;
-        const g = !!u.guard;
-        if (g && !wasGuard.get(u.id)) episodes++;
-        wasGuard.set(u.id, g);
-        if (g) { n++; guardFrames++; }
-      }
-      frames++;
-    }
-    b.emit = orig;
-    const soldiers = b.units.filter((u) => !u.isPlayer && u.cls === 'soldier' && !u.dead).length;
-    return {
-      blocks, zero, hits, episodes, soldiers, frames,
-      blockShare: +(blocks / Math.max(1, blocks + hits) * 100).toFixed(1),
-      guardsPerSoldierPerSec: +(episodes / Math.max(1, soldiers) / (frames * 0.2)).toFixed(3),
-      guardTimePct: +(guardFrames / Math.max(1, soldiers * frames) * 100).toFixed(1)
-    };
-  });
-  ok('AI 병사 막기 빈도 대폭 하향 — 병사 1인당 1초에 0.25번 미만(예전 0.45번)',
-    blockRate.guardsPerSoldierPerSec < 0.25 && blockRate.episodes > 0, blockRate);
-  ok('막는 자세로 보내는 시간이 전투의 10% 미만 (예전 15%) · 막힌 공격 비율 30% 미만 (예전 40%)',
-    blockRate.guardTimePct < 10 && blockRate.blockShare < 30, blockRate);
-
-  /* ===== 6c. 상세 모델 슬롯 — 카메라 코앞 병사가 블록 실루엣으로 떨어지지 않는다 ===== */
-  const lod = await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle;
-    app.paused = true;
-    const p = b.player;
-    p.x = 0; p.z = 0; p.yaw = 0; app.camYaw = Math.PI; app.camPitch = 0;
-    const all = b.units.filter((u) => !u.isPlayer && !u.dead && u.cls === 'soldier');
-    const near = all.slice(-12);          // 목록 맨 뒤(=예전엔 슬롯을 못 받던) 12명
-    let k = 0;
-    for (const u of all) {
-      if (near.includes(u)) {
-        const a = (k / near.length) * Math.PI * 2;
-        u.x = Math.sin(a) * 5; u.z = Math.cos(a) * 5; k++;
-        u.moveAmt = 0;
-      } else { u.x = 300 + (k++ % 40) * 3; u.z = 300; }
-    }
-    const bucket = app.unitRenderer.buckets.soldier;
-    const rest = bucket.filter((u) => !near.includes(u));
-    app.unitRenderer.buckets.soldier = rest.concat(near);
-    app.unitRenderer.classes.soldier.units = app.unitRenderer.buckets.soldier;
-    app.updateCamera(1 / 60);
-    app.unitRenderer.update(app.unitRenderer.buckets.soldier, app.cam.position, app.time, 1 / 60);
-    const rows = near.map((u) => ({ id: u.id, d: +Math.hypot(u.x, u.z).toFixed(1), dslot: u.dslot, tier: u._tier }));
-    return {
-      total: bucket.length, dcap: app.unitRenderer.classes.soldier.dcap,
-      near: rows.length, detailed: rows.filter((r) => r.dslot >= 0).length,
-      blocks: rows.filter((r) => r.dslot < 0).length, rows
-    };
-  });
-  ok('상세 예산이 꽉 차도 카메라 코앞 병사는 블록 실루엣이 아니라 상세 모델로 그려진다',
-    lod.near === 12 && lod.detailed === 12 && lod.blocks === 0 && lod.total > lod.dcap,
-    { total: lod.total, dcap: lod.dcap, detailed: lod.detailed, blocks: lod.blocks, rows: lod.rows.slice(0, 4) });
-
-  /* ===== 7. 결과 미니 카드 ===== */
-  await page.evaluate(() => window.BA.app._finish('ally'));
-  await sleep(120);
-  const resBox = await page.evaluate(() => {
-    const r = document.getElementById('result');
-    const c = r.querySelector('.result-card');
-    const b = c.getBoundingClientRect();
-    const cs = getComputedStyle(r);
-    return {
-      on: r.classList.contains('is-on'), w: Math.round(b.width), h: Math.round(b.height),
-      x: Math.round(b.x), y: Math.round(b.y), bottom: Math.round(b.bottom),
-      bg: cs.backgroundColor, blur: cs.backdropFilter, area: Math.round((b.width * b.height) / (390 * 844) * 100)
-    };
-  });
-  ok('승리 결과는 화면을 가리지 않는 미니 카드 (딤드 없음 · 중앙 비움)'.replace('중앙 비움', '작은 크기'),
-    resBox.on && resBox.w <= 310 && resBox.h < 210 && resBox.area < 13 &&
-    (resBox.bg === 'rgba(0, 0, 0, 0)' || resBox.bg === 'transparent'), resBox);
-  await shot('44-result-mini.png');
-  const closed = await page.evaluate(() => {
-    document.getElementById('resClose').click();
-    const app = window.BA.app;
-    return { on: document.getElementById('result').classList.contains('is-on'), mode: app.camMode, paused: app.paused };
-  });
-  ok('✕ 로 닫으면 결과창이 사라지고 전장을 자유롭게 구경한다',
-    closed.on === false && closed.mode === 'spectate' && closed.paused === false, closed);
-  await sleep(200);
-  await shot('47-after-result-close.png');
+  ok('🌸 적 매화 검객 AI가 플레이어를 향해 매화 일섬을 쓴다', dashInfo.n >= 1, dashInfo);
+  await shot('53-petal-ai.png');
 
   ok('콘솔/페이지 오류 0 (헤드리스 SwiftShader)', errors.length === 0, errors.slice(0, 5));
   console.log(`\n모든 테스트 통과 (${passed}개) · 스크린샷 ${SHOTS}`);

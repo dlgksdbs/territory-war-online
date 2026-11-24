@@ -159,17 +159,42 @@ export class Sfx {
     }
   }
 
-  /* 막기 — 강철이 강철을 튕겨내는 "팅!" */
+  /* 막기 — 강철이 강철을 튕겨내는 "쨍!"
+     짧은 금속 크랙 → 비화성 공명 두 겹 → 미끄러지는 잔향 → 저역 몸통의 4겹.
+     가벼운 막기와 큰 강타의 무게 차이가 한 번에 들리도록 만들었다. */
   block(dist, strong) {
     if (!this.ready || !this.enabled) return;
-    const att = this._atten(dist, 28);
+    const att = this._atten(dist, 30);
     if (att <= 0.02) return;
-    const g = att * (strong ? 1.35 : 1);
-    this._metal(1850, 0.20 * g, 0, strong ? 0.34 : 0.22, 1.0);
-    this._noise(0.06, 'highpass', 4200, 7600, 0.20 * g, 1.3);
-    this._noise(0.16, 'bandpass', 1600, 3200, 0.10 * g, 2.2, 0.006);
-    this._tone('sine', 260, 120, 0.10, 0.10 * g);
-    if (strong) this._tone('sine', 130, 60, 0.26, 0.16 * g, 0.01);
+    const g = att * (strong ? 1.5 : 1);
+    // 1) 접촉 순간의 아주 짧은 크랙
+    this._noise(0.032, 'highpass', 5400, 9200, 0.30 * g, 1.6);
+    this._noise(0.055, 'bandpass', 3600, 2300, 0.20 * g, 3.4);
+    // 2) 맑게 갈라지는 강철 공명 — 살짝 어긋난 두 겹
+    this._metal(2380, 0.23 * g, 0, strong ? 0.33 : 0.21, 1.0);
+    this._metal(1910, 0.14 * g, 0.012, strong ? 0.40 : 0.26, 1.008);
+    // 3) 검과 검이 미끄러지는 '쨍그랑' 잔향
+    this._tone('triangle', 3180, 2450, 0.13, 0.10 * g, 0.016);
+    this._noise(0.11, 'bandpass', 2500, 5400, 0.085 * g, 2.6, 0.03);
+    // 4) 몸통 — 강타면 배를 때리는 저음이 따라온다
+    this._tone('sine', 195, 88, 0.13, (strong ? 0.20 : 0.09) * g, 0.004);
+    if (strong) {
+      this._tone('sine', 122, 52, 0.30, 0.17 * g, 0.010);
+      this._noise(0.18, 'lowpass', 950, 130, 0.10 * g, 0.7);
+    }
+  }
+
+  /* 🩸 부위 절단 — 살이 갈라지고 뼈·금속이 스치는 소리 */
+  sever(dist, head) {
+    if (!this.ready || !this.enabled) return;
+    const att = this._atten(dist, 34);
+    if (att <= 0.03) return;
+    const g = att * (head ? 1.3 : 1);
+    this._noise(0.13, 'bandpass', 950, 240, 0.24 * g, 1.1);
+    this._noise(0.22, 'lowpass', 2200, 280, 0.16 * g, 0.7);
+    this._tone('sine', 155, 58, 0.17, 0.17 * g);
+    this._metal(1240, 0.05 * g, 0.008, 0.10, 0.82);
+    if (head) this._noise(0.30, 'highpass', 1500, 5400, 0.10 * g, 0.9, 0.03);
   }
 
   /* 마법 */

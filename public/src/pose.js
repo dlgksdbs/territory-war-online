@@ -96,9 +96,9 @@ const BASE = {
     ROT('elbR', -0.62, 0.05, 0),
     ROT('handR', -0.18, 0, 0.12),
     ROT('shL', 0, 0, 0.05),
-    ROT('armL', -0.10, 0.05, -0.16),
-    ROT('elbL', -0.20, 0, 0),
-    ROT('handL', 0.04, 0, -0.08),
+    ROT('armL', -0.16, 0.12, -0.52),
+    ROT('elbL', -0.42, 0, 0),
+    ROT('handL', 0.10, 0, -0.10),
     ROT('thighR', -0.02, 0, 0.05),
     ROT('shinR', 0.08, 0, 0),
     ROT('footR', -0.05, 0, 0),
@@ -114,33 +114,33 @@ const ATTACK = {
     dur: 0.92,
     keys: [
       { t: 0.00, j: {} },
-      { t: 0.10, j: { spine: [0.10, 0.10, 0], armR: [-0.30, 0.10, 0.32], elbR: [-0.85, 0.1, 0] }, ease: 'inout' },
-      { t: 0.30, j: {
-        spine: [-0.10, 0.58, 0.05], chest: [-0.06, 0.34, 0.06], neck: [0, -0.25, 0], head: [0.02, -0.38, 0],
-        armR: [0.52, 0.30, 0.88], elbR: [-1.18, 0.1, 0], handR: [-0.62, -0.30, 0.32],
-        armL: [-0.48, -0.1, -0.28], elbL: [-1.30, 0, 0],
-        thighR: [0.20, 0, 0.09], shinR: [0.30, 0, 0], thighL: [-0.14, 0, -0.08], shinL: [0.24, 0, 0],
-        root: [-0.045, -0.035]
+      { t: 0.09, j: { spine: [0.12, 0.16, 0], chest: [0.04, 0.10, 0], armR: [-0.36, 0.14, 0.36], elbR: [-0.92, 0.1, 0], root: [-0.01, -0.02] }, ease: 'inout' },
+      { t: 0.28, j: {
+        spine: [-0.08, 0.72, 0.08], chest: [-0.05, 0.42, 0.08], neck: [0, -0.30, 0], head: [0.02, -0.44, 0.04],
+        armR: [0.34, 0.34, 0.98], elbR: [-1.30, 0.1, 0], handR: [-0.55, -0.35, 0.40],
+        armL: [-0.52, -0.12, -0.30], elbL: [-1.40, 0, 0],
+        thighR: [0.22, 0, 0.09], shinR: [0.34, 0, 0], thighL: [-0.16, 0, -0.08], shinL: [0.26, 0, 0],
+        root: [-0.055, -0.045]
       }, ease: 'out' },
-      { t: 0.42, j: {
-        spine: [0.30, -0.46, -0.04], chest: [0.16, -0.34, -0.05], neck: [0.04, 0.10, 0], head: [0.06, 0.06, 0],
-        armR: [-1.08, -0.18, 0.04], elbR: [-0.14, 0, 0], handR: [0.92, 0.16, -0.10],
-        armL: [-0.72, 0.05, -0.42], elbL: [-1.42, 0, 0],
-        thighR: [-0.42, 0, 0.10], shinR: [0.48, 0, 0], thighL: [0.26, 0, -0.09], shinL: [0.32, 0, 0],
-        root: [-0.075, 0.16]
+      { t: 0.40, j: {
+        spine: [0.34, -0.52, -0.06], chest: [0.18, -0.38, -0.06], neck: [0.04, 0.12, 0], head: [0.06, 0.08, 0],
+        armR: [-1.16, -0.22, 0.02], elbR: [-0.10, 0, 0], handR: [1.00, 0.20, -0.12],
+        armL: [-0.78, 0.06, -0.46], elbL: [-1.46, 0, 0],
+        thighR: [-0.46, 0, 0.10], shinR: [0.52, 0, 0], thighL: [0.28, 0, -0.09], shinL: [0.34, 0, 0],
+        root: [-0.085, 0.18]
       }, ease: 'out' },
-      { t: 0.56, j: {
-        spine: [0.22, -0.62, -0.03], chest: [0.06, -0.30, 0], head: [0.02, 0.10, 0],
-        armR: [-0.58, -0.30, -0.24], elbR: [-0.78, 0, 0], handR: [0.52, 0.20, -0.18],
-        armL: [-0.60, 0.05, -0.36], elbL: [-1.30, 0, 0],
-        thighR: [-0.30, 0, 0.10], shinR: [0.36, 0, 0], thighL: [0.18, 0, -0.09],
-        root: [-0.05, 0.18]
+      { t: 0.54, j: {
+        spine: [0.24, -0.76, -0.04], chest: [0.08, -0.36, 0], head: [0.02, 0.14, 0],
+        armR: [-0.48, -0.38, -0.30], elbR: [-0.62, 0, 0], handR: [0.42, 0.26, -0.24],
+        armL: [-0.66, 0.06, -0.40], elbL: [-1.34, 0, 0],
+        thighR: [-0.34, 0, 0.10], shinR: [0.40, 0, 0], thighL: [0.20, 0, -0.09],
+        root: [-0.055, 0.20]
       }, ease: 'inout' },
-      { t: 0.72, j: {
-        spine: [0.12, -0.34, 0], chest: [0.02, -0.16, 0],
-        armR: [-0.44, -0.12, 0.02], elbR: [-0.92, 0, 0], handR: [0.62, 0.0, 0.05],
-        armL: [-0.42, 0, -0.26], elbL: [-1.16, 0, 0],
-        root: [-0.02, 0.08]
+      { t: 0.70, j: {
+        spine: [0.10, -0.40, 0], chest: [0.02, -0.18, 0],
+        armR: [-0.52, -0.14, 0.02], elbR: [-0.98, 0, 0], handR: [0.58, 0.02, 0.04],
+        armL: [-0.46, 0, -0.28], elbL: [-1.18, 0, 0],
+        root: [-0.02, 0.09]
       }, ease: 'inout' },
       { t: 0.92, j: {}, ease: 'inout' }
     ]
@@ -193,33 +193,33 @@ const ATTACK = {
     dur: 0.80,
     keys: [
       { t: 0.00, j: {} },
-      { t: 0.08, j: { spine: [0.12, 0.24, 0], armR: [-0.60, -0.30, 0.44], elbR: [-1.10, 0, 0] }, ease: 'inout' },
-      { t: 0.24, j: {
-        spine: [-0.10, 0.62, 0.06], chest: [-0.06, 0.36, 0.06], neck: [0, -0.3, 0], head: [0, -0.34, 0],
-        armR: [0.34, 0.20, 0.80], elbR: [-1.26, 0, 0], handR: [-0.55, -0.35, 0.30],
-        armL: [-0.70, -0.10, -0.34], elbL: [-1.40, 0, 0],
-        thighR: [0.14, 0, 0.13], shinR: [0.34, 0, 0], thighL: [-0.16, 0, -0.13], shinL: [0.30, 0, 0],
-        root: [-0.06, -0.04]
+      { t: 0.07, j: { spine: [0.14, 0.30, 0], armR: [-0.64, -0.34, 0.50], elbR: [-1.16, 0, 0], root: [-0.01, -0.02] }, ease: 'inout' },
+      { t: 0.22, j: {
+        spine: [-0.12, 0.76, 0.08], chest: [-0.07, 0.44, 0.08], neck: [0, -0.34, 0], head: [0, -0.40, 0.04],
+        armR: [0.22, 0.26, 0.92], elbR: [-1.38, 0, 0], handR: [-0.48, -0.42, 0.40],
+        armL: [-0.78, -0.14, -0.38], elbL: [-1.46, 0, 0],
+        thighR: [0.16, 0, 0.13], shinR: [0.36, 0, 0], thighL: [-0.18, 0, -0.13], shinL: [0.32, 0, 0],
+        root: [-0.07, -0.05]
       }, ease: 'out' },
-      { t: 0.34, j: {
-        spine: [0.34, -0.55, -0.06], chest: [0.18, -0.40, -0.05], head: [0.04, 0.10, 0],
-        armR: [-1.20, -0.25, -0.10], elbR: [-0.10, 0, 0], handR: [0.95, 0.25, -0.18],
-        armL: [-0.95, 0.05, -0.50], elbL: [-1.50, 0, 0],
-        thighR: [-0.55, 0, 0.13], shinR: [0.62, 0, 0], thighL: [0.34, 0, -0.13], shinL: [0.40, 0, 0],
-        root: [-0.10, 0.26]
+      { t: 0.33, j: {
+        spine: [0.38, -0.62, -0.08], chest: [0.20, -0.44, -0.06], head: [0.04, 0.12, 0],
+        armR: [-1.30, -0.28, -0.12], elbR: [-0.08, 0, 0], handR: [1.02, 0.30, -0.20],
+        armL: [-1.02, 0.06, -0.54], elbL: [-1.52, 0, 0],
+        thighR: [-0.60, 0, 0.13], shinR: [0.66, 0, 0], thighL: [0.36, 0, -0.13], shinL: [0.42, 0, 0],
+        root: [-0.11, 0.28]
       }, ease: 'out' },
-      { t: 0.46, j: {
-        spine: [0.26, -0.70, -0.04], chest: [0.10, -0.34, 0], head: [0.02, 0.12, 0],
-        armR: [-0.62, -0.42, -0.34], elbR: [-0.70, 0, 0], handR: [0.55, 0.20, -0.22],
-        armL: [-0.80, 0.05, -0.42], elbL: [-1.30, 0, 0],
-        thighR: [-0.40, 0, 0.13], shinR: [0.50, 0, 0], thighL: [0.26, 0, -0.13],
-        root: [-0.06, 0.30]
+      { t: 0.45, j: {
+        spine: [0.28, -0.84, -0.05], chest: [0.12, -0.40, 0], head: [0.02, 0.14, 0],
+        armR: [-0.60, -0.48, -0.40], elbR: [-0.66, 0, 0], handR: [0.50, 0.24, -0.26],
+        armL: [-0.86, 0.05, -0.46], elbL: [-1.32, 0, 0],
+        thighR: [-0.44, 0, 0.13], shinR: [0.54, 0, 0], thighL: [0.28, 0, -0.13],
+        root: [-0.07, 0.32]
       }, ease: 'inout' },
       { t: 0.62, j: {
-        spine: [0.16, -0.40, 0], chest: [0.04, -0.18, 0],
-        armR: [-0.50, -0.24, 0.10], elbR: [-0.92, 0, 0], handR: [0.40, -0.30, 0.06],
-        armL: [-0.62, 0.04, -0.34], elbL: [-1.18, 0, 0],
-        root: [-0.03, 0.16]
+        spine: [0.14, -0.46, 0], chest: [0.04, -0.20, 0],
+        armR: [-0.48, -0.28, 0.12], elbR: [-0.96, 0, 0], handR: [0.36, -0.32, 0.08],
+        armL: [-0.66, 0.04, -0.36], elbL: [-1.20, 0, 0],
+        root: [-0.03, 0.17]
       }, ease: 'inout' },
       { t: 0.80, j: {}, ease: 'inout' }
     ]
@@ -290,38 +290,48 @@ function applyKeys(p, cls, t) {
    --------------------------------------------------------------------------- */
 function applyLocomotion(p, cls, phase, move, t, u) {
   if (move <= 0.001) return;
-  const heavy = cls === 'knight' ? 0.78 : cls === 'wizard' ? 0.42 : 1;
+  const heavy = cls === 'knight' ? 0.74 : cls === 'wizard' ? 0.46 : 1;
   const amp = clamp(move, 0, 1) * heavy;
   const s = Math.sin(phase), c = Math.cos(phase);
-  const stride = cls === 'knight' ? 0.52 : cls === 'wizard' ? 0.34 : 0.66;
+  const stride = cls === 'knight' ? 0.50 : cls === 'wizard' ? 0.33 : 0.68;
   const thighAmp = stride * amp;
 
+  /* 다리: 앞으로 내딛는 동안 무릎을 접고, 뒤로 밀 때 다리를 편다 */
   const thR = -s * thighAmp;
   const thL = s * thighAmp;
-  const kneeR = (0.16 + Math.max(0, -c) * 1.05) * amp + 0.10;
-  const kneeL = (0.16 + Math.max(0, c) * 1.05) * amp + 0.10;
+  const swingR = Math.max(0, -c), swingL = Math.max(0, c);
+  const kneeR = (0.14 + swingR * 1.32) * amp + 0.06;
+  const kneeL = (0.14 + swingL * 1.32) * amp + 0.06;
   R(p, J.thighR, thR, 0, 0);
   R(p, J.thighL, thL, 0, 0);
   R(p, J.shinR, kneeR, 0, 0);
   R(p, J.shinL, kneeL, 0, 0);
-  R(p, J.footR, -thR * 0.42 - kneeR * 0.35, 0, 0);
-  R(p, J.footL, -thL * 0.42 - kneeL * 0.35, 0, 0);
+  /* 발목: 차기 순간 발끝이 들리고, 디딤에서 발바닥이 땅에 붙는다 */
+  R(p, J.footR, -thR * 0.55 - kneeR * 0.46 + swingR * 0.34, 0, 0);
+  R(p, J.footL, -thL * 0.55 - kneeL * 0.46 + swingL * 0.34, 0, 0);
 
-  // 골반 상하 · 좌우 흔들림
-  const bob = Math.abs(Math.sin(phase)) * (cls === 'knight' ? 0.055 : 0.035) * amp;
-  p.rootAdd[1] -= bob + 0.01 * amp;
-  R(p, J.pelvis, 0, s * 0.07 * amp, -s * 0.045 * amp);
-  R(p, J.spine, (cls === 'knight' ? 0.06 : 0.03) * amp, -s * 0.06 * amp, s * 0.02 * amp);
-  R(p, J.chest, 0, -s * 0.05 * amp, 0);
+  /* 골반: 좌우 흔들림(롤) · 걸음마다 돌아가는 요 · 위아래 반동(2배 주기) */
+  const bob = Math.abs(s) * (cls === 'knight' ? 0.06 : 0.038) * amp;
+  p.rootAdd[1] -= bob + 0.008 * amp;
+  R(p, J.pelvis, 0.02 * amp, -s * 0.12 * amp, -s * 0.055 * amp);
+  /* 허리는 앞으로 기울고(속도 비례), 어깨는 골반과 반대로 비틀려 팔이 따라온다 */
+  const lean = (cls === 'knight' ? 0.10 : cls === 'wizard' ? 0.05 : 0.085) * amp;
+  R(p, J.spine, lean, s * 0.13 * amp, s * 0.03 * amp);
+  R(p, J.chest, 0.02 * amp, s * 0.10 * amp, -s * 0.02 * amp);
+  R(p, J.neck, -lean * 0.55, -s * 0.09 * amp, 0);
 
-  // 팔 반동 (오른팔은 무기 무게로 조금 덜)
-  const armSwing = (cls === 'knight' ? 0.16 : cls === 'wizard' ? 0.10 : 0.26) * amp;
-  R(p, J.armR, s * armSwing * 0.7, 0, 0);
-  R(p, J.armL, -s * armSwing, 0, 0);
-  R(p, J.elbR, Math.max(0, s) * 0.22 * amp, 0, 0);
-  R(p, J.elbL, Math.max(0, -s) * 0.18 * amp, 0, 0);
-  // 머리는 흔들림을 상쇄해 시선 고정
-  R(p, J.head, -bob * 0.6, s * 0.03 * amp, 0);
+  /* 팔: 무기 팔은 무게 때문에 작게, 반대 팔은 크게 흔들린다 · 팔꿈치가 늦게 따라온다 */
+  const armSwing = (cls === 'knight' ? 0.13 : cls === 'wizard' ? 0.09 : 0.30) * amp;
+  R(p, J.shR, s * 0.05 * amp, 0, 0);
+  R(p, J.shL, -s * 0.07 * amp, 0, 0);
+  R(p, J.armR, s * armSwing * 0.62, 0, s * 0.03 * amp);
+  R(p, J.armL, -s * armSwing, 0, -s * 0.03 * amp);
+  R(p, J.elbR, Math.max(0, s) * 0.30 * amp + 0.06 * amp, 0, 0);
+  R(p, J.elbL, Math.max(0, -s) * 0.34 * amp + 0.06 * amp, 0, 0);
+  R(p, J.handR, -s * 0.10 * amp, 0, 0);
+  R(p, J.handL, s * 0.06 * amp, 0, 0);
+  /* 머리는 흔들림을 상쇄해 시선을 고정 */
+  R(p, J.head, -bob * 0.7 - lean * 0.4, s * 0.05 * amp, 0);
 }
 
 /* ---------------------------------------------------------------------------
@@ -429,30 +439,72 @@ export function computePose(u, t, dt) {
     if (norm <= def.dur) applyKeys(p, cls, Math.min(norm, def.dur));
   }
 
-  // 피격 경직
+  // 피격 경직 — 맞은 방향으로 젖혀지고 무릎이 꿇리는 반동
   if (u.staggerT > 0) {
     const k = smoothstep(Math.min(1, u.staggerT / 0.28));
-    R(p, J.spine, 0.24 * k, (u.staggerSide || 1) * 0.18 * k, 0);
-    R(p, J.chest, 0.12 * k, 0, 0);
-    R(p, J.head, 0.18 * k, 0, 0);
-    R(p, J.armR, 0.22 * k, 0, 0.18 * k);
-    R(p, J.armL, 0.22 * k, 0, -0.18 * k);
-    p.rootAdd[2] -= 0.05 * k;
+    const side = u.staggerSide || 1;
+    R(p, J.spine, 0.30 * k, side * 0.22 * k, 0);
+    R(p, J.chest, 0.14 * k, side * 0.07 * k, 0);
+    R(p, J.neck, 0.10 * k, 0, 0);
+    R(p, J.head, 0.22 * k, side * 0.09 * k, side * 0.05 * k);
+    R(p, J.armR, 0.30 * k, 0, 0.22 * k);
+    R(p, J.armL, 0.28 * k, 0, -0.22 * k);
+    R(p, J.elbR, 0.20 * k, 0, 0);
+    R(p, J.thighR, 0.16 * k, 0, 0);
+    R(p, J.shinR, 0.24 * k, 0, 0);
+    R(p, J.thighL, -0.10 * k, 0, 0);
+    p.rootAdd[2] -= 0.07 * k;
+    p.rootAdd[0] -= 0.03 * k;
   }
 
   // 시선 목표 (머리만 살짝)
   if (u.lookYaw) R(p, J.head, 0, clamp(u.lookYaw, -0.6, 0.6) * 0.55, 0);
 
-  // 🛠️ 검으로 막기 자세 — 일반 병사가 오른손 검을 눈앞으로 가로·대각선으로 치켜들고 몸을 웅크린다 (방패 없음)
-  if (u.guard && cls === 'soldier') {
-    R(p, J.shR, 0.05, -0.30, -0.15);
-    R(p, J.armR, -0.95, -0.30, -0.45);
-    R(p, J.elbR, -1.30, 0, 0);
-    R(p, J.handR, 0.10, -1.15, 0.30);
-    R(p, J.chest, 0.12, -0.14, 0);
-    R(p, J.spine, 0.05, -0.08, 0);
-    R(p, J.armL, -0.42, -0.30, 0.22);
-    R(p, J.elbL, -1.10, 0, 0);
+  // 🛡️ 막기 자세 — 상체를 살짝 숙이고 두 발을 벌려 버티며 무기를 대각선으로 세운다
+  if (u.guard) {
+    // 공통: 무게중심을 낮추고 두 발을 앞뒤로 벌린 안정된 자세
+    R(p, J.thighR, -0.30, 0, 0.16);
+    R(p, J.shinR, 0.54, 0, 0);
+    R(p, J.footR, -0.26, 0, 0);
+    R(p, J.thighL, 0.20, 0, -0.16);
+    R(p, J.shinL, 0.46, 0, 0);
+    R(p, J.footL, -0.18, 0, 0);
+    R(p, J.pelvis, 0.08, -0.10, 0);
+    R(p, J.spine, 0.16, 0.14, 0);
+    R(p, J.chest, 0.10, 0.16, 0);
+    R(p, J.neck, -0.10, -0.12, 0);
+    R(p, J.head, -0.06, -0.10, 0);
+    p.rootAdd[0] -= 0.045;
+    p.rootAdd[2] -= 0.06;
+    if (cls === 'soldier' || cls === 'blademaster') {
+      // 검을 얼굴 앞 대각선으로 세우고 왼손을 받쳐 든다
+      R(p, J.shR, 0.10, -0.34, -0.22);
+      R(p, J.armR, -1.02, -0.34, -0.52);
+      R(p, J.elbR, -1.42, 0, 0);
+      R(p, J.handR, 0.06, -1.18, 0.42);
+      R(p, J.shL, 0.02, 0.20, 0.10);
+      R(p, J.armL, -0.52, -0.34, 0.34);
+      R(p, J.elbL, -1.30, 0, 0);
+      R(p, J.handL, 0.10, 0.24, -0.16);
+    } else if (cls === 'knight') {
+      // 망치 자루를 가슴 앞에 비스듬히 받치고 어깨로 밀어내는 자세
+      R(p, J.shR, 0.14, -0.30, -0.20);
+      R(p, J.armR, -0.62, -0.42, -0.34);
+      R(p, J.elbR, -1.50, 0, 0);
+      R(p, J.handR, -0.40, -0.75, 0.30);
+      R(p, J.shL, 0.04, 0.24, 0.12);
+      R(p, J.armL, -1.35, -0.20, 0.42);
+      R(p, J.elbL, -0.90, 0, 0);
+      R(p, J.handL, 0.30, 0.30, -0.20);
+    } else {
+      // 지팡이를 몸 앞으로 세워 막는다
+      R(p, J.shL, 0.02, 0.28, 0.14);
+      R(p, J.armL, -1.30, -0.10, 0.48);
+      R(p, J.elbL, -1.10, 0, 0);
+      R(p, J.handL, 0.20, -0.55, -0.20);
+      R(p, J.armR, -0.95, -0.20, -0.30);
+      R(p, J.elbR, -1.15, 0, 0);
+    }
   }
 
   // 🌸 매화 일섬 돌진 자세

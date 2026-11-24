@@ -504,12 +504,13 @@ class App {
 
   cycleCamera() {
     if (!this.battle) return;
-    this.camMode = this.camMode === 'fp' ? 'tp' : this.camMode === 'tp' ? 'spectate' : 'fp';
+    // 👁️ 1인칭 ↔ 🎬 관전 — 두 가지 시점만 쓴다 (3인칭은 없다)
+    this.camMode = this.camMode === 'spectate' ? 'fp' : 'spectate';
     if (this.camMode === 'spectate') this._enterSpectate(); else this._exitSpectate();
     const b = $('#camBtn');
-    b.textContent = this.camMode === 'fp' ? '👁️' : this.camMode === 'tp' ? '🎥' : '🎬';
-    b.title = this.camMode === 'fp' ? '1인칭' : this.camMode === 'tp' ? '3인칭' : '관전';
-    this._toast(this.camMode === 'fp' ? '1인칭 참전' : this.camMode === 'tp' ? '3인칭 참전' : '🎬 관전 — 조이스틱 이동 · 드래그 시점');
+    b.textContent = this.camMode === 'fp' ? '👁️' : '🎬';
+    b.title = this.camMode === 'fp' ? '1인칭' : '관전';
+    this._toast(this.camMode === 'fp' ? '👁️ 1인칭 참전' : '🎬 관전 — 조이스틱 이동 · 드래그 시점');
   }
 
   /* 🎬 관전 — 공중에서 자유롭게 돌아다니며 전장을 본다 */
@@ -524,8 +525,16 @@ class App {
       pitch: -0.55
     };
     this._spectateIdle = 0;
+    // 관전으로 넘어갈 때 눌려 있던 이동·공격 입력을 모두 놓는다 (몸은 그 자리에 세워 둔다)
+    this.input.mx = 0; this.input.mz = 0;
+    this.input.attack = false; this.attackHeld = false; this.input.guard = false;
     this.autoSpectate = true;          // 입력이 없을 때만 천천히 전장을 훑는다
-    if (this.battle) { this.battle.playerSafe = true; this.battle.playerInvuln = 0; }
+    if (this.battle) {
+      this.battle.playerSafe = true;
+      this.battle.playerInvuln = 0;
+      // 🎬 유령 — 나를 쫓던 적은 즉시 다른 아군을 찾는다
+      this.battle.releaseFromPlayer();
+    }
     const el = $('#battle');
     if (el) el.classList.add('is-spectate');
   }
@@ -760,15 +769,6 @@ class App {
       this.cam.fov = 62;
       this.cam.updateProjectionMatrix();
       this.vm.enabled = !p.dead;
-    } else if (this.camMode === 'tp') {
-      const dist = 4.4, height = 2.35;
-      const yaw = p.yaw + Math.PI;
-      const cx = p.x + Math.sin(yaw) * dist;
-      const cz = p.z + Math.cos(yaw) * dist;
-      this.cam.position.set(cx, height, cz);
-      this.cam.rotation.set(-0.12 + this.camPitch * 0.5, yaw, 0, 'YXZ');
-      this.camYaw = p.yaw + Math.PI;
-      this.vm.enabled = false;
     } else {
       // 🎬 관전 — 보는 방향 그대로 3D 자유 비행
       // 왼쪽 조이스틱 = 시선 방향 전후좌우 + 위아래 고도, 오른쪽 드래그 = 시선 회전

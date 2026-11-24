@@ -250,19 +250,21 @@ function buildPalm() {
   return g;
 }
 
-/* 무기별 키프레임 — p: 위치(뷰 공간), r: 오일러 회전 */
+/* 무기별 키프레임 — p: 위치(뷰 공간), r: 오일러 회전
+   예비동작(어깨 뒤로 감기) → 폭발적인 궤적(손목이 늦게 따라오며 날이 화면을 가로지름)
+   → 지나친 팔로우스루 → 손목을 풀며 회수 */
 const CURVES = {
   soldier: {
     idle: { p: [0.33, -0.40, -0.60], r: [-0.28, -0.48, 0.34] },
     dur: 0.92,
     keys: [
       { t: 0.00, p: [0.33, -0.40, -0.60], r: [-0.28, -0.48, 0.34] },
-      { t: 0.12, p: [0.38, -0.42, -0.55], r: [-0.10, -0.60, 0.22], ease: 'inout' },
-      { t: 0.30, p: [0.46, -0.30, -0.62], r: [0.30, -0.95, -0.30], ease: 'out' },
-      { t: 0.42, p: [0.06, -0.42, -0.78], r: [-0.75, 0.30, 1.28], ease: 'out' },
-      { t: 0.56, p: [-0.14, -0.52, -0.66], r: [-0.95, 0.62, 1.85], ease: 'inout' },
-      { t: 0.62, p: [0.02, -0.55, -0.62], r: [-0.72, 0.35, 1.30], ease: 'inout' },
-      { t: 0.80, p: [0.20, -0.48, -0.58], r: [-0.42, -0.12, 0.62], ease: 'inout' },
+      { t: 0.10, p: [0.37, -0.37, -0.56], r: [-0.06, -0.66, 0.20], ease: 'inout' },
+      { t: 0.27, p: [0.44, -0.23, -0.60], r: [0.44, -1.06, -0.34], ease: 'out' },
+      { t: 0.39, p: [0.17, -0.21, -0.82], r: [-0.72, 0.16, 0.86], ease: 'out' },
+      { t: 0.50, p: [-0.16, -0.40, -0.70], r: [-1.05, 0.52, 1.72], ease: 'out' },
+      { t: 0.63, p: [0.00, -0.47, -0.64], r: [-0.78, 0.34, 1.28], ease: 'inout' },
+      { t: 0.80, p: [0.22, -0.46, -0.58], r: [-0.44, -0.14, 0.64], ease: 'inout' },
       { t: 0.92, p: [0.33, -0.40, -0.60], r: [-0.28, -0.48, 0.34], ease: 'inout' }
     ]
   },
@@ -271,12 +273,13 @@ const CURVES = {
     dur: 1.72,
     keys: [
       { t: 0.00, p: [0.26, -0.52, -0.70], r: [-0.42, 0.12, -0.30] },
-      { t: 0.18, p: [0.30, -0.46, -0.66], r: [-0.70, 0.20, -0.22], ease: 'inout' },
-      { t: 0.60, p: [0.20, -0.10, -0.54], r: [-1.65, 0.16, -0.10], ease: 'out' },
-      { t: 0.80, p: [0.06, -0.58, -1.16], r: [0.95, -0.05, 0.16], ease: 'out' },
-      { t: 1.00, p: [0.06, -0.64, -1.12], r: [1.12, -0.02, 0.18], ease: 'inout' },
-      { t: 1.24, p: [0.16, -0.58, -0.78], r: [0.30, 0.05, -0.05], ease: 'inout' },
-      { t: 1.46, p: [0.22, -0.54, -0.72], r: [-0.18, 0.12, -0.20], ease: 'inout' },
+      { t: 0.16, p: [0.29, -0.47, -0.66], r: [-0.66, 0.20, -0.24], ease: 'inout' },
+      { t: 0.56, p: [0.18, -0.06, -0.52], r: [-1.78, 0.14, -0.14], ease: 'out' },
+      { t: 0.66, p: [0.14, -0.02, -0.50], r: [-1.92, 0.10, -0.10], ease: 'inout' },
+      { t: 0.82, p: [0.05, -0.62, -1.18], r: [1.02, -0.06, 0.18], ease: 'out' },
+      { t: 1.00, p: [0.05, -0.68, -1.13], r: [1.20, -0.02, 0.22], ease: 'inout' },
+      { t: 1.26, p: [0.16, -0.58, -0.80], r: [0.34, 0.04, -0.02], ease: 'inout' },
+      { t: 1.48, p: [0.22, -0.54, -0.72], r: [-0.18, 0.12, -0.22], ease: 'inout' },
       { t: 1.72, p: [0.26, -0.52, -0.70], r: [-0.42, 0.12, -0.30], ease: 'inout' }
     ]
   },
@@ -285,11 +288,11 @@ const CURVES = {
     dur: 0.80,
     keys: [
       { t: 0.00, p: [0.30, -0.44, -0.62], r: [-0.20, -0.55, 0.55] },
-      { t: 0.10, p: [0.36, -0.40, -0.58], r: [0.05, -0.80, 0.30], ease: 'inout' },
-      { t: 0.24, p: [0.42, -0.26, -0.66], r: [0.35, -1.05, -0.25], ease: 'out' },
-      { t: 0.34, p: [0.04, -0.40, -0.82], r: [-0.80, 0.35, 1.45], ease: 'out' },
-      { t: 0.46, p: [-0.16, -0.52, -0.68], r: [-1.00, 0.70, 2.05], ease: 'inout' },
-      { t: 0.62, p: [0.14, -0.50, -0.60], r: [-0.60, 0.05, 1.00], ease: 'inout' },
+      { t: 0.07, p: [0.35, -0.40, -0.58], r: [0.10, -0.82, 0.30], ease: 'inout' },
+      { t: 0.21, p: [0.41, -0.22, -0.64], r: [0.46, -1.12, -0.30], ease: 'out' },
+      { t: 0.31, p: [0.05, -0.35, -0.86], r: [-0.72, 0.28, 1.30], ease: 'out' },
+      { t: 0.41, p: [-0.17, -0.52, -0.70], r: [-1.06, 0.72, 2.12], ease: 'out' },
+      { t: 0.56, p: [0.10, -0.52, -0.62], r: [-0.64, 0.10, 1.10], ease: 'inout' },
       { t: 0.80, p: [0.30, -0.44, -0.62], r: [-0.20, -0.55, 0.55], ease: 'inout' }
     ]
   },
@@ -298,13 +301,21 @@ const CURVES = {
     dur: 1.06,
     keys: [
       { t: 0.00, p: [-0.30, -0.62, -0.60], r: [-0.06, 0.10, 0.10] },
-      { t: 0.18, p: [-0.34, -0.56, -0.56], r: [-0.20, 0.16, 0.22], ease: 'inout' },
-      { t: 0.34, p: [-0.26, -0.58, -0.66], r: [0.16, 0.02, -0.02], ease: 'out' },
+      { t: 0.16, p: [-0.34, -0.55, -0.55], r: [-0.24, 0.18, 0.26], ease: 'inout' },
+      { t: 0.34, p: [-0.25, -0.57, -0.68], r: [0.20, 0.00, -0.06], ease: 'out' },
       { t: 0.56, p: [-0.28, -0.60, -0.62], r: [0.06, 0.06, 0.04], ease: 'inout' },
       { t: 0.86, p: [-0.29, -0.615, -0.605], r: [0.0, 0.09, 0.07], ease: 'inout' },
       { t: 1.06, p: [-0.30, -0.62, -0.60], r: [-0.06, 0.10, 0.10], ease: 'inout' }
     ]
   }
+};
+
+/* 막기 자세 — 무기를 화면 대각선으로 세워 상체 앞을 가린다 (병사·검객은 검날이 얼굴을 가로지름) */
+const GUARD = {
+  soldier: { p: [0.10, -0.40, -0.62], r: [-0.30, 0.72, 0.30] },
+  blademaster: { p: [0.12, -0.38, -0.60], r: [-0.22, 0.80, 0.42] },
+  knight: { p: [0.00, -0.40, -0.62], r: [-0.12, 0.52, -0.48] },
+  wizard: { p: [-0.16, -0.44, -0.56], r: [0.12, -0.26, -0.16] }
 };
 
 /* 오른손(마법사는 손바닥) 키프레임 */
@@ -446,6 +457,10 @@ export class ViewModel {
       r[1] + sway * 1.4,
       r[2] + Math.sin(this.time * 0.7) * 0.008
     );
+    // 달릴 때 무기 무게가 뒤로 쏠리는 느낌
+    this.root.rotation.x += mv * 0.10;
+    this.root.rotation.z += Math.sin(ph) * 0.03 * mv;
+    this.root.position.y += Math.sin(ph * 2) * 0.006 * mv;
     // 클래스 교체 시 살짝 아래에서 올라온다
     this.root.position.y -= (1 - swap) * 0.34;
     this.root.position.z -= (1 - swap) * 0.2;
@@ -470,18 +485,19 @@ export class ViewModel {
     this.root.position.y -= recoil * 0.25;
     this.root.rotation.x -= recoil * 0.5;
 
-    // 🛡️ 검으로 막기 — 누르는 동안 검을 얼굴 앞으로 가로·대각선으로 치켜들어 막는 자세
-    const wantGuard = (this.className === 'soldier' && player && player.guard && !player.dead) ? 1 : 0;
-    this.guardK = lerp(this.guardK || 0, wantGuard, Math.min(1, dt * 14));
+    // 🛡️ 검으로 막기 — 누르는 동안 무기를 대각선으로 세워 얼굴 앞을 가로막는다
+    const wantGuard = (player && player.guard && !player.dead) ? 1 : 0;
+    this.guardK = lerp(this.guardK || 0, wantGuard, Math.min(1, dt * 16));
     const gk = this.guardK;
     if (gk > 0.001) {
-      const gp = [0.02, -0.30, -0.50], gr = [-0.35, 0.95, 0.35];
-      this.root.position.x = lerp(this.root.position.x, gp[0], gk);
-      this.root.position.y = lerp(this.root.position.y, gp[1], gk);
-      this.root.position.z = lerp(this.root.position.z, gp[2], gk);
-      this.root.rotation.x = lerp(this.root.rotation.x, gr[0], gk);
-      this.root.rotation.y = lerp(this.root.rotation.y, gr[1], gk);
-      this.root.rotation.z = lerp(this.root.rotation.z, gr[2], gk);
+      const gd = GUARD[this.className] || GUARD.soldier;
+      const tremble = Math.sin(this.time * 9.5) * 0.004 + Math.sin(this.time * 15.3) * 0.002;
+      this.root.position.x = lerp(this.root.position.x, gd.p[0], gk);
+      this.root.position.y = lerp(this.root.position.y, gd.p[1] + tremble, gk);
+      this.root.position.z = lerp(this.root.position.z, gd.p[2], gk);
+      this.root.rotation.x = lerp(this.root.rotation.x, gd.r[0] + tremble * 2, gk);
+      this.root.rotation.y = lerp(this.root.rotation.y, gd.r[1], gk);
+      this.root.rotation.z = lerp(this.root.rotation.z, gd.r[2] + tremble, gk);
     }
 
     // 마법사 손바닥

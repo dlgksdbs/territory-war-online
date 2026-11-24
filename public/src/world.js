@@ -3,7 +3,7 @@
    횃불·깃발·부서진 기둥, PMREM 환경 반사, 역동적 조명과 그림자.
    ============================================================================= */
 import * as THREE from 'three';
-import { terrainMaps, stoneMaps, woodMaps, bannerTexture, glowTexture, cloudTexture, runeTexture, blobTexture, flameTexture } from './textures.js';
+import { terrainMaps, stoneMaps, woodMaps, bannerTexture, glowTexture, cloudTexture, runeTexture, blobTexture, flameTexture, smokeTexture } from './textures.js';
 import { mulberry32, clamp, lerp, fbm, noise2, TAU } from './util.js';
 
 const SUN_DIR = new THREE.Vector3(-0.78, 0.42, 0.34).normalize();
@@ -352,10 +352,10 @@ void main(){
   scene.fog = new THREE.FogExp2(0xb69a86, 0.0022);
 
   /* ------------------------------------------------------------- 조명 */
-  const hemi = new THREE.HemisphereLight(0xaec8ee, 0x6b4c30, 0.55);
+  const hemi = new THREE.HemisphereLight(0xa6c8f5, 0x3a3028, 0.82);
   scene.add(hemi);
 
-  const key = new THREE.DirectionalLight(0xffd2a4, 2.9);
+  const key = new THREE.DirectionalLight(0xffd2a0, 3.0);
   key.position.copy(SUN_DIR).multiplyScalar(70);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -372,13 +372,18 @@ void main(){
   scene.add(key.target);
   out.key = key;
 
-  const fill = new THREE.DirectionalLight(0x8fb6e8, 0.75);
+  const fill = new THREE.DirectionalLight(0x93b8ea, 0.82);
   fill.position.set(-40, 30, -50);
   scene.add(fill);
 
-  const rim = new THREE.DirectionalLight(0xffa060, 0.8);
+  const rim = new THREE.DirectionalLight(0xff9450, 0.7);
   rim.position.set(30, 12, -60);
   scene.add(rim);
+
+  /* 정면 아래에서 부드럽게 받쳐 주는 빛 — 그림자 쪽이 탁해지지 않게 */
+  const bounce = new THREE.DirectionalLight(0xbfd2e8, 0.34);
+  bounce.position.set(6, 7, -34);
+  scene.add(bounce);
 
   /* ------------------------------------------------------------ 지면 */
   const maps = terrainMaps(1024);
@@ -388,10 +393,10 @@ void main(){
   tGeo.rotateX(-Math.PI / 2);
   const pos = tGeo.attributes.position;
   const col = new Float32Array(pos.count * 3);
-  const cDirt = new THREE.Color(0xbfa88b);
-  const cMud = new THREE.Color(0x8e7458);
-  const cGrass = new THREE.Color(0xaab48c);
-  const cStone = new THREE.Color(0xc0b8aa);
+  const cDirt = new THREE.Color(0xa88d6b);
+  const cMud = new THREE.Color(0x6f573d);
+  const cGrass = new THREE.Color(0x8d9668);
+  const cStone = new THREE.Color(0xa9a08d);
   const tmpC = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
@@ -410,12 +415,12 @@ void main(){
   const terrainMat = new THREE.MeshStandardMaterial({
     map: maps.albedo,
     normalMap: maps.normal,
-    normalScale: new THREE.Vector2(0.32, 0.32),
+    normalScale: new THREE.Vector2(0.55, 0.55),
     roughnessMap: maps.rough,
-    roughness: 0.9,
-    metalness: 0.04,
+    roughness: 0.92,
+    metalness: 0.03,
     vertexColors: true,
-    envMapIntensity: 0.45,
+    envMapIntensity: 0.5,
     color: 0xffffff
   });
   const terrain = new THREE.Mesh(tGeo, terrainMat);
@@ -530,6 +535,40 @@ void main(){
   rocks.instanceMatrix.needsUpdate = true;
   scene.add(rocks);
 
+  /* --------------------------------------------------- 전장의 흔적 */
+  /* 꿍힌 창 · 부러진 방패 · 떨어진 판금 — 지면에 이야기를 더한다 (인스턴스 3콜) */
+  const deadWood = new THREE.MeshStandardMaterial({ map: woodMaps().map, color: 0x8a7562, roughness: 0.9, metalness: 0.06 });
+  const deadSteel = new THREE.MeshStandardMaterial({ color: 0x6d7278, metalness: 0.75, roughness: 0.55, envMapIntensity: 0.9 });
+  const spearGeo = new THREE.CylinderGeometry(0.028, 0.036, 2.3, 6);
+  spearGeo.translate(0, 1.15, 0);
+  const spears = new THREE.InstancedMesh(spearGeo, deadWood, 9);
+  const shieldGeo = new THREE.CylinderGeometry(0.46, 0.46, 0.06, 8);
+  const shields = new THREE.InstancedMesh(shieldGeo, deadSteel, 6);
+  const plankGeo = new THREE.BoxGeometry(1.5, 0.09, 0.3);
+  const planks = new THREE.InstancedMesh(plankGeo, deadWood, 7);
+  for (const m of [spears, shields, planks]) { m.castShadow = true; m.receiveShadow = true; scene.add(m); }
+  {
+    const placeFlat = (mesh, idx, s) => {
+      let x = 0, z = 0;
+      for (let a = 0; a < 10; a++) {
+        const ang = rng() * TAU, r = 7 + Math.pow(rng(), 0.7) * 34;
+        x = Math.cos(ang) * r; z = Math.sin(ang) * r;
+        if (!(Math.abs(x) < 5 && Math.abs(z) < 30)) break;
+      }
+      pv.set(x, terrainHeight(x, z) + (s.y || 0), z);
+      q.setFromEuler(new THREE.Euler(s.rx || 0, rng() * TAU, s.rz || 0));
+      sc.set(s.sx || 1, s.sy || 1, s.sz || 1);
+      m4.compose(pv, q, sc);
+      mesh.setMatrixAt(idx, m4);
+    };
+    for (let i = 0; i < 9; i++) placeFlat(spears, i, { rx: (rng() - 0.5) * 0.5, rz: (rng() - 0.5) * 0.45, sy: 0.9 + rng() * 0.25 });
+    for (let i = 0; i < 6; i++) placeFlat(shields, i, { rx: Math.PI / 2 + (rng() - 0.5) * 0.8, y: 0.05, sz: 0.9 + rng() * 0.2 });
+    for (let i = 0; i < 7; i++) placeFlat(planks, i, { y: 0.06, rz: (rng() - 0.5) * 0.3 });
+    spears.instanceMatrix.needsUpdate = true;
+    shields.instanceMatrix.needsUpdate = true;
+    planks.instanceMatrix.needsUpdate = true;
+  }
+
   /* 풀 포기 — 바깥 지역에만 */
   const bladeGeo = new THREE.PlaneGeometry(0.5, 0.62);
   bladeGeo.translate(0, 0.31, 0);
@@ -599,8 +638,7 @@ void main(){
   }
 
   /* ------------------------------------------------------- 횃불 */
-  const flameMap = flameTexture();
-  // 스폰 지점(0, -21.5) 정면 시야를 가리지 않도록 중앙 축에서 비켜 배치한다
+  const flameMap = flameTexture();  // 스폰 지점(0, -21.5) 정면 시야를 가리지 않도록 중앙 축에서 비켜 배치한다
   const torchSpots = [
     { x: 14.5, z: -10 }, { x: -14.5, z: -10 }, { x: 14.5, z: 10 }, { x: -14.5, z: 10 },
     { x: 9.5, z: -16.5 }, { x: -9.5, z: -16.5 }
@@ -648,6 +686,97 @@ void main(){
     }
   });
 
+  /* -------------------------------------------- 부유 먼지 · 불티(엠버) */
+  /* 전장 공기에 떠 있는 것들 — 유닛이 또렷하게 보이도록 옅게, 대신 공간감을 만든다. */
+  const ATMO_VERT = `
+attribute float aSize;
+attribute float aAlpha;
+attribute vec3 aColor;
+varying float vAlpha;
+varying vec3 vColor;
+uniform float uScale;
+void main() {
+  vAlpha = aAlpha;
+  vColor = aColor;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_PointSize = clamp(aSize * uScale / max(0.8, -mv.z), 1.0, 42.0);
+  gl_Position = projectionMatrix * mv;
+}`;
+  const ATMO_FRAG = `
+uniform sampler2D uMap;
+varying float vAlpha;
+varying vec3 vColor;
+void main() {
+  vec4 t = texture2D(uMap, gl_PointCoord);
+  if (t.a * vAlpha < 0.004) discard;
+  gl_FragColor = vec4(vColor * t.rgb * vAlpha, t.a * vAlpha);
+}`;
+  const makeMotes = (count, map, baseSize, spread, yMin, yMax, warm) => {
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    const size = new Float32Array(count);
+    const alpha = new Float32Array(count);
+    const seed = [];
+    for (let i = 0; i < count; i++) {
+      const a = rng() * TAU, r = Math.pow(rng(), 0.55) * spread;
+      pos[i * 3] = Math.cos(a) * r;
+      pos[i * 3 + 1] = yMin + rng() * (yMax - yMin);
+      pos[i * 3 + 2] = Math.sin(a) * r;
+      size[i] = baseSize * (0.5 + rng() * 1.1);
+      alpha[i] = 0.35 + rng() * 0.65;
+      seed.push({ sp: 0.08 + rng() * 0.4, ph: rng() * TAU, wob: 0.2 + rng() * 0.8 });
+      const t2 = rng();
+      if (warm) {
+        col[i * 3] = 1; col[i * 3 + 1] = 0.45 + t2 * 0.4; col[i * 3 + 2] = 0.12 + t2 * 0.2;
+      } else {
+        col[i * 3] = 0.86 + t2 * 0.1; col[i * 3 + 1] = 0.8 + t2 * 0.1; col[i * 3 + 2] = 0.7 + t2 * 0.08;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aSize', new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
+    const m = new THREE.ShaderMaterial({
+      uniforms: { uMap: { value: map }, uScale: { value: 640 } },
+      vertexShader: ATMO_VERT, fragmentShader: ATMO_FRAG,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    const pts = new THREE.Points(g, m);
+    pts.frustumCulled = false;
+    pts.renderOrder = 4;
+    scene.add(pts);
+    return { pts, pos, size, alpha, seed, count, spread, yMin, yMax };
+  };
+  const embers = makeMotes(96, glowTex, 0.085, 42, 0.05, 9, true);
+  const motes = makeMotes(84, glowTex, 0.05, 34, 0.4, 14);
+  // 불티는 주황빛으로, 먼지는 옅은 빛가루로
+  {
+    const c = embers.pts.geometry.attributes.aColor.array;
+    for (let i = 0; i < embers.count; i++) { c[i * 3] = 1; c[i * 3 + 1] = 0.42 + rng() * 0.34; c[i * 3 + 2] = 0.1 + rng() * 0.14; }
+    embers.pts.geometry.attributes.aColor.needsUpdate = true;
+  }
+
+  /* ------------------------------------------------ 전장 바닥 안개 자락 */
+  const groundMist = [];
+  const mistTex = smokeTexture();
+  const mistMat = () => new THREE.SpriteMaterial({
+    map: mistTex, color: 0xcfbca6, transparent: true, opacity: 0.1,
+    depthWrite: false, fog: true
+  });
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * TAU + rng() * 0.3;
+    const r = 16 + rng() * 30;
+    const sm = new THREE.Sprite(mistMat());
+    sm.position.set(Math.cos(a) * r, 0.55 + rng() * 0.5, Math.sin(a) * r);
+    const sc = 12 + rng() * 16;
+    sm.scale.set(sc, sc * 0.42, 1);
+    sm.material.opacity = 0.06 + rng() * 0.07;
+    sm.renderOrder = 2;
+    scene.add(sm);
+    groundMist.push({ s: sm, ph: rng() * TAU, x: sm.position.x, z: sm.position.z, sc });
+  }
+
   /* 룬 제단 (가운데) — 마법사 스폰 지점 장식 */
   const runeMat = new THREE.MeshBasicMaterial({
     map: runeTexture(), transparent: true, blending: THREE.AdditiveBlending,
@@ -664,6 +793,34 @@ void main(){
 
   /* 하늘 돔은 카메라를 따라온다 */
   const tmpV = new THREE.Vector3();
+  const updateMotes = (m, dt, t, camPos, rise) => {
+    const p = m.pos, n = m.count;
+    for (let i = 0; i < n; i++) {
+      const s = m.seed[i], i3 = i * 3;
+      p[i3 + 1] += (rise + s.sp * 0.35) * dt;
+      p[i3] += Math.sin(t * 0.7 * s.wob + s.ph) * dt * 0.22;
+      p[i3 + 2] += Math.cos(t * 0.6 * s.wob + s.ph * 1.3) * dt * 0.22;
+      if (p[i3 + 1] > m.yMax) {
+        // 카메라 주변 반경 안에서 새로 태어난다
+        const a = rng() * TAU, r = Math.pow(rng(), 0.55) * m.spread;
+        p[i3] = camPos.x + Math.cos(a) * r;
+        p[i3 + 1] = m.yMin + rng() * 0.6;
+        p[i3 + 2] = camPos.z + Math.sin(a) * r;
+      }
+    }
+    // 카메라에서 너무 멀어진 입자는 카메라 근처로 되돌린다
+    for (let i = 0; i < n; i++) {
+      const i3 = i * 3;
+      const dx = p[i3] - camPos.x, dz = p[i3 + 2] - camPos.z;
+      if (dx * dx + dz * dz > (m.spread + 18) * (m.spread + 18)) {
+        const a = rng() * TAU, r = Math.pow(rng(), 0.6) * m.spread * 0.6;
+        p[i3] = camPos.x + Math.cos(a) * r;
+        p[i3 + 2] = camPos.z + Math.sin(a) * r;
+        p[i3 + 1] = m.yMin + rng() * (m.yMax - m.yMin);
+      }
+    }
+    m.pts.geometry.attributes.position.needsUpdate = true;
+  };
   out.update = (dt, t, camPos) => {
     sky.position.copy(camPos);
     sunSprite.position.copy(camPos).addScaledVector(SUN_DIR, 360);
@@ -718,6 +875,14 @@ void main(){
     }
     runeMat.opacity = 0.34 + Math.sin(t * 1.6) * 0.1;
     rune.rotation.z = t * 0.06;
+    // 공기 중 먼지 · 불티 · 바닥 안개
+    updateMotes(embers, dt, t, camPos, 0.55);
+    updateMotes(motes, dt, t, camPos, 0.05);
+    for (const gm of groundMist) {
+      gm.s.position.x = gm.x + Math.sin(t * 0.12 + gm.ph) * 1.6;
+      gm.s.position.z = gm.z + Math.cos(t * 0.1 + gm.ph) * 1.6;
+      gm.s.material.opacity = 0.05 + Math.sin(t * 0.35 + gm.ph) * 0.028;
+    }
     // 그림자 카메라를 플레이어 근처로 (원거리 해상도 확보)
     if (camPos) {
       key.target.position.set(camPos.x, 0, camPos.z);

@@ -192,12 +192,12 @@ class Trail {
     if (!this.samples.length) { this.mesh.visible = false; return; }
     for (const s of this.samples) s.age += dt;
     // 수명 지난 샘플 제거
-    while (this.samples.length && this.samples[this.samples.length - 1].age > 0.19) this.samples.pop();
+    while (this.samples.length && this.samples[this.samples.length - 1].age > 0.22) this.samples.pop();
     if (this.samples.length < 2) { this.samples.length = 0; this.mesh.visible = false; return; }
     const n = this.samples.length;
     for (let i = 0; i < this.n; i++) {
       const s = this.samples[Math.min(i, n - 1)];
-      const a = i < n ? Math.pow(1 - s.age / 0.19, 1.6) * (this.k || 1) : 0;
+      const a = i < n ? Math.pow(1 - s.age / 0.22, 1.5) * (this.k || 1) : 0;
       const i6 = i * 6;
       this.pos[i6] = s.b.x; this.pos[i6 + 1] = s.b.y; this.pos[i6 + 2] = s.b.z;
       this.pos[i6 + 3] = s.t.x; this.pos[i6 + 4] = s.t.y; this.pos[i6 + 5] = s.t.z;
@@ -524,7 +524,20 @@ export class FX {
       });
     }
     // 타격 섬광
-    this.flash(px, py, pz, heavy ? 1.5 : 0.85, heavy ? 0xffcf80 : 0xffffff, 0.10);
+    this.flash(px, py, pz, heavy ? 1.55 : 0.9, heavy ? 0xffcf80 : 0xffffff, 0.10);
+    // 참격선: 칼날이 지나간 방향으로 잠깐 남는 빛가닥
+    if (!heavy && near) {
+      const ya = e.angle || (s ? s.yaw : 0);
+      for (let i = 0; i < 5; i++) {
+        const k = (rng() - 0.5) * 1.1;
+        this.sparks.spawn({
+          x: px + (rng() - 0.5) * 0.2, y: py + (rng() - 0.5) * 0.35, z: pz + (rng() - 0.5) * 0.2,
+          vx: Math.sin(ya + k) * (5 + rng() * 5), vy: (rng() - 0.35) * 2.2, vz: Math.cos(ya + k) * (5 + rng() * 5),
+          life: 0.1 + rng() * 0.12, size: 0.02 + rng() * 0.02,
+          r: 1, g: petal ? 0.8 : 0.95, b: petal ? 0.92 : 1, gravity: -2.5, drag: 2.6, fade: 1.5
+        });
+      }
+    }
     // 검기 섬광
     if (!heavy && near) {
       this.spawnArc(px, py, pz, e.angle || (s ? s.yaw : 0), 1.5 + rng() * 0.3, 'blade', 0.15, petal ? 0xffb4d8 : undefined);
@@ -938,21 +951,37 @@ export class FX {
     }
   }
 
-  /* 🛡️ 방패 막힘 — 방패 앞에서 튀는 불꽃과 둥근 충격파 */
+  /* 🛡️ 검 막기(패링) — 금속이 부딪힌 자리에서 튀는 불티 · 사방으로 뻗는 빛가닥 · 둥근 파문 */
   spawnShieldSparks(x, y, z, heavy) {
-    const n = heavy ? 16 : 9;
+    const n = heavy ? 34 : 20;
     for (let i = 0; i < n; i++) {
       const a = this.rng() * TAU;
-      const up = this.rng() * 2.2;
+      const up = 0.4 + this.rng() * (heavy ? 4.2 : 2.8);
       this.sparks.spawn({
         x: x + (this.rng() - 0.5) * 0.16, y: y + (this.rng() - 0.5) * 0.16, z: z + (this.rng() - 0.5) * 0.16,
-        vx: Math.cos(a) * (1.2 + this.rng() * 3.4), vy: up,
-        vz: Math.sin(a) * (1.2 + this.rng() * 3.4),
-        life: 0.16 + this.rng() * 0.26, size: 0.035 + this.rng() * 0.05,
-        r: 1, g: 0.92, b: 0.62, gravity: -2.4, drag: 2.6, fade: 1.4
+        vx: Math.cos(a) * (1.6 + this.rng() * 4.6), vy: up,
+        vz: Math.sin(a) * (1.6 + this.rng() * 4.6),
+        life: 0.14 + this.rng() * 0.3, size: 0.035 + this.rng() * 0.055,
+        r: 1, g: 0.9, b: 0.55, gravity: -3.4, drag: 2.2, fade: 1.3
       });
     }
-    this.ring(x, y, z, heavy ? 1.1 : 0.7, 0xffe6a8, heavy ? 0.34 : 0.22);
+    /* 금속이 갈린 긴 불티 — 한 방향으로 길게 뻗는다 */
+    for (let i = 0; i < (heavy ? 10 : 6); i++) {
+      const a = this.rng() * TAU;
+      const sp = 5 + this.rng() * 7;
+      this.sparks.spawn({
+        x, y, z,
+        vx: Math.cos(a) * sp, vy: (this.rng() - 0.2) * sp * 0.7, vz: Math.sin(a) * sp,
+        life: 0.1 + this.rng() * 0.13, size: 0.02 + this.rng() * 0.02,
+        r: 1, g: 1, b: 0.86, gravity: -6, drag: 1.4, fade: 1.6
+      });
+    }
+    /* 부딪힌 면을 가로지르는 빛무리 — 패링의 '쨍' 하는 순간 */
+    this.spawnArc(x, y, z, this.camera ? this.camera.rotation.y + Math.PI / 2 : 0,
+      heavy ? 0.55 : 0.4, 'blade', 0.09, 0xfff0c8, 0.9);
+    this.ring(x, y, z, heavy ? 1.35 : 0.95, 0xffe6a8, heavy ? 0.36 : 0.26);
+    this.flash(x, y, z, heavy ? 1.1 : 0.75, 0xfff6dc, 0.09);
+    this.lightFlash(x, y, z, 0xffd08a, 0.16, heavy ? 34 : 20);
   }
 
   ring(x, y, z, r, color, life) {

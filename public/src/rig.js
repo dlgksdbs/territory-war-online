@@ -81,16 +81,68 @@ function metalNormalMap() {
   return texFrom(normalFromCanvas(c, 1.6), { srgb: false, repeat: 1 });
 }
 
+/* 직조(천) 노멀 — 가로·세로 실의 결이 은은하게 살아나 평면 느낌을 없앤다 */
+let CLOTH_NORMAL = null;
+function clothNormalMap() {
+  if (CLOTH_NORMAL) return CLOTH_NORMAL;
+  const S = 128;
+  const c = makeCanvas(S, S);
+  const x = c.getContext('2d');
+  x.fillStyle = '#808080'; x.fillRect(0, 0, S, S);
+  const rng = mulberry32(17);
+  for (let i = 0; i < S; i += 4) {
+    x.fillStyle = `rgba(${150 + (i % 8 ? 14 : -18)},${150 + (i % 8 ? 14 : -18)},${150 + (i % 8 ? 14 : -18)},0.55)`;
+    x.fillRect(0, i, S, 2);
+    x.fillStyle = `rgba(${132 + rng() * 26},${132 + rng() * 26},${132 + rng() * 26},0.42)`;
+    x.fillRect(i, 0, 2, S);
+  }
+  for (let i = 0; i < 260; i++) {
+    const px = rng() * S, py = rng() * S;
+    x.fillStyle = `rgba(${120 + rng() * 70},${120 + rng() * 70},${120 + rng() * 70},0.25)`;
+    x.fillRect(px, py, 1 + rng() * 2, 1 + rng() * 2);
+  }
+  CLOTH_NORMAL = texFrom(normalFromCanvas(c, 1.1), { srgb: false, repeat: 1 });
+  return CLOTH_NORMAL;
+}
+
+/* 가죽 결 노멀 — 벨트·장갑·부츠가 딱딱한 판처럼 보이지 않게 */
+let LEATHER_NORMAL = null;
+function leatherNormalMap() {
+  if (LEATHER_NORMAL) return LEATHER_NORMAL;
+  const S = 128;
+  const c = makeCanvas(S, S);
+  const x = c.getContext('2d');
+  x.fillStyle = '#808080'; x.fillRect(0, 0, S, S);
+  const rng = mulberry32(23);
+  for (let i = 0; i < 520; i++) {
+    const px = rng() * S, py = rng() * S, rr = 1 + rng() * 3.4;
+    const g = x.createRadialGradient(px, py, 0, px, py, rr);
+    g.addColorStop(0, `rgba(${112 + rng() * 60},${112 + rng() * 60},${112 + rng() * 60},0.7)`);
+    g.addColorStop(1, 'rgba(128,128,128,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(px, py, rr, 0, 7); x.fill();
+  }
+  for (let i = 0; i < 90; i++) {
+    x.strokeStyle = `rgba(${100 + rng() * 50},${100 + rng() * 50},${100 + rng() * 50},0.35)`;
+    x.lineWidth = 0.6 + rng();
+    const px = rng() * S, py = rng() * S;
+    x.beginPath(); x.moveTo(px, py); x.lineTo(px + (rng() - 0.5) * 16, py + (rng() - 0.5) * 16); x.stroke();
+  }
+  LEATHER_NORMAL = texFrom(normalFromCanvas(c, 1.4), { srgb: false, repeat: 1 });
+  return LEATHER_NORMAL;
+}
+
 function clothMaterial(color, opts) {
   const o = opts || {};
   const m = new THREE.MeshPhysicalMaterial({
     color,
-    roughness: o.roughness === undefined ? 0.88 : o.roughness,
+    roughness: o.roughness === undefined ? 0.86 : o.roughness,
     metalness: 0.02,
-    sheen: o.sheen === undefined ? 0.85 : o.sheen,
-    sheenRoughness: 0.55,
+    sheen: o.sheen === undefined ? 0.7 : o.sheen,
+    sheenRoughness: 0.62,
     sheenColor: new THREE.Color(o.sheenColor === undefined ? 0xffffff : o.sheenColor),
-    envMapIntensity: 0.35,
+    envMapIntensity: 0.42,
+    normalMap: clothNormalMap(),
+    normalScale: new THREE.Vector2(o.normalScale === undefined ? 0.32 : o.normalScale, o.normalScale === undefined ? 0.32 : o.normalScale),
     side: o.side || THREE.FrontSide
   });
   const uniforms = { uTime: { value: 0 }, uAmp: { value: o.wave === undefined ? 0.02 : o.wave } };
@@ -115,72 +167,75 @@ function clothMaterial(color, opts) {
 }
 
 function armorNormalMap() {
+  /* 판금 표면 — 테두리 상자 없이(UV가 판마다 반복되므로 프레임처럼 보인다) 단조 자국·미세 요철만 */
   const S = 256;
   const c = makeCanvas(S, S);
   const x = c.getContext('2d');
   x.fillStyle = '#808080'; x.fillRect(0, 0, S, S);
-  // 판금 이음매(테두리 함몰)
-  x.strokeStyle = 'rgba(40,40,40,0.9)'; x.lineWidth = 7;
-  x.strokeRect(6, 6, S - 12, S - 12);
-  x.strokeStyle = 'rgba(190,190,190,0.55)'; x.lineWidth = 3;
-  x.strokeRect(12, 12, S - 24, S - 24);
-  // 중앙 능선
-  x.strokeStyle = 'rgba(210,210,210,0.65)'; x.lineWidth = 5;
-  x.beginPath(); x.moveTo(S / 2, 24); x.lineTo(S / 2, S - 24); x.stroke();
-  x.strokeStyle = 'rgba(50,50,50,0.55)'; x.lineWidth = 2;
-  x.beginPath(); x.moveTo(S / 2 + 4, 24); x.lineTo(S / 2 + 4, S - 24); x.stroke();
-  // 리벳
   const rng = mulberry32(41);
-  for (let i = 0; i < 10; i++) {
-    const px = 26 + rng() * (S - 52), py = 26 + rng() * (S - 52);
-    const g = x.createRadialGradient(px - 1, py - 1, 0, px, py, 5);
-    g.addColorStop(0, 'rgba(240,240,240,0.95)');
-    g.addColorStop(0.65, 'rgba(120,120,120,0.6)');
-    g.addColorStop(1, 'rgba(90,90,90,0)');
-    x.fillStyle = g; x.beginPath(); x.arc(px, py, 5, 0, 7); x.fill();
+  // 부드러운 곡면 음영(테두리로 갈수록 살짝 가라앉음)
+  const g0 = x.createRadialGradient(S / 2, S / 2, S * 0.1, S / 2, S / 2, S * 0.62);
+  g0.addColorStop(0, 'rgba(150,150,150,0.28)');
+  g0.addColorStop(0.7, 'rgba(126,126,126,0.10)');
+  g0.addColorStop(1, 'rgba(104,104,104,0.20)');
+  x.fillStyle = g0; x.fillRect(0, 0, S, S);
+  // 단조 자국(망치 면)
+  for (let i = 0; i < 420; i++) {
+    const px = rng() * S, py = rng() * S, rr = 3 + rng() * 9;
+    const g = x.createRadialGradient(px - rr * 0.25, py - rr * 0.25, 0, px, py, rr);
+    g.addColorStop(0, `rgba(${168 + rng() * 30},${168 + rng() * 30},${168 + rng() * 30},0.14)`);
+    g.addColorStop(1, 'rgba(120,120,120,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(px, py, rr, 0, 7); x.fill();
   }
-  // 단조 자국
-  for (let i = 0; i < 260; i++) {
-    const px = rng() * S, py = rng() * S, rr = 2 + rng() * 6;
-    x.fillStyle = `rgba(${110 + rng() * 60},${110 + rng() * 60},${110 + rng() * 60},0.22)`;
-    x.beginPath(); x.arc(px, py, rr, 0, 7); x.fill();
+  // 가는 긁힘
+  for (let i = 0; i < 160; i++) {
+    x.strokeStyle = `rgba(${150 + rng() * 70},${150 + rng() * 70},${150 + rng() * 70},0.22)`;
+    x.lineWidth = 0.5 + rng() * 0.8;
+    const px = rng() * S, py = rng() * S;
+    x.beginPath(); x.moveTo(px, py);
+    x.lineTo(px + (rng() - 0.5) * 34, py + (rng() - 0.5) * 8);
+    x.stroke();
   }
-  return texFrom(normalFromCanvas(c, 2.4), { srgb: false });
+  return texFrom(normalFromCanvas(c, 1.15), { srgb: false });
 }
 
 function buildMaterials() {
   const mn = metalNormalMap();
   const an = armorNormalMap();
   const wood = woodMaps().map;
+  const ln = leatherNormalMap();
   const M = {
     steel: new THREE.MeshPhysicalMaterial({
-      color: 0xb4bdc9, metalness: 0.62, roughness: 0.40, normalMap: an,
-      normalScale: new THREE.Vector2(0.85, 0.85), envMapIntensity: 0.8,
-      clearcoat: 0.22, clearcoatRoughness: 0.3
+      color: 0x9aa5b4, metalness: 0.80, roughness: 0.33, normalMap: an,
+      normalScale: new THREE.Vector2(0.75, 0.75), envMapIntensity: 1.15,
+      clearcoat: 0.34, clearcoatRoughness: 0.24
     }),
     darkSteel: new THREE.MeshPhysicalMaterial({
-      color: 0x4e5763, metalness: 0.62, roughness: 0.48, normalMap: mn,
-      normalScale: new THREE.Vector2(0.8, 0.8), envMapIntensity: 0.75
+      color: 0x3b4452, metalness: 0.78, roughness: 0.42, normalMap: mn,
+      normalScale: new THREE.Vector2(0.7, 0.7), envMapIntensity: 1.05,
+      clearcoat: 0.2, clearcoatRoughness: 0.3
     }),
     blackIron: new THREE.MeshStandardMaterial({
-      color: 0x24262c, metalness: 0.55, roughness: 0.58, envMapIntensity: 0.6
+      color: 0x1b1e25, metalness: 0.62, roughness: 0.5, envMapIntensity: 0.85
     }),
     gold: new THREE.MeshPhysicalMaterial({
-      color: 0xd2a249, metalness: 0.82, roughness: 0.30, envMapIntensity: 1.1, normalMap: mn,
-      normalScale: new THREE.Vector2(0.4, 0.4),
-      clearcoat: 0.35, clearcoatRoughness: 0.2
+      color: 0xc9973f, metalness: 0.9, roughness: 0.26, envMapIntensity: 1.35, normalMap: mn,
+      normalScale: new THREE.Vector2(0.3, 0.3),
+      clearcoat: 0.4, clearcoatRoughness: 0.18
     }),
     bronze: new THREE.MeshStandardMaterial({
-      color: 0xa9763c, metalness: 1.0, roughness: 0.34, envMapIntensity: 1.3
+      color: 0x9d6c31, metalness: 1.0, roughness: 0.3, envMapIntensity: 1.45
     }),
     leather: new THREE.MeshStandardMaterial({
-      color: 0x4e3624, roughness: 0.78, metalness: 0.05, envMapIntensity: 0.4
+      color: 0x513824, roughness: 0.74, metalness: 0.06, envMapIntensity: 0.5,
+      normalMap: ln, normalScale: new THREE.Vector2(0.55, 0.55)
     }),
     darkLeather: new THREE.MeshStandardMaterial({
-      color: 0x2e2119, roughness: 0.7, metalness: 0.08, envMapIntensity: 0.4
+      color: 0x241a13, roughness: 0.66, metalness: 0.1, envMapIntensity: 0.5,
+      normalMap: ln, normalScale: new THREE.Vector2(0.5, 0.5)
     }),
     skin: new THREE.MeshStandardMaterial({
-      color: 0xd3a184, roughness: 0.62, metalness: 0.0, envMapIntensity: 0.4
+      color: 0xc9926f, roughness: 0.58, metalness: 0.0, envMapIntensity: 0.5
     }),
     cloth: clothMaterial(0xffffff, { wave: 0.012, roughness: 0.9 }),
     clothHeavy: clothMaterial(0xffffff, { wave: 0.02, roughness: 0.86, sheenColor: 0xbfd8ff }),
@@ -225,6 +280,7 @@ function unitGeo(kind) {
     case 'sph': g = new THREE.SphereGeometry(0.5, 12, 8); break;
     case 'sphLow': g = new THREE.SphereGeometry(0.5, 8, 6); break;
     case 'dome': g = new THREE.SphereGeometry(0.5, 12, 7, 0, TAU, 0, Math.PI * 0.55); break;
+    case 'domeLow': g = new THREE.SphereGeometry(0.5, 8, 4, 0, TAU, 0, Math.PI * 0.55); break;
     case 'cap': g = new THREE.CapsuleGeometry(0.5, 1, 3, 8); break;
     case 'plane': g = new THREE.PlaneGeometry(1, 1); break;
     case 'planeV': g = new THREE.PlaneGeometry(1, 1, 6, 8); break;
@@ -294,41 +350,37 @@ function soldierParts() {
 
   /* ── 몸통: 천 튜닉 위에 강철 흉갑을 겹쳐 입는다 ───────────────── */
   add('chest', 'clothHeavy', 1, [
-    shape('box', [0, 0.02, 0], [0, 0, 0], [0.40, 0.34, 0.25]),          // 튜닉
-    shape('box', [0.20, 0.06, 0], [0, 0, -0.10], [0.10, 0.28, 0.22]),    // 옆구리 천
-    shape('box', [-0.20, 0.06, 0], [0, 0, 0.10], [0.10, 0.28, 0.22])
+    shape('cyl', [0, 0.02, 0], [0, 0, 0], [0.40, 0.36, 0.245]),         // 둥근 튜닉
+    shape('sph', [0, 0.15, 0], [0, 0, 0], [0.34, 0.17, 0.24]),          // 어깨 곡면
+    shape('box', [0.195, 0.04, 0], [0, 0, -0.10], [0.09, 0.26, 0.23]),  // 옆구리 천
+    shape('box', [-0.195, 0.04, 0], [0, 0, 0.10], [0.09, 0.26, 0.23])
   ]);
   add('chest', 'steel', 0, [
-    shape('sph', [0, 0.045, 0.02], [0, 0, 0], [0.40, 0.35, 0.30]),       // 둥근 흉갑(가슴 곡면)
-    shape('box', [0, 0.11, 0.132], [0.10, 0, 0], [0.26, 0.14, 0.03]),    // 가슴 판
-    shape('box', [0, -0.055, 0.125], [0.16, 0, 0], [0.28, 0.09, 0.035]), // 배 판
-    shape('cyl', [0, 0.19, 0], [0, 0, 0], [0.22, 0.055, 0.20]),          // 목 가드
-    shape('box', [0, 0.06, 0.175], [0, 0, 0], [0.028, 0.17, 0.02]),      // 중앙 능선
-    shape('box', [-0.175, 0.02, 0], [0, 0, 0.16], [0.055, 0.22, 0.22]),  // 겨드랑이 판
-    shape('box', [0.175, 0.02, 0], [0, 0, -0.16], [0.055, 0.22, 0.22])
+    shape('sph', [0, 0.045, 0.02], [0, 0, 0], [0.405, 0.37, 0.335]),     // 둥근 흉갑(가슴 곡면)
+    shape('cyl', [0, 0.185, 0.01], [0, 0, 0], [0.235, 0.065, 0.215]),     // 목 가드
+    shape('box', [0, 0.06, 0.192], [0, 0, 0], [0.026, 0.18, 0.026]),      // 중앙 능선
+    shape('box', [-0.175, 0.02, 0.01], [0, 0, 0.14], [0.06, 0.24, 0.30]), // 겨드랑이 판
+    shape('box', [0.175, 0.02, 0.01], [0, 0, -0.14], [0.06, 0.24, 0.30])
   ]);
   add('chest', 'gold', 2, [
-    shape('sph', [-0.135, 0.115, 0.128], [0, 0, 0], [0.026, 0.026, 0.014]),  // 리벳
-    shape('sph', [0.135, 0.115, 0.128], [0, 0, 0], [0.026, 0.026, 0.014]),
-    shape('sph', [-0.115, 0.0, 0.142], [0, 0, 0], [0.022, 0.022, 0.012]),
-    shape('sph', [0.115, 0.0, 0.142], [0, 0, 0], [0.022, 0.022, 0.012]),
-    shape('box', [0, -0.012, 0.148], [0, 0, 0], [0.05, 0.02, 0.012])          // 버클 판
-  ]);
-  add('chest', 'leather', 2, [
-    shape('box', [0.13, 0.06, 0.145], [0, 0, -0.62], [0.045, 0.26, 0.02]),  // 가죽끈 X
-    shape('box', [-0.13, 0.06, 0.145], [0, 0, 0.62], [0.045, 0.26, 0.02])
-  ]);
-  add('chest', 'gold', 2, [
-    shape('box', [0, 0.20, 0.10], [0.2, 0, 0], [0.05, 0.05, 0.03])
+    shape('sphLow', [-0.125, 0.125, 0.19], [0, 0, 0], [0.026, 0.026, 0.016]),  // 리벳
+    shape('sphLow', [0.125, 0.125, 0.19], [0, 0, 0], [0.026, 0.026, 0.016]),
+    shape('sphLow', [-0.115, 0.01, 0.19], [0, 0, 0], [0.022, 0.022, 0.014]),
+    shape('sphLow', [0.115, 0.01, 0.19], [0, 0, 0], [0.022, 0.022, 0.014]),
+    shape('box', [0, 0.185, 0.13], [0.30, 0, 0], [0.24, 0.014, 0.02])       // 목 가드 금선
   ]);
   add('spine', 'steel', 1, [
-    shape('box', [0, 0.02, 0], [0, 0, 0], [0.34, 0.18, 0.23]),           // 복갑
+    shape('cyl', [0, 0.02, 0], [0, 0, 0], [0.35, 0.19, 0.25]),           // 복갑
   ]);
   add('spine', 'clothHeavy', 2, [
-    shape('box', [0, -0.03, 0], [0, 0, 0], [0.37, 0.14, 0.25])
+    shape('cyl', [0, -0.04, 0], [0, 0, 0], [0.38, 0.15, 0.27])
+  ]);
+  add('pelvis', 'steel', 1, [
+    shape('cyl', [0, 0.08, 0.005], [0.03, 0, 0], [0.385, 0.055, 0.28]),   // 허리 겹판(상)
+    shape('cyl', [0, 0.03, 0.008], [0.05, 0, 0], [0.40, 0.055, 0.295])    // 허리 겹판(하)
   ]);
   add('pelvis', 'leather', 1, [
-    shape('box', [0, 0.03, 0], [0, 0, 0], [0.37, 0.09, 0.26]),           // 벨트
+    shape('box', [0, -0.012, 0], [0, 0, 0], [0.38, 0.075, 0.27]),         // 벨트
   ]);
   add('pelvis', 'gold', 2, [
     shape('box', [0, 0.02, 0.135], [0, 0, 0], [0.07, 0.07, 0.03]),       // 버클
@@ -344,29 +396,44 @@ function soldierParts() {
     shape('box', [0.165, -0.13, 0], [0, 0, -0.10], [0.035, 0.26, 0.20])
   ]);
 
-  /* ── 머리: 철 투구 + 코가드 ──────────────────────────────────── */
+  /* ── 머리: 철 투구(챙 · 코가드 · 눈구멍) + 목덜미 천 ───────────── */
   add('head', 'skin', 1, [
-    shape('sph', [0, 0.055, 0.005], [0, 0, 0], [0.19, 0.21, 0.19]),      // 얼굴
-    shape('box', [0, -0.015, 0.09], [0, 0, 0], [0.09, 0.06, 0.03])        // 턱
+    shape('sph', [0, 0.05, 0.008], [0, 0, 0], [0.19, 0.21, 0.19]),       // 얼굴
+    shape('box', [0, -0.02, 0.09], [0, 0, 0], [0.09, 0.06, 0.03]),        // 턱
+    shape('sph', [0, -0.04, 0.10], [0, 0, 0], [0.05, 0.035, 0.02])        // 턱수염 자리
   ]);
   add('head', 'steel', 0, [
-    shape('dome', [0, 0.075, -0.002], [0, 0, 0], [0.245, 0.27, 0.245]),   // 투구
-    shape('cyl', [0, 0.045, 0], [0, 0, 0], [0.255, 0.028, 0.255]),        // 투구 테
-    shape('box', [0, 0.0, 0.105], [0.05, 0, 0], [0.026, 0.13, 0.03]),     // 코가드
-    shape('box', [-0.115, 0.02, 0.055], [0, 0.25, 0], [0.04, 0.13, 0.10]),// 볼가리개
-    shape('box', [0.115, 0.02, 0.055], [0, -0.25, 0], [0.04, 0.13, 0.10])
+    shape('dome', [0, 0.082, -0.004], [0, 0, 0], [0.245, 0.285, 0.25]),   // 투구 통
+    shape('cyl', [0, 0.148, 0.006], [0.06, 0, 0], [0.264, 0.02, 0.264]),  // 챙(투구 테)
+    shape('cyl', [0, 0.048, 0], [0, 0, 0], [0.252, 0.026, 0.252]),        // 이마 굽은 테
+    shape('box', [0, 0.0, 0.112], [0.06, 0, 0], [0.03, 0.15, 0.035]),     // 코가드
+    shape('box', [-0.118, 0.03, 0.05], [0, 0.28, 0], [0.045, 0.15, 0.11]),// 볼가리개
+    shape('box', [0.118, 0.03, 0.05], [0, -0.28, 0], [0.045, 0.15, 0.11]),
+    shape('box', [0, 0.225, -0.012], [0.10, 0, 0], [0.028, 0.075, 0.13])  // 정수리 능선
+  ]);
+  add('head', 'blackIron', 1, [
+    shape('box', [0, 0.085, 0.122], [0, 0, 0], [0.165, 0.032, 0.02]),         // 눈 슬릿
+    shape('box', [0, 0.045, 0.126], [0.1, 0, 0], [0.13, 0.016, 0.016])        // 콧등 그늘
+  ]);
+  add('head', 'gold', 2, [
+    shape('cyl', [0, 0.157, 0.006], [0.06, 0, 0], [0.266, 0.008, 0.266])  // 챙 금장 테
   ]);
   add('head', 'darkSteel', 1, [
-    shape('box', [0, 0.225, -0.01], [0, 0, 0], [0.035, 0.09, 0.17])       // 볏등
+    shape('box', [0, 0.255, -0.03], [0.22, 0, 0], [0.03, 0.06, 0.15])      // 볏등
   ]);
   add('head', 'cloth', 2, [
-    shape('box', [0, 0.02, -0.10], [0.2, 0, 0], [0.18, 0.12, 0.06])       // 목덜미 천
+    shape('box', [0, 0.0, -0.10], [0.24, 0, 0], [0.20, 0.15, 0.06])       // 목덜미 천
   ]);
 
-  /* ── 어깨·팔 ─────────────────────────────────────────────────── */
+  /* ── 어깨·팔: 겹판 견갑 ──────────────────────────────────────── */
   add('armR', 'steel', 0, [
-    shape('sph', [0.02, 0.02, 0], [0, 0, 0.1], [0.21, 0.17, 0.21]),       // 견갑
-    shape('box', [0.015, -0.02, 0], [0, 0, 0.06], [0.19, 0.05, 0.20])     // 견갑 테
+    shape('sph', [0.02, 0.02, 0], [0, 0, 0.1], [0.245, 0.20, 0.245]),      // 견갑(총)
+    shape('sphLow', [0.028, -0.05, 0], [0, 0, 0.1], [0.215, 0.08, 0.22]),  // 2단 판
+    shape('sphLow', [0.032, -0.11, 0], [0, 0, 0.08], [0.195, 0.065, 0.20]), // 3단 판
+    shape('box', [0.015, -0.02, 0], [0, 0, 0.06], [0.19, 0.045, 0.20])      // 견갑 테
+  ]);
+  add('armR', 'gold', 2, [
+    shape('sph', [0.02, 0.09, 0.02], [0, 0, 0], [0.05, 0.05, 0.04])        // 견갑 장식못
   ]);
   add('armR', 'cloth', 1, [
     shape('cap', [0, -0.15, 0], [0, 0, 0], [0.135, 0.26, 0.135])          // 상완 소매
@@ -388,8 +455,10 @@ function soldierParts() {
     shape('box', [0, -0.04, 0.05], [0, 0, 0], [0.075, 0.05, 0.03])
   ]);
   add('armL', 'steel', 0, [
-    shape('sph', [-0.02, 0.02, 0], [0, 0, -0.1], [0.21, 0.17, 0.21]),
-    shape('box', [-0.015, -0.02, 0], [0, 0, -0.06], [0.19, 0.05, 0.20])
+    shape('sph', [-0.02, 0.02, 0], [0, 0, -0.1], [0.245, 0.20, 0.245]),
+    shape('sphLow', [-0.028, -0.05, 0], [0, 0, -0.1], [0.215, 0.08, 0.22]),
+    shape('sphLow', [-0.032, -0.11, 0], [0, 0, -0.08], [0.195, 0.065, 0.20]),
+    shape('box', [-0.015, -0.02, 0], [0, 0, -0.06], [0.19, 0.045, 0.20])
   ]);
   add('armL', 'cloth', 1, [
     shape('cap', [0, -0.15, 0], [0, 0, 0], [0.135, 0.26, 0.135])
@@ -418,8 +487,13 @@ function soldierParts() {
     add('shin' + side, 'leather', 2, [
       shape('cyl', [0, -0.28, 0], [0, 0, 0], [0.13, 0.05, 0.12])
     ]);
+    add('shin' + side, 'leather', 0, [
+      shape('cyl', [0, -0.36, 0.005], [0, 0, 0], [0.115, 0.14, 0.115]),      // 발목 통
+      shape('cyl', [0, -0.40, 0.02], [0.35, 0, 0], [0.105, 0.07, 0.105])     // 복사뼈
+    ]);
     add('foot' + side, 'leather', 1, [
-      shape('box', [0, -0.02, 0.03], [0, 0, 0], [0.12, 0.10, 0.24])        // 부츠
+      shape('box', [0, -0.02, 0.03], [0, 0, 0], [0.12, 0.10, 0.24]),         // 부츠
+      shape('sph', [0, 0.03, -0.01], [0, 0, 0], [0.12, 0.09, 0.12])          // 발등 곡면
     ]);
     add('foot' + side, 'steel', 2, [
       shape('box', [0, -0.03, 0.13], [0, 0, 0], [0.115, 0.07, 0.10])
@@ -427,23 +501,41 @@ function soldierParts() {
   };
   leg('R'); leg('L');
 
+  /* ── 어깨 망토(짧은 어깨 천) — 실루엣에 진영색을 한 겹 더 ────── */
+  add('chest', 'clothHeavy', 1, [
+    shape('box', [0, 0.175, -0.02], [0.03, 0, 0], [0.46, 0.06, 0.30]),     // 어깨 덮개
+    shape('planeV', [0, -0.10, -0.175], [0.12, 0, 0], [0.42, 0.46, 1])    // 등 망토 자락
+  ]);
+
   /* ── 검 ──────────────────────────────────────────────────────── */
   add('handR', 'darkLeather', 1, [
     shape('cyl', [0, 0, -0.06], [Math.PI / 2, 0, 0], [0.052, 0.17, 0.052])  // 손잡이
   ]);
   add('handR', 'gold', 0, [
     shape('sph', [0, 0, -0.155], [0, 0, 0], [0.062, 0.062, 0.055]),        // 폼멜
-    shape('box', [0, 0, 0.032], [0, 0, 0], [0.235, 0.034, 0.048]),          // 가드
+    shape('box', [0, 0, 0.032], [0, 0, 0], [0.245, 0.032, 0.046]),          // 가드
     shape('cyl', [0, 0, 0.012], [Math.PI / 2, 0, 0], [0.05, 0.05, 0.02]),   // 가드 목
-    shape('box', [-0.115, 0, 0.045], [0, 0, 0.35], [0.05, 0.03, 0.04]),     // 가드 끝 굽힘
-    shape('box', [0.115, 0, 0.045], [0, 0, -0.35], [0.05, 0.03, 0.04])
+    shape('box', [-0.118, 0, 0.048], [0, 0, 0.42], [0.06, 0.028, 0.038]),   // 가드 끝 굽힘
+    shape('box', [0.118, 0, 0.048], [0, 0, -0.42], [0.06, 0.028, 0.038]),
+    shape('sphLow', [-0.145, 0, 0.058], [0, 0, 0], [0.032, 0.032, 0.024]), // 가드 끝 장식
+    shape('sphLow', [0.145, 0, 0.058], [0, 0, 0], [0.032, 0.032, 0.024])
   ]);
   add('handR', 'steel', 0, [
-    shape('box', [0, 0, 0.48], [0, 0, 0], [0.058, 0.016, 0.80]),            // 날
-    shape('cone6', [0, 0, 0.94], [Math.PI / 2, 0, 0], [0.058, 0.16, 0.032]) // 칼끝
+    shape('box', [0, 0, 0.20], [0, 0, 0], [0.062, 0.017, 0.33]),            // 날(뿌리)
+    shape('box', [0, 0, 0.53], [0, 0, 0], [0.054, 0.015, 0.34]),            // 날(중간)
+    shape('box', [0, 0, 0.80], [0, 0, 0], [0.044, 0.013, 0.22]),            // 날(끝)
+    shape('cone6', [0, 0, 0.955], [Math.PI / 2, 0, 0], [0.05, 0.15, 0.03])  // 칼끝
   ]);
   add('handR', 'darkSteel', 2, [
-    shape('box', [0, 0, 0.47], [0, 0, 0], [0.016, 0.019, 0.72])             // 홈
+    shape('box', [0, 0, 0.50], [0, 0, 0], [0.014, 0.019, 0.78]),            // 혈조
+    shape('box', [0, -0.004, 0.20], [0, 0, 0], [0.043, 0.008, 0.16])        // 리카쏘
+  ]);
+  /* 칼집 — 왼쪽 허리에 납작하게 붙어 아래로 늘어진다 */
+  add('pelvis', 'darkLeather', 1, [
+    shape('box', [-0.225, -0.22, -0.03], [0.16, 0.10, 0.10], [0.034, 0.20, 0.045])
+  ]);
+  add('pelvis', 'gold', 2, [
+    shape('box', [-0.225, -0.38, -0.055], [0.16, 0.10, 0.10], [0.038, 0.05, 0.05])
   ]);
   return P;
 }
@@ -454,14 +546,14 @@ function knightParts() {
 
   /* ── 중갑 몸통 ───────────────────────────────────────────────── */
   add('chest', 'steel', 0, [
-    shape('box', [0, 0.03, 0], [0, 0, 0], [0.54, 0.36, 0.34]),              // 흉갑
+    shape('cyl', [0, 0.03, 0], [0, 0, 0], [0.56, 0.38, 0.36]),              // 흉갑(둥근)
     shape('box', [0, 0.13, 0.175], [0.08, 0, 0], [0.34, 0.15, 0.05]),       // 가슴 판
     shape('box', [0, 0.20, 0], [0, 0, 0], [0.30, 0.10, 0.30]),              // 목 가드
     shape('box', [-0.235, 0.02, 0], [0, 0, 0.12], [0.09, 0.30, 0.30]),      // 겨드랑이
     shape('box', [0.235, 0.02, 0], [0, 0, -0.12], [0.09, 0.30, 0.30])
   ]);
   add('chest', 'darkSteel', 1, [
-    shape('box', [0, -0.09, 0.155], [0.20, 0, 0], [0.42, 0.10, 0.05]),      // 배 판 겹
+    shape('box', [0, -0.09, 0.196], [0.20, 0, 0], [0.42, 0.10, 0.05]),      // 배 판 겹
     shape('box', [0, 0.03, 0.185], [0, 0, 0], [0.02, 0.22, 0.02])
   ]);
   add('chest', 'gold', 1, [
@@ -470,7 +562,11 @@ function knightParts() {
     shape('box', [0, 0.235, 0], [0, 0, 0], [0.26, 0.03, 0.03])              // 목 테
   ]);
   add('spine', 'steel', 1, [
-    shape('box', [0, 0.02, 0], [0, 0, 0], [0.44, 0.20, 0.30])
+    shape('cyl', [0, 0.02, 0], [0, 0, 0], [0.46, 0.22, 0.32])
+  ]);
+  add('spine', 'darkSteel', 2, [
+    shape('box', [0, -0.07, 0.10], [0.12, 0, 0], [0.36, 0.09, 0.16]),     // 복갑 겹판
+    shape('box', [0, 0.06, 0.12], [0.06, 0, 0], [0.30, 0.05, 0.14])
   ]);
   add('pelvis', 'leather', 1, [
     shape('box', [0, 0.03, 0], [0, 0, 0], [0.47, 0.10, 0.33])
@@ -481,7 +577,9 @@ function knightParts() {
   add('pelvis', 'steel', 0, [
     shape('box', [-0.19, -0.13, 0.02], [0, 0, 0.20], [0.24, 0.28, 0.30]),   // 허벅지 판
     shape('box', [0.19, -0.13, 0.02], [0, 0, -0.20], [0.24, 0.28, 0.30]),
-    shape('box', [0, -0.10, 0.13], [0.10, 0, 0], [0.30, 0.16, 0.06])        // 앞 허벅지 판
+    shape('box', [0, -0.10, 0.13], [0.10, 0, 0], [0.30, 0.16, 0.06]),        // 앞 허벅지 판
+    shape('box', [0, -0.02, 0.02], [0.04, 0, 0], [0.48, 0.07, 0.34]),        // 허리 겹판
+    shape('box', [0, -0.09, 0.01], [0.2, 0, 0], [0.46, 0.07, 0.33])
   ]);
   add('pelvis', 'clothHeavy', 1, [
     shape('box', [0, -0.20, 0], [0, 0, 0], [0.46, 0.20, 0.34])              // 군의
@@ -493,8 +591,9 @@ function knightParts() {
     shape('box', [0, 0.02, 0.132], [0, 0, 0], [0.245, 0.19, 0.09]),         // 면갑
     shape('box', [0, -0.045, 0.115], [0.3, 0, 0], [0.22, 0.07, 0.08]),      // 턱 가리개
     shape('cyl', [0, -0.03, 0], [0, 0, 0], [0.33, 0.06, 0.34]),             // 턱받이
+    shape('cyl', [0, 0.105, 0], [0.05, 0, 0], [0.325, 0.03, 0.335]),        // 이마 테
     shape('box', [0, 0.235, 0], [0, 0, 0], [0.05, 0.07, 0.22]),             // 볏대
-    shape('box', [0, 0.075, 0.16], [0, 0, 0], [0.03, 0.20, 0.03])           // 면갑 능선
+    shape('box', [0, 0.075, 0.163], [0, 0, 0], [0.03, 0.20, 0.03])          // 면갑 능선
   ]);
   add('head', 'blackIron', 1, [
     shape('box', [0, 0.075, 0.178], [0, 0, 0], [0.17, 0.022, 0.02]),        // 눈 틈
@@ -503,7 +602,9 @@ function knightParts() {
     shape('box', [0, -0.02, 0.182], [0, 0, 0], [0.05, 0.09, 0.02])          // 숨구멍
   ]);
   add('head', 'gold', 1, [
-    shape('box', [0, 0.205, 0.02], [0, 0, 0], [0.30, 0.035, 0.22])          // 이마 금장
+    shape('box', [0, 0.205, 0.02], [0, 0, 0], [0.30, 0.035, 0.22]),        // 이마 금장
+    shape('cyl', [0, 0.112, 0], [0.05, 0, 0], [0.332, 0.012, 0.342]),       // 이마 테 금선
+    shape('box', [0, 0.27, 0], [0, 0, 0], [0.06, 0.06, 0.05])               // 볏대 고정쇠
   ]);
   add('head', 'plume', 0, [
     shape('box', [0, 0.33, -0.03], [0.24, 0, 0], [0.09, 0.18, 0.40]),       // 볏 깃
@@ -514,16 +615,15 @@ function knightParts() {
   const arm = (side) => {
     const sx = side === 'R' ? 1 : -1;
     add('arm' + side, 'steel', 0, [
-      shape('sph', [0.025 * sx, 0.03, 0], [0, 0, 0.12 * sx], [0.40, 0.26, 0.40]),  // 대형 견갑
-      shape('sph', [0.035 * sx, -0.07, 0], [0, 0, 0.1 * sx], [0.34, 0.16, 0.34]),  // 2단
-      shape('sph', [0.045 * sx, -0.135, 0], [0, 0, 0.08 * sx], [0.29, 0.11, 0.29]),// 3단 겹판
-      shape('cap', [0, -0.19, 0], [0, 0, 0], [0.185, 0.22, 0.185])
+      shape('dome', [0.02 * sx, 0.03, 0], [0, 0, 0.10 * sx], [0.43, 0.34, 0.43]),    // 견갑 통
+      shape('domeLow', [0.03 * sx, -0.04, 0], [0, 0, 0.14 * sx], [0.39, 0.22, 0.39]),  // 1단 겹판
+      shape('domeLow', [0.04 * sx, -0.10, 0], [0, 0, 0.18 * sx], [0.34, 0.17, 0.35]),  // 2단 겹판
+      shape('domeLow', [0.05 * sx, -0.155, 0], [0, 0, 0.20 * sx], [0.30, 0.14, 0.31]), // 3단 겹판
+      shape('cap', [0, -0.20, 0], [0, 0, 0], [0.185, 0.16, 0.185])
     ]);
     add('arm' + side, 'gold', 2, [
-      shape('torus', [0.035 * sx, -0.10, 0], [0, 0, 0.1 * sx], [0.35, 0.17, 0.35])
-    ]);
-    add('arm' + side, 'gold', 2, [
-      shape('torus', [0.025 * sx, 0.03, 0], [0, 0, 0.12 * sx], [0.42, 0.28, 0.42])
+      shape('cyl', [0.02 * sx, 0.012, 0], [0, 0, 0.10 * sx], [0.436, 0.014, 0.436]),   // 견갑 테 금선
+      shape('cyl', [0.04 * sx, -0.095, 0], [0, 0, 0.16 * sx], [0.352, 0.012, 0.36])    // 2단 테 금선
     ]);
     add('elb' + side, 'steel', 0, [
       shape('cap', [0, -0.12, 0], [0, 0, 0], [0.17, 0.26, 0.165]),
@@ -553,6 +653,9 @@ function knightParts() {
       shape('cap', [0, -0.14, 0], [0, 0, 0], [0.20, 0.32, 0.19]),
       shape('sph', [0, 0.02, 0.045], [0, 0, 0], [0.23, 0.17, 0.23])
     ]);
+    add('shin' + side, 'steel', 1, [
+      shape('cyl', [0, -0.36, 0.01], [0, 0, 0], [0.155, 0.16, 0.15])          // 발목 갑주
+    ]);
     add('foot' + side, 'darkSteel', 1, [
       shape('box', [0, -0.02, 0.06], [0, 0, 0], [0.16, 0.12, 0.32])
     ]);
@@ -578,7 +681,9 @@ function knightParts() {
     shape('box', [0, 0, 1.19], [0, 0, 0], [0.44, 0.30, 0.05]),
     shape('box', [0, 0, 1.53], [0, 0, 0], [0.46, 0.28, 0.05]),
     shape('box', [0, 0.185, 1.36], [0.18, 0, 0], [0.52, 0.03, 0.34]),       // 머리 테
-    shape('sph', [0, 0, -0.21], [0, 0, 0], [0.10, 0.10, 0.10])
+    shape('sph', [0, 0, -0.21], [0, 0, 0], [0.10, 0.10, 0.10]),
+    shape('box', [0, 0.185, 1.36], [0.18, 0, 0], [0.20, 0.035, 0.09]),      // 각인 판(중앙)
+    shape('box', [0, -0.155, 1.36], [-0.1, 0, 0], [0.30, 0.03, 0.22])
   ]);
   add('handR', 'darkSteel', 2, [
     shape('cone6', [0.30, 0, 1.36], [0, 0, -Math.PI / 2], [0.10, 0.16, 0.10]),  // 옆 날개
@@ -610,10 +715,12 @@ function wizardParts() {
   ]);
   add('pelvis', 'robe', 0, [
     shape('cyl', [0, -0.34, 0], [0, 0, 0], [0.82, 0.86, 0.78]),             // 퍼지는 자락
+    shape('cyl', [0, -0.62, 0], [0, 0, 0], [0.88, 0.26, 0.84]),             // 자락 주름
     shape('cyl', [0, -0.72, 0], [0, 0, 0], [0.94, 0.22, 0.90])              // 밑단
   ]);
   add('pelvis', 'gold', 1, [
-    shape('torus', [0, -0.84, 0], [Math.PI / 2, 0, 0], [0.98, 0.98, 0.98])  // 밑단 금장
+    shape('cyl', [0, -0.80, 0], [0, 0, 0], [0.952, 0.022, 0.912]),          // 밑단 금장 띠
+    shape('cyl', [0, -0.40, 0], [0, 0, 0], [0.842, 0.014, 0.802])           // 자락 금선
   ]);
   add('pelvis', 'clothHeavy', 2, [
     shape('box', [0, -0.04, 0], [0, 0, 0], [0.50, 0.12, 0.44])              // 허리띠
@@ -627,7 +734,8 @@ function wizardParts() {
     shape('sph', [0, 0.10, -0.03], [0, 0, 0], [0.34, 0.36, 0.34]),         // 후드
     shape('cone', [0, 0.46, -0.06], [0.16, 0, 0], [0.30, 0.72, 0.30]),      // 뾰족 모자
     shape('cyl', [0, 0.19, -0.03], [0, 0, 0], [0.72, 0.05, 0.68]),          // 모자 챙
-    shape('box', [0, -0.04, -0.16], [0.3, 0, 0], [0.30, 0.26, 0.06])        // 후드 뒤
+    shape('box', [0, -0.04, -0.16], [0.3, 0, 0], [0.30, 0.26, 0.06]),       // 후드 뒤
+    shape('cyl', [0, 0.30, -0.045], [0.05, 0, 0], [0.44, 0.30, 0.42])       // 모자 몸통 마디
   ]);
   add('head', 'blackIron', 1, [
     shape('sph', [0, 0.06, 0.075], [0, 0, 0], [0.22, 0.23, 0.14])           // 그림자 얼굴
@@ -637,7 +745,7 @@ function wizardParts() {
     shape('sph', [-0.05, 0.085, 0.128], [0, 0, 0], [0.036, 0.030, 0.02])
   ]);
   add('head', 'gold', 2, [
-    shape('torus', [0, 0.19, -0.03], [Math.PI / 2, 0, 0], [0.73, 0.73, 0.73]),
+    shape('cyl', [0, 0.196, -0.03], [0, 0, 0], [0.732, 0.012, 0.692]),      // 모자 테 금선
     shape('sph', [0, 0.83, -0.11], [0, 0, 0], [0.05, 0.05, 0.05])           // 모자 끝 장식
   ]);
 
@@ -660,9 +768,7 @@ function wizardParts() {
   add('handR', 'orb', 1, [
     shape('sph', [0, -0.055, 0.115], [0, 0, 0], [0.11, 0.11, 0.11])        // 손바닥 오브
   ], { spin: { axis: 'y', speed: 1.3 } });
-  add('handR', 'rune', 2, [
-    shape('plane', [0, -0.055, 0.145], [0, 0, 0], [0.42, 0.42, 1])
-  ], { spin: { axis: 'z', speed: -0.8 } });
+
 
   /* ── 지팡이 ──────────────────────────────────────────────────── */
   add('handL', 'woodDark', 0, [
@@ -675,11 +781,10 @@ function wizardParts() {
     shape('torus', [0, 0.74, 0.02], [Math.PI / 2, 0, 0], [0.26, 0.26, 0.26])
   ]);
   add('handL', 'orb', 0, [
-    shape('sph', [0, 1.00, 0.02], [0, 0, 0], [0.21, 0.21, 0.21])
+    shape('sph', [0, 1.00, 0.02], [0, 0, 0], [0.21, 0.21, 0.21]),
+    shape('sph', [0, 1.00, 0.02], [0, 0.6, 0], [0.29, 0.10, 0.29])          // 보석 고리빛
   ], { spin: { axis: 'y', speed: 0.8 } });
-  add('handL', 'rune', 1, [
-    shape('plane', [0, 1.00, 0.02], [-Math.PI / 2, 0, 0], [0.66, 0.66, 1])
-  ], { spin: { axis: 'y', speed: -1.5 } });
+
 
   /* 로브 밑으로 살짝 보이는 장화 */
   add('shinR', 'darkLeather', 1, [shape('box', [0, -0.30, 0.03], [0, 0, 0], [0.16, 0.28, 0.20])]);
@@ -702,8 +807,14 @@ function blademasterParts() {
   add('chest', 'darkSteel', 1, [
     shape('box', [0, 0.03, -0.145], [0, 0, 0], [0.36, 0.34, 0.03])          // 하오리 등판
   ]);
+  add('chest', 'clothHeavy', 1, [
+    shape('box', [-0.15, 0.0, 0.01], [0.02, 0, 0.03], [0.055, 0.40, 0.30]),  // 하오리 앞자락
+    shape('box', [0.15, 0.0, 0.01], [0.02, 0, -0.03], [0.055, 0.40, 0.30]),
+    shape('box', [0, -0.16, 0.02], [0, 0, 0], [0.38, 0.05, 0.27])           // 하오리 밑단
+  ]);
   add('chest', 'gold', 2, [
-    shape('box', [-0.15, 0.20, 0.08], [0, 0, 0], [0.05, 0.05, 0.03])        // 매화 장식
+    shape('box', [-0.15, 0.20, 0.08], [0, 0, 0], [0.05, 0.05, 0.03]),      // 매화 장식
+    shape('box', [0, 0.19, 0.149], [0, 0, 0], [0.20, 0.012, 0.012])        // 깃 금선
   ]);
   add('spine', 'kimono', 0, [
     shape('box', [0, 0.02, 0], [0, 0, 0], [0.36, 0.22, 0.24])
@@ -712,8 +823,9 @@ function blademasterParts() {
     shape('box', [0, -0.02, 0.0], [0, 0, 0], [0.40, 0.10, 0.27])            // 오비(허리띠)
   ]);
   add('pelvis', 'kimono', 0, [
-    shape('cyl', [0, -0.26, 0], [0, 0, 0], [0.66, 0.62, 0.60]),             // 하카마
-    shape('cyl', [0, -0.62, 0], [0, 0, 0], [0.78, 0.18, 0.72])
+    shape('cyl', [0, -0.24, 0], [0, 0, 0], [0.54, 0.56, 0.50]),             // 하카마
+    shape('cyl', [0, -0.56, 0], [0, 0, 0], [0.64, 0.16, 0.60]),             // 밑단 주름
+    shape('cyl', [0, -0.63, 0], [0, 0, 0], [0.58, 0.06, 0.54])
   ]);
   add('pelvis', 'clothHeavy', 1, [
     shape('box', [0, -0.04, 0.135], [0, 0, 0], [0.14, 0.16, 0.03])          // 오비 매듭
@@ -733,6 +845,10 @@ function blademasterParts() {
     shape('box', [0, 0.155, 0], [0, 0, 0], [0.235, 0.045, 0.235]),          // 머리띠
     shape('box', [0, 0.10, -0.16], [0.5, 0, 0], [0.07, 0.10, 0.22]),        // 띠 끝
     shape('box', [0.05, 0.06, -0.21], [0.9, 0.2, 0], [0.05, 0.07, 0.18])
+  ]);
+  add('head', 'blackIron', 2, [
+    shape('sph', [0.08, 0.02, 0.13], [0, 0, 0], [0.055, 0.028, 0.02]),       // 눈썹
+    shape('sph', [-0.08, 0.02, 0.13], [0, 0, 0], [0.055, 0.028, 0.02])
   ]);
   add('head', 'gold', 2, [
     shape('sph', [0.10, 0.185, 0.05], [0, 0, 0], [0.045, 0.045, 0.02])      // 매화 핀
@@ -760,6 +876,9 @@ function blademasterParts() {
     add('shin' + side, 'darkLeather', 0, [
       shape('cyl', [0, -0.14, 0], [0, 0, 0], [0.145, 0.30, 0.135])
     ]);
+    add('shin' + side, 'darkLeather', 1, [
+      shape('cyl', [0, -0.36, 0.005], [0, 0, 0], [0.12, 0.14, 0.12])
+    ]);
     add('foot' + side, 'darkLeather', 1, [
       shape('box', [0, -0.02, 0.05], [0, 0, 0], [0.12, 0.09, 0.24])
     ]);
@@ -782,6 +901,9 @@ function blademasterParts() {
     shape('box', [0, 0.020, 0.55], [0.03, 0, 0], [0.013, 0.015, 0.70]),      // 혈조
     shape('box', [0.008, 0.008, 0.075], [0, 0, 0], [0.052, 0.022, 0.05])     // 하바키
   ]);
+  add('handR', 'darkSteel', 2, [
+    shape('box', [0.023, 0.013, 0.55], [0.03, 0, 0], [0.006, 0.007, 0.58])  // 하몬(날의 물결)
+  ]);
   add('handR', 'gold', 1, [
     shape('torus', [0, 0.0, 0.035], [0, 0, 0], [0.14, 0.14, 0.14]),          // 츠바 테
     shape('box', [0, 0.0, 0.035], [0, 0, 0], [0.15, 0.012, 0.06]),            // 츠바 살
@@ -794,12 +916,12 @@ function blademasterParts() {
   add('handR', 'cloth', 2, [
     shape('box', [-0.03, -0.05, -0.02], [0.3, 0, 0.2], [0.02, 0.12, 0.02])
   ]);
-  /* 칼집 — 왼쪽 허리 */
+  /* 칼집 — 왼쪽 허벅지에 수직으로 달랑거린다 */
   add('pelvis', 'blackIron', 1, [
-    shape('box', [-0.26, -0.10, -0.02], [0.42, 0.10, 0.30], [0.05, 0.05, 0.86])
+    shape('box', [-0.30, -0.34, -0.02], [1.16, 0.12, 0.10], [0.045, 0.045, 0.80])
   ]);
   add('pelvis', 'gold', 2, [
-    shape('box', [-0.26, -0.055, 0.30], [0.42, 0.10, 0.30], [0.055, 0.055, 0.03])
+    shape('box', [-0.30, -0.02, -0.02], [1.16, 0.12, 0.10], [0.052, 0.052, 0.05])
   ]);
   return P;
 }
@@ -947,12 +1069,12 @@ export class UnitRenderer {
   teamColorFor(u, cls, kind) {
     const team = TEAM[u.team] || TEAM.ally;
     const rng = mulberry32((u.mirror || u.id || 1) * 977 + 13);
-    const vary = 0.86 + rng() * 0.26;
-    if (kind === 'cloth') return new THREE.Color(team.cloth).multiplyScalar(vary);
-    if (kind === 'robe') return new THREE.Color(u.team === 'enemy' ? 0x5c2440 : 0x2a3f66).multiplyScalar(vary);
-    if (kind === 'plume') return new THREE.Color(u.team === 'enemy' ? 0x8a1d1d : 0x3f6f9c);
-    if (kind === 'trim') return new THREE.Color(u.team === 'enemy' ? 0xc08a3a : 0xb9cfe8);
-    if (kind === 'steel') return new THREE.Color(0.86 + rng() * 0.2, 0.86 + rng() * 0.2, 0.9 + rng() * 0.18);
+    const vary = 0.9 + rng() * 0.18;
+    if (kind === 'cloth') return new THREE.Color(team.cloth).multiplyScalar(1.0 * vary);
+    if (kind === 'robe') return new THREE.Color(u.team === 'enemy' ? 0x5a2440 : 0x2c4266).multiplyScalar(vary);
+    if (kind === 'plume') return new THREE.Color(u.team === 'enemy' ? 0x7d1a1a : 0x35608a).multiplyScalar(vary);
+    if (kind === 'trim') return new THREE.Color(u.team === 'enemy' ? 0xd8a24a : 0xcbbc93).multiplyScalar(vary);
+    if (kind === 'steel') return new THREE.Color(0.9 + rng() * 0.18, 0.9 + rng() * 0.18, 0.94 + rng() * 0.14);
     return new THREE.Color(1, 1, 1);
   }
 
@@ -1029,9 +1151,12 @@ export class UnitRenderer {
   writeParts(u, tier, time) {
     const c = this.classes[u.cls];
     const slot = u.dslot;
+    /* 로드 상세 단계: 가까울수록 미세 장식(lod 2)까지, 중거리는 핵심(lod 1), 원거리는 몸통만(lod 0).
+       (예전엔 조건이 반대로 걸려 코앞 유닛에서 오히려 장식이 사라졌다) */
+    const maxLod = 2 - tier;
     for (const p of c.parts) {
       const lod = p.userData.lod;
-      if (lod > tier + 1) { p.setMatrixAt(slot, _hiddenM); continue; }
+      if (lod > maxLod) { p.setMatrixAt(slot, _hiddenM); continue; }
       const jm = u.joints[p.userData.joint];
       const spin = p.userData.spin;
       if (spin) {
@@ -1081,6 +1206,8 @@ export class UnitRenderer {
         }
         const dx = u.x - camPos.x, dz = u.z - camPos.z;
         u._d2 = dx * dx + dz * dz;
+        // 숨겨졌던 유닛(1인칭 → 3인칭 복귀·디버그)이 다시 그려지도록 상세 배정을 되살린다
+        if (u._tier === -2) u._tier = -1;
         u._want = (u.isPlayer || u._d2 < 15 * 15) ? 0 : (u._d2 < 36 * 36 ? 1 : 2);
       }
 

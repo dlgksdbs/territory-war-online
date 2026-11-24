@@ -381,6 +381,28 @@ export class Battle {
     return n;
   }
 
+  /* 🎬 관전 중인 플레이어는 유령 — AI의 시야·충돌·분리 어디에도 존재하지 않는다 */
+  isGhost(o) {
+    return !!(o && o.isPlayer && this.playerSafe);
+  }
+
+  /* 관전에 들어가는 순간, 플레이어를 노리던 적의 어그로를 즉시 풀어 다른 아군으로 돌린다 */
+  releaseFromPlayer() {
+    const p = this.player;
+    if (!p) return 0;
+    let n = 0;
+    for (const u of this.units) {
+      if (u === p) continue;
+      if (u.target === p) {
+        u.target = null;
+        u.acquireT = 0;
+        n++;
+      }
+      if (u.spellTarget === p) u.spellTarget = null;
+    }
+    return n;
+  }
+
   /* 가장 가까운 적 찾기 (그리드) */
   findTarget(u, range) {
     const r = range || 34;
@@ -389,6 +411,7 @@ export class Battle {
     for (let i = 0; i < list.length; i++) {
       const o = list[i];
       if (o.team === u.team || o.dead) continue;
+      if (this.isGhost(o)) continue;
       const dx = o.x - u.x, dz = o.z - u.z;
       const d = dx * dx + dz * dz;
       if (d < bestD) { bestD = d; best = o; }
@@ -400,7 +423,7 @@ export class Battle {
   blockedBy(u, nx, nz) {
     const list = this.grid.query(nx, nz, 1.6, this._blockTmp || (this._blockTmp = []));
     for (const o of list) {
-      if (o === u || o.dead) continue;
+      if (o === u || o.dead || this.isGhost(o)) continue;
       const dx = nx - o.x, dz = nz - o.z;
       const d = Math.hypot(dx, dz) || 0.0001;
       const minD = (u.radius + o.radius) * 0.95;
@@ -512,7 +535,7 @@ export class Battle {
     const list = this.grid.query(u.x, u.z, reach + 1.2, this.tmp);
     const hits = [];
     for (const o of list) {
-      if (o.team === u.team || o.dead) continue;
+      if (o.team === u.team || o.dead || this.isGhost(o)) continue;
       const dx = o.x - u.x, dz = o.z - u.z;
       const d = Math.hypot(dx, dz);
       if (d > reach + o.radius) continue;
@@ -589,7 +612,7 @@ export class Battle {
         let best = null, bd = 8 * 8;
         const near = this.grid.query(cur.x, cur.z, 8, this.tmp);
         for (const o of near) {
-          if (o.dead || o.team === u.team || chain.includes(o)) continue;
+          if (o.dead || o.team === u.team || chain.includes(o) || this.isGhost(o)) continue;
           const d = (o.x - cur.x) ** 2 + (o.z - cur.z) ** 2;
           if (d < bd) { bd = d; best = o; }
         }
@@ -610,7 +633,7 @@ export class Battle {
       const list = this.grid.query(u.x, u.z, sp.radius, this.tmp);
       const hitList = [];
       for (const o of list) {
-        if (o.team === u.team || o.dead) continue;
+        if (o.team === u.team || o.dead || this.isGhost(o)) continue;
         const dx = o.x - u.x, dz = o.z - u.z;
         const d = Math.hypot(dx, dz);
         if (d > sp.radius) continue;
@@ -651,7 +674,7 @@ export class Battle {
     u.walkPhase += dt * 16;
     const list = this.grid.query(u.x, u.z, SKILL.radius, this.tmp);
     for (const o of list) {
-      if (o.dead || o.team === u.team) continue;
+      if (o.dead || o.team === u.team || this.isGhost(o)) continue;
       if (u.dashHit.includes(o.id)) continue;
       if (Math.hypot(o.x - u.x, o.z - u.z) > SKILL.radius + o.radius) continue;
       u.dashHit.push(o.id);
@@ -678,7 +701,7 @@ export class Battle {
     let n = 0;
     const hitList = [];
     for (const o of list) {
-      if (o.dead) continue;
+      if (o.dead || this.isGhost(o)) continue;
       if (source && o.team === source.team) continue;
       const d = Math.hypot(o.x - x, o.z - z);
       if (d > radius + o.radius) continue;
@@ -957,7 +980,7 @@ export class Battle {
       let hit = false;
       const near = this.grid.query(s.x, s.z, 1.6, this.tmp);
       for (const o of near) {
-        if (o.dead || o.team === s.team) continue;
+        if (o.dead || o.team === s.team || this.isGhost(o)) continue;
         if (Math.hypot(o.x - s.x, o.z - s.z) < 1.3 + o.radius) { hit = true; break; }
       }
       if (hit || s.life <= 0) {
@@ -1009,6 +1032,7 @@ export class Battle {
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
       if (u.dead || u.removed || u.freezeT > 0) continue;
+      if (this.isGhost(u)) continue;              // 관전 중 내 몸은 아무에게도 밀리지 않는다
       if (stride === 2 && (i & 1) !== par) continue;
       if (this.crowd) {
         const arr = grid.cellAt(u.x, u.z);
@@ -1023,7 +1047,7 @@ export class Battle {
       const brace = u.attackT >= 0 ? 0.35 : (u.staggerT > 0 ? 0.6 : 1);
       for (let k = 0; k < tmp.length; k++) {
         const o = tmp[k];
-        if (o === u || o.dead) continue;
+        if (o === u || o.dead || this.isGhost(o)) continue;
         const dx = u.x - o.x, dz = u.z - o.z;
         let d = Math.hypot(dx, dz);
         const om = o.mass || 1;

@@ -223,9 +223,19 @@ function ok(name, cond, extra) {
   await page.evaluate(() => { window.BA.app.paused = false; });
   await shot('40-near-ally-visible.png');
 
-  /* ===== 4. 🎬 관전 — 자유 비행 ===== */
-  await page.click('#camBtn');
-  await page.click('#camBtn');
+  /* ===== 4. 🎬 관전 — 자유 비행 (시점은 1인칭 ↔ 관전 두 가지) ===== */
+  const modeSeq = await page.evaluate(() => {
+    const app = window.BA.app;
+    const seq = [app.camMode];
+    document.getElementById('camBtn').click(); seq.push(app.camMode);
+    document.getElementById('camBtn').click(); seq.push(app.camMode);
+    document.getElementById('camBtn').click(); seq.push(app.camMode);
+    // 관전 상태로 돌아가 둔다
+    if (app.camMode !== 'spectate') document.getElementById('camBtn').click();
+    return seq;
+  });
+  ok('👁️ 시점은 1인칭 ↔ 🎬 관전 두 가지만 (3인칭 없음)',
+    modeSeq.join('>') === 'fp>spectate>fp>spectate' && !modeSeq.includes('tp'), { seq: modeSeq });
   await page.waitForFunction(() => window.BA.state().camMode === 'spectate', { timeout: 15000 });
   await advance(0.2);
   const spec0 = await st();
@@ -380,8 +390,7 @@ function ok(name, cond, extra) {
   await shot('43-arena-landed.png');
 
   // 전장 밖에서 복귀하면 전장 반경 안으로 클램프
-  await page.evaluate(() => document.getElementById('camBtn').click());  // fp → tp
-  await page.evaluate(() => document.getElementById('camBtn').click());  // tp → spectate
+  await page.evaluate(() => document.getElementById('camBtn').click());  // fp → spectate
   await page.evaluate(() => { const s = window.BA.app.spectate; s.x = 500; s.z = -500; s.y = 20; });
   await page.evaluate(() => document.getElementById('camBtn').click());  // spectate → fp
   await advance(0.05);
@@ -392,6 +401,43 @@ function ok(name, cond, extra) {
 
   const camOk = await page.evaluate(() => ({ mode: window.BA.state().camMode, safe: window.BA.state().playerSafe }));
   ok('복귀 후 1인칭 참전 상태로 돌아온다', camOk.mode === 'fp' && camOk.safe === false, camOk);
+
+  /* ===== 4c. 🎬 관전 중에는 적이 나를 전혀 인식하지 않는다 (유령) ===== */
+  const ghost = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    // 적들이 이미 나를 노리고 있는 상태를 만든 뒤 관전에 들어간다
+    const foes = b.units.filter((u) => u.team === 'enemy' && !u.dead).slice(0, 6);
+    for (const u of foes) { u.target = p; u.acquireT = 5; }
+    app.camMode = 'spectate'; app.spectate = null; app._enterSpectate();
+    // 적 한가운데로 플레이어를 옮겨 둔다 — 살아 있으면 즉시 둘러싸여야 할 자리
+    const c = foes.find((u) => !u.dead) || b.units.find((u) => u.team === 'enemy' && !u.dead);
+    if (c) { p.x = c.x; p.z = c.z; }
+    p.dead = false; p.hp = p.maxHp;
+    let chasing = 0;
+    for (const u of b.units) if (u.target === p) chasing++;
+    return { chasing, safe: b.playerSafe, px: +p.x.toFixed(3), pz: +p.z.toFixed(3) };
+  });
+  ok('관전 진입 즉시 나를 쫓던 적의 타겟이 모두 풀린다', ghost.safe === true && ghost.chasing === 0, ghost);
+  await advance(2.5);
+  const ghost2 = await page.evaluate((g0) => {
+    const b = window.BA.battle, p = b.player;
+    let chasing = 0;
+    for (const u of b.units) { if (u.team !== 'enemy' || u.dead) continue; if (u.target === p) chasing++; }
+    const blocked = b.blockedBy(p, p.x + 0.2, p.z) ? 1 : 0;
+    return {
+      chasing, blocked, moved: +Math.hypot(p.x - g0.px, p.z - g0.pz).toFixed(3),
+      hp: +p.hp.toFixed(0), dead: !!p.dead
+    };
+  }, ghost);
+  ok('관전 중 적이 플레이어를 타겟으로 잡지 않는다 (2.5초 관찰)', ghost2.chasing === 0, ghost2);
+  ok('관전 중 플레이어는 유령 — 밀리지도, 길을 막지도, 맞지도 않는다',
+    ghost2.moved < 0.01 && ghost2.blocked === 0 && ghost2.hp > 0 && ghost2.dead === false, ghost2);
+  await shot('43b-spectate-ghost.png');
+  await page.evaluate(() => {
+    const app = window.BA.app;
+    if (app.camMode === 'spectate') { document.getElementById('camBtn').click(); }
+  });
+  await advance(0.1);
 
   /* ===== 5b. 🖐️ 1인칭 드래그와 관전 드래그가 같은 방향으로 돈다 ===== */
   await page.evaluate(() => {
@@ -581,7 +627,10 @@ function ok(name, cond, extra) {
     let blocks = 0, zero = 0, hits = 0, episodes = 0, guardFrames = 0, frames = 0;
     const wasGuard = new Map();
     const orig = b.emit.bind(b);
+    // 🎬 관전(유령) 중인 플레이어는 AI의 표적이 아니므로, 플레이어가 얽힌 타격은 집계에서 뺀다
+    const mine = (e) => (e.unit && e.unit.isPlayer) || (e.target && e.target.isPlayer) || (e.source && e.source.isPlayer);
     b.emit = (e) => {
+      if (mine(e)) return orig(e);
       if (e.type === 'block') { blocks++; if (e.dmg === 0) zero++; }
       else if (e.type === 'hit') hits++;
       return orig(e);

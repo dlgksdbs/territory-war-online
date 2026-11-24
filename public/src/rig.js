@@ -1059,9 +1059,14 @@ export class UnitRenderer {
         this.buckets[cls] = list;
         c.units = list;
       }
+
+      /* 1) 카메라 거리부터 잰다 — 상세 슬롯을 "가까운 순서"로 주려면 먼저 거리가 필요하다.
+            (예전엔 목록(=스폰) 순서로 슬롯을 나눠 줘서, 멀리 있는 병사가 슬롯을 다 차지하고
+             코앞의 병사가 파란 블록 실루엣으로 떨어졌다) */
       for (let i = 0; i < list.length; i++) {
         const u = list[i];
         if (u.removed || u.hideModel) {
+          u._d2 = Infinity;
           if (u._tier !== -2) {
             this.releaseDetail(u);
             if (u.slot != null && u.slot >= 0) c.silhouette.setMatrixAt(u.slot, _hiddenM);
@@ -1075,36 +1080,69 @@ export class UnitRenderer {
           continue;
         }
         const dx = u.x - camPos.x, dz = u.z - camPos.z;
-        const d2 = dx * dx + dz * dz;
-        // 유닛은 아무리 가까이 붙어도 숨기지 않는다 — 1인칭에서 숨기는 것은 플레이어 본인 몸(hideModel)뿐이다.
-        let tier;
-        if (u.isPlayer) tier = 0;
-        else if (d2 < 15 * 15) tier = 0;
-        else if (d2 < 36 * 36) tier = 1;
-        else tier = 2;
-        if (tier < 2) {
-          if (u.dslot < 0) {
-            if (!c.free.length) tier = 2;      // 상세 예산 초과 → 실루엣
-            else {
-              u.dslot = c.free.pop();
-              u._tier = -1;
-              this.paintDetail(u, cls, u.dslot);
-            }
-          }
-          if (tier < 2) {
-            this.solveFK(u);
-            this.writeParts(u, tier, time);
-            if (u._tier !== tier) {
-              for (const p of c.parts) p.instanceMatrix.needsUpdate = true;
-              u._tier = tier;
-            }
-            c.silhouette.setMatrixAt(u.slot, _hiddenM);
+        u._d2 = dx * dx + dz * dz;
+        u._want = (u.isPlayer || u._d2 < 15 * 15) ? 0 : (u._d2 < 36 * 36 ? 1 : 2);
+      }
+
+      /* 2) 상세 모델 슬롯 배정 — 카메라에서 가까운 유닛이 무조건 먼저.
+            멀어진 유닛은 슬롯을 반납하고, 예산이 꽉 차면 아주 가까운(22m 이내) 유닛이
+            가장 멀리 있는 보유자의 슬롯을 빼앗아 온다. */
+      for (let i = 0; i < list.length; i++) {
+        const u = list[i];
+        if (u._tier === -2) continue;
+        if (u._want === 2 && u.dslot >= 0) this.releaseDetail(u);
+      }
+      c.want = c.want || [];
+      c.want.length = 0;
+      for (let i = 0; i < list.length; i++) {
+        const u = list[i];
+        if (u._tier === -2 || u._want === 2 || u.dslot >= 0) continue;
+        c.want.push(u);
+      }
+      if (c.want.length) {
+        c.want.sort((a, b) => a._d2 - b._d2);
+        for (let k = 0; k < c.want.length; k++) {
+          const u = c.want[k];
+          if (u.dslot >= 0) continue;
+          if (c.free.length) {
+            u.dslot = c.free.pop();
+            u._tier = -1;
+            this.paintDetail(u, cls, u.dslot);
             continue;
           }
+          if (u._d2 > 22 * 22) break;          // 22m 밖은 실루엣으로 둔다
+          let far = null, farD = -1;
+          for (let h = 0; h < list.length; h++) {
+            const q = list[h];
+            if (q.dslot < 0 || q === u || q._tier === -2) continue;
+            if (q._d2 > farD) { farD = q._d2; far = q; }
+          }
+          if (!far || farD <= u._d2) break;
+          const slot = far.dslot;
+          far.dslot = -1; far._tier = -1;
+          u.dslot = slot; u._tier = -1;
+          this.paintDetail(u, cls, slot);
+        }
+      }
+
+      /* 3) 그리기 — 상세 슬롯을 가진 유닛은 상세 모델, 나머지는 실루엣 */
+      for (let i = 0; i < list.length; i++) {
+        const u = list[i];
+        if (u._tier === -2) continue;
+        if (u.dslot >= 0 && u._want < 2) {
+          const tier = u._want;
+          this.solveFK(u);
+          this.writeParts(u, tier, time);
+          if (u._tier !== tier) {
+            for (const p of c.parts) p.instanceMatrix.needsUpdate = true;
+            u._tier = tier;
+          }
+          if (u.slot != null && u.slot >= 0) c.silhouette.setMatrixAt(u.slot, _hiddenM);
+          continue;
         }
         // 실루엣 (2프레임 분산 업데이트)
-        this.releaseDetail(u);
-        if (((i + silHalf) & 1) === 0) {
+        u._tier = 2;
+        if (u.slot != null && u.slot >= 0 && ((i + silHalf) & 1) === 0) {
           _e.set(u.pose.rot[0], u.pose.rot[1], u.pose.rot[2], 'YXZ');
           _q.setFromEuler(_e);
           _v.set(u.x, u.y || 0, u.z);

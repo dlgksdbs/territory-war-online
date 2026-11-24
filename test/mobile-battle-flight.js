@@ -96,20 +96,25 @@ function ok(name, cond, extra) {
   const specs = await page.evaluate(() => window.BA.specs());
   const bm = specs.classes.blademaster, kn = specs.classes.knight, wz = specs.classes.wizard;
   const sol = specs.classes.soldier;
-  ok('🌸 매화 검객 — hp 115 · damage 105 · speed 5.0 · 한 번에 4명',
-    bm.hp === 115 && bm.damage === 105 && bm.speed === 5.0 && bm.maxTargets === 4,
+  ok('🌸 매화 검객 — hp 345 · damage 210 · speed 5.0 · 한 번에 5명',
+    bm.hp === 345 && bm.damage === 210 && bm.speed === 5.0 && bm.maxTargets === 5,
     { hp: bm.hp, dmg: bm.damage, speed: bm.speed, maxTargets: bm.maxTargets });
-  ok('🌸 매화 일섬 — 피해 145 · 쿨 5.0초 · 반경 2.6m',
-    specs.skill.damage === 145 && specs.skill.cooldown === 5.0 && specs.skill.radius === 2.6,
+  ok('🌸 매화 일섬 — 피해 290 · 쿨 5.0초 · 반경 2.6m',
+    specs.skill.damage === 290 && specs.skill.cooldown === 5.0 && specs.skill.radius === 2.6,
     { dmg: specs.skill.damage, cd: specs.skill.cooldown, r: specs.skill.radius });
-  ok('🔨 중갑 기사 — hp 420 · damage 110 · speed 3.1', kn.hp === 420 && kn.damage === 110 && kn.speed === 3.1,
+  ok('🔨 중갑 기사 — hp 800 · damage 220 · speed 3.1', kn.hp === 800 && kn.damage === 220 && kn.speed === 3.1,
     { hp: kn.hp, dmg: kn.damage, speed: kn.speed });
-  ok('🔮 대마법사 — hp 80 (유리대포) · speed 3.6', wz.hp === 80 && wz.speed === 3.6, { hp: wz.hp, speed: wz.speed });
+  ok('🔮 대마법사 — hp 240 (유리대포) · speed 3.6', wz.hp === 240 && wz.speed === 3.6, { hp: wz.hp, speed: wz.speed });
+  ok('데미지 2배 — 병사 120 · 기사 220 · 검객 210 · 매화 일섬 290 · 마법 250/210/200',
+    sol.damage === 120 && kn.damage === 220 && bm.damage === 210 && specs.skill.damage === 290 &&
+    specs.spells.fire.damage === 250 && specs.spells.lightning.damage === 210 && specs.spells.ice.damage === 200,
+    { soldier: sol.damage, knight: kn.damage, bm: bm.damage, skill: specs.skill.damage,
+      fire: specs.spells.fire.damage, lightning: specs.spells.lightning.damage, ice: specs.spells.ice.damage });
   ok('이동속도 전반 상향 (병사 3.9 · 기사 3.1 · 검객 5.0 · 마법사 3.6)',
     sol.speed === 3.9 && kn.speed === 3.1 && bm.speed === 5.0 && wz.speed === 3.6,
     { soldier: sol.speed, knight: kn.speed, blademaster: bm.speed, wizard: wz.speed });
-  ok('특수 유닛 3종 + 매화 일섬 + 마법 3종 모두 일반 병사를 한 방에 처치 (병사 hp 100)',
-    sol.hp === 100 && kn.damage >= sol.hp && bm.damage >= sol.hp && specs.skill.damage >= sol.hp &&
+  ok('특수 유닛 3종 + 매화 일섬 + 마법 3종 모두 일반 병사를 한 방에 처치 (병사 hp 120)',
+    sol.hp === 120 && sol.damage === 120 && kn.damage >= sol.hp && bm.damage >= sol.hp && specs.skill.damage >= sol.hp &&
     specs.spells.fire.damage >= sol.hp && specs.spells.lightning.damage >= sol.hp && specs.spells.ice.damage >= sol.hp,
     { soldierHp: sol.hp, knight: kn.damage, bm: bm.damage, skill: specs.skill.damage,
       fire: specs.spells.fire.damage, lightning: specs.spells.lightning.damage, ice: specs.spells.ice.damage });
@@ -134,8 +139,8 @@ function ok(name, cond, extra) {
     const list = b.units.filter((u) => u.cls === 'blademaster');
     return list.map((u) => ({ team: u.team, hp: u.maxHp, dmg: u.damage }));
   });
-  ok('아군·적군 검객 스펙이 같다 (115 / 105)',
-    bmSpec.length >= 2 && bmSpec.every((u) => Math.abs(u.hp - 115) < 0.01 && Math.abs(u.dmg - 105) < 0.01), bmSpec);
+  ok('아군·적군 검객 스펙이 같다 (345 / 210)',
+    bmSpec.length >= 2 && bmSpec.every((u) => Math.abs(u.hp - 345) < 0.01 && Math.abs(u.dmg - 210) < 0.01), bmSpec);
 
   // 실제 전투 판정으로 확인 — 병사(100)가 특수 유닛 한 방에 쓰러진다
   const oneShot = await page.evaluate(() => {
@@ -143,7 +148,7 @@ function ok(name, cond, extra) {
     const out = {};
     const hit = (key, dmg) => {
       const u = window.BA.debug.spawn('soldier', 'enemy', 120, 120);
-      u.hp = 100; u.maxHp = 100; u.armor = 0; u.dead = false;
+      u.hp = S.classes.soldier.hp; u.maxHp = S.classes.soldier.hp; u.armor = 0; u.dead = false;
       b.damage(u, dmg, null, key);
       out[key] = { dead: u.dead, hp: +u.hp.toFixed(1) };
     };
@@ -395,30 +400,36 @@ function ok(name, cond, extra) {
     const b = window.BA.battle;
     const mk = (guard) => {
       const u = window.BA.debug.spawn('soldier', 'enemy', 60, 60);
-      u.x = 0; u.z = 0; u.yaw = 0; u.hp = 100; u.maxHp = 100; u.armor = 0; u.dead = false;
+      u.x = 0; u.z = 0; u.yaw = 0; u.hp = 120; u.maxHp = 120; u.armor = 0; u.dead = false;
       u.guard = guard; u.guardT = 1;
       return u;
     };
     const front = { x: 0, z: 2, team: 'ally', id: 901 };
     const back = { x: 0, z: -2, team: 'ally', id: 902 };
-    const a = mk(false); b.damage(a, 12, front, 'blade');
-    const c = mk(true); b.damage(c, 12, front, 'blade');
-    const d = mk(true); b.damage(d, 110, front, 'blade');
-    const e = mk(true); b.damage(e, 12, back, 'blade');
-    return { plain: +(100 - a.hp).toFixed(2), blocked: +(100 - c.hp).toFixed(2),
-      heavy: +(100 - d.hp).toFixed(2), heavyBreak: !d.guard, back: +(100 - e.hp).toFixed(2) };
+    const a = mk(false); b.damage(a, 120, front, 'blade');
+    const c = mk(true); b.damage(c, 120, front, 'blade');
+    const d = mk(true); b.damage(d, 220, front, 'hammer');
+    const e = mk(true); b.damage(e, 120, back, 'blade');
+    return { plainDead: a.dead, plainDmg: +(120 - a.hp).toFixed(1), blockedHp: +c.hp.toFixed(1),
+      heavy: +(120 - d.hp).toFixed(2), heavyBreak: !d.guard, backDead: e.dead };
   });
-  ok('검 막기 — 정면 평타(12)는 2 정도로 막고, 뒤에서 맞으면 그대로 들어간다',
-    dmgRes.plain >= 11.9 && dmgRes.blocked <= 2.5 && dmgRes.back >= 11.9, dmgRes);
-  ok('기사의 110 강타도 37 정도로 크게 경감되며 가드가 깨진다',
-    dmgRes.heavy > 30 && dmgRes.heavy < 45 && dmgRes.heavyBreak === true, dmgRes);
+  ok('검 막기 — 정면 평타(120)는 피해 0(완전 방어), 뒤에서 맞으면 그대로 죽는다',
+    dmgRes.plainDead === true && dmgRes.blockedHp === 120 && dmgRes.backDead === true, dmgRes);
+  ok('기사의 220 망치 강타는 75 정도만 관통하고 가드가 깨진다',
+    dmgRes.heavy > 60 && dmgRes.heavy < 90 && dmgRes.heavyBreak === true, dmgRes);
 
   // AI 일반 병사도 검을 들어 막는다
   const aiGuard = await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle;
     app.input.guard = false; app.input.mx = 0; app.input.mz = 0;
     const teams = { ally: 0, enemy: 0 };
-    let seen = 0, maxAtOnce = 0;
+    let seen = 0, maxAtOnce = 0, blocks = 0, zeroBlocks = 0, hits = 0;
+    const orig = b.emit.bind(b);
+    b.emit = (e) => {
+      if (e.type === 'block') { blocks++; if (e.dmg === 0) zeroBlocks++; }
+      else if (e.type === 'hit') hits++;
+      return orig(e);
+    };
     for (let i = 0; i < 40; i++) {
       window.BA.debug.advance(0.2);
       let n = 0;
@@ -429,11 +440,13 @@ function ok(name, cond, extra) {
       if (n > 0) seen++;
       maxAtOnce = Math.max(maxAtOnce, n);
     }
+    b.emit = orig;
     const soldiers = b.units.filter((u) => !u.isPlayer && u.cls === 'soldier').length;
-    return { seen, maxAtOnce, teams, soldiers };
+    return { seen, maxAtOnce, teams, soldiers, blocks, zeroBlocks, hits };
   });
   ok('AI 일반 병사도 교전 중 검을 들어 막는다 (아군·적군 공통)',
     aiGuard.seen > 0 && aiGuard.teams.ally === 1 && aiGuard.teams.enemy === 1, aiGuard);
+  ok('AI 병사가 실제로 막아 공격을 0 피해로 튕겨낸다', aiGuard.zeroBlocks > 0, aiGuard);
 
   // 방패 자세가 실제로 그려지는지 — 관전으로 아군 병사 앞에 서서 스크린샷
   await page.evaluate(() => {
@@ -486,6 +499,39 @@ function ok(name, cond, extra) {
   });
   ok('병사가 죽으면 시체가 남아 있어도 즉시 충원된다 (0.45초 안에 6명 복귀)',
     reinf.after >= reinf.afterKill + 5 && reinf.reserve1 <= reinf.reserve0 - 5 && reinf.corpses1 > 0, reinf);
+
+  /* ===== 6c. 상세 모델 슬롯 — 카메라 코앞 병사가 블록 실루엣으로 떨어지지 않는다 ===== */
+  const lod = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    app.paused = true;
+    const p = b.player;
+    p.x = 0; p.z = 0; p.yaw = 0; app.camYaw = Math.PI; app.camPitch = 0;
+    const all = b.units.filter((u) => !u.isPlayer && !u.dead && u.cls === 'soldier');
+    const near = all.slice(-12);          // 목록 맨 뒤(=예전엔 슬롯을 못 받던) 12명
+    let k = 0;
+    for (const u of all) {
+      if (near.includes(u)) {
+        const a = (k / near.length) * Math.PI * 2;
+        u.x = Math.sin(a) * 5; u.z = Math.cos(a) * 5; k++;
+        u.moveAmt = 0;
+      } else { u.x = 300 + (k++ % 40) * 3; u.z = 300; }
+    }
+    const bucket = app.unitRenderer.buckets.soldier;
+    const rest = bucket.filter((u) => !near.includes(u));
+    app.unitRenderer.buckets.soldier = rest.concat(near);
+    app.unitRenderer.classes.soldier.units = app.unitRenderer.buckets.soldier;
+    app.updateCamera(1 / 60);
+    app.unitRenderer.update(app.unitRenderer.buckets.soldier, app.cam.position, app.time, 1 / 60);
+    const rows = near.map((u) => ({ id: u.id, d: +Math.hypot(u.x, u.z).toFixed(1), dslot: u.dslot, tier: u._tier }));
+    return {
+      total: bucket.length, dcap: app.unitRenderer.classes.soldier.dcap,
+      near: rows.length, detailed: rows.filter((r) => r.dslot >= 0).length,
+      blocks: rows.filter((r) => r.dslot < 0).length, rows
+    };
+  });
+  ok('상세 예산이 꽉 차도 카메라 코앞 병사는 블록 실루엣이 아니라 상세 모델로 그려진다',
+    lod.near === 12 && lod.detailed === 12 && lod.blocks === 0 && lod.total > lod.dcap,
+    { total: lod.total, dcap: lod.dcap, detailed: lod.detailed, blocks: lod.blocks, rows: lod.rows.slice(0, 4) });
 
   /* ===== 7. 결과 미니 카드 ===== */
   await page.evaluate(() => window.BA.app._finish('ally'));

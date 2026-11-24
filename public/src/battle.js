@@ -415,8 +415,8 @@ export class Battle {
     if (target.dead) return 0;
     // 🎬 관전 중인 플레이어는 맞지 않는다 (관전하다 죽어서 리스폰되는 일 방지)
     if (target.isPlayer && (this.playerSafe || this.playerInvuln > 0)) return 0;
-    // 🛡️ 일반 병사의 방패 막기 — 정면에서 오는 타격을 대폭 막아낸다.
-    //    가벼운 타격은 83% 경감, 기사·검객·마법사의 100+ 강타는 66% 경감 + 방패가 깨진다.
+    // 🛠️ 일반 병사의 검 막기 — 정면에서 오는 “일반 베기”는 완전히 막아내고(피해 0),
+    //    기사 망치·매화 일섬·대형 마법 같은 강타만 일부 관통하며 가드가 깨진다.
     let raw = amount;
     if (target.cls === 'soldier' && target.guard) {
       let frontal = true;
@@ -425,8 +425,8 @@ export class Battle {
         frontal = a < 1.25;      // 뒤에서 맞으면 막지 못한다
       }
       if (frontal) {
-        const heavy = amount >= 100;
-        raw = amount * (heavy ? 0.34 : 0.17);
+        const heavy = kind === 'hammer' || kind === 'petal' || kind === 'fire' || kind === 'ice' || kind === 'lightning';
+        raw = heavy ? amount * 0.34 : 0;      // 평타는 완전 방어
         target.guardFlash = 0.22;
         if (heavy) { target.guard = false; target.guardT = 0; }
         this.emit({
@@ -434,6 +434,7 @@ export class Battle {
           x: target.x + Math.sin(target.yaw) * 0.45, z: target.z + Math.cos(target.yaw) * 0.45,
           y: (target.isPlayer ? 1.35 : 1.12), dmg: raw
         });
+        if (raw <= 0) return 0;               // 검으로 완전히 튕겨냈음 — 체력 변화 없음
       }
     }
     const dmg = raw * (1 - target.armor);
@@ -871,17 +872,24 @@ export class Battle {
         }
       }
 
-      // 🛡️ 일반 병사(AI) — 적과 맞붙으면 확률적으로 방패를 든다 (아군·적군 완전 동일 규칙)
+      // 🛡️ 일반 병사(AI) — 적이 검을 휘두르면 반응해서 검으로 막는다 (아군·적군 완전 동일 규칙)
       if (u.cls === 'soldier') {
-        if (!u.guard && u.guardT <= 0) {
-          u.guardCheckT -= dt;
+        const windup = t && t.attackT >= 0 && t.attackT < impactAt(t.cls) + 0.06;
+        const threat = windup && d < spec.reach + 3.2;
+        u.guardRollT = (u.guardRollT || 0) - dt;
+        if (!u.guard && threat && u.guardRollT <= 0) {
+          u.guardRollT = 0.30;               // 한 번의 공격 동작에 한 번만 판단
+          if (this.rng() < 0.62) {
+            u.guard = true; u.guardT = 0.52 + this.rng() * 0.32;
+            u.attackT = -1;                  // 휘두르던 손을 거두고 막기로
+          }
+        } else if (!u.guard && !threat) {
+          u.guardCheckT = (u.guardCheckT || 0) - dt;
           if (u.guardCheckT <= 0) {
-            u.guardCheckT = 1.0 + this.rng() * 1.3;
-            const threat = d < spec.reach + 3.0 &&
-              (u.cooldown > 0 || (t.attackT >= 0 && t.attackT < impactAt(t.cls)));
-            if (threat && this.rng() < 0.45) {
+            u.guardCheckT = 1.1 + this.rng() * 1.1;
+            if (d < spec.reach + 2.6 && this.rng() < 0.35) {
               u.guard = true; u.guardT = 0.45 + this.rng() * 0.30;
-              u.attackT = -1;        // 방패를 들면 휘두르던 손을 거둔다
+              u.attackT = -1;
             }
           }
         }

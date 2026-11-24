@@ -434,7 +434,7 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 
 /* 결과 — 전장을 가리지 않는 미니 카드 (딤드 없음 · 오른쪽 아래에 떠 있다) */
 .result { position: absolute; inset: auto; right: 8px; left: auto; z-index: 20; display: none;
-  bottom: calc(168px + env(safe-area-inset-bottom)); width: min(300px, 78vw);
+  bottom: calc(202px + env(safe-area-inset-bottom)); width: min(300px, 78vw);
   padding: 0; background: none; backdrop-filter: none; pointer-events: none; }
 .result.is-on { display: block; }
 .result-card { position: relative; width: 100%; max-width: 340px; border-radius: 14px; padding: 9px 11px 10px;

@@ -1,7 +1,7 @@
 /* =============================================================================
    main.js — BATTLE ARENA 3D
    -----------------------------------------------------------------------------
-   홈(병력 편성) → 3D 전장(1인칭 참전 / 3인칭 / 관전) → 결과 · 다시 싸우기
+   홈(병력 편성) → 3D 전장(1인칭 참전 / 관전) → 결과 · 다시 싸우기
    ============================================================================= */
 import * as THREE from 'three';
 import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt } from './config.js';
@@ -377,7 +377,7 @@ class App {
         this._spectateIdle = 0;
         this.autoSpectate = false;      // 손으로 돌리면 자동 회전은 멈춘다
       } else {
-        // 1·3인칭 — 화면을 민 방향으로 고개가 돈다
+        // 1인칭 — 화면을 민 방향으로 고개가 돈다
         this.camYaw -= dx * LOOK_SENS;
         this.camPitch = clamp(this.camPitch - dy * LOOK_PITCH_SENS, -1.15, 0.9);
       }
@@ -385,7 +385,6 @@ class App {
     const end = (e) => { if (e.pointerId === id) id = null; };
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
-    // 마우스 휠: 3인칭 거리
   }
 
   _beep() {
@@ -851,7 +850,7 @@ class App {
         p.moveAmt = Math.min(1, Math.hypot(kx, kz));
         p.walkPhase += dt * 6.4;
       }
-      // 카메라 시점 → 플레이어 방향 (1인칭/3인칭)
+      // 카메라 시점 → 플레이어 방향 (1인칭)
       if (!spectating) {
         p.yaw = this.camYaw + Math.PI;
         p.pitch = this.camPitch;

@@ -1206,7 +1206,7 @@ export class UnitRenderer {
         }
         const dx = u.x - camPos.x, dz = u.z - camPos.z;
         u._d2 = dx * dx + dz * dz;
-        // 숨겨졌던 유닛(1인칭 → 3인칭 복귀·디버그)이 다시 그려지도록 상세 배정을 되살린다
+        // 숨겨졌던 유닛(디버그·관전 전환)이 다시 그려지도록 상세 배정을 되살린다
         if (u._tier === -2) u._tier = -1;
         u._want = (u.isPlayer || u._d2 < 15 * 15) ? 0 : (u._d2 < 36 * 36 ? 1 : 2);
       }

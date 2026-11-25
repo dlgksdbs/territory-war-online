@@ -1381,7 +1381,9 @@ export class Battle {
         const dx = u.x - o.x, dz = u.z - o.z;
         let d = Math.hypot(dx, dz);
         const om = o.mass || 1;
-        const minD = (u.radius + o.radius) * 0.96;
+        /* 아군은 플레이어의 개인 공간을 비켜 간다 — 코앞에 겹쳐 시야를 가리지 않게 */
+        const personal = (u.isPlayer !== o.isPlayer) && u.team === o.team ? 2.3 : 0;
+        const minD = (u.radius + o.radius) * 0.96 + personal;
         if (d >= minD) continue;
         let nx, nz;
         if (d < 0.0001) { const a = (u.id * 2.399) % TAU; nx = Math.cos(a); nz = Math.sin(a); d = 0.0001; }

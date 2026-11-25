@@ -953,7 +953,7 @@ class App {
         if (u.isPlayer || u.team !== p.team) continue;
         const ddx = u.x - camPos.x, ddz = u.z - camPos.z;
         const d2 = ddx * ddx + ddz * ddz;
-        const near = u._hidByCam ? d2 < 3.4 * 3.4 : d2 < 2.9 * 2.9;
+        const near = u._hidByCam ? d2 < 3.0 * 3.0 : d2 < 2.5 * 2.5;
         if (near && !u._hidByCam) { u.hideModel = true; u._hidByCam = true; }
         else if (!near && u._hidByCam) { u.hideModel = false; u._hidByCam = false; }
       }
@@ -1506,7 +1506,49 @@ window.BA = {
       if (app._syncHUD) app._syncHUD(true);
       return n;
     },
-    perf() { return { calls: app.renderer.info.render.calls, tris: app.renderer.info.render.triangles, mem: app.renderer.info.memory }; }
+    perf() { return { calls: app.renderer.info.render.calls, tris: app.renderer.info.render.triangles, mem: app.renderer.info.memory }; },
+    /* 모션 연속성 측정 — 프레임 사이 관절 위치가 얼마나 튀는지(m) 재서 '뚝 끊김'을 잡는다 */
+    poseTrack(opts) {
+      const b = app.battle;
+      if (!b) return null;
+      const o = opts || {};
+      const cls = o.cls || 'soldier';
+      const kind = o.kind || 'attack';
+      const frames = o.frames || 60;
+      const from = o.from === undefined ? 0 : o.from;
+      const to = o.to === undefined ? 3 : o.to;
+      const u = b.units.find((x) => x.cls === cls && !x.isPlayer && !x.removed) || b.units.find((x) => !x.isPlayer);
+      if (!u) return null;
+      u.hideModel = false; u.dead = false; u.attackT = -1; u.moveAmt = 0; u.staggerT = 0;
+      u.guard = false; u._guardK = 0; u.severed = { armL: 0, armR: 0, legL: 0, legR: 0, head: 0 };
+      u.y = 0;
+      const dt = 1 / 60;
+      const prev = new Float32Array(u.pose.rot.length);
+      let max = 0, maxAt = -1, maxJoint = -1, rootJump = 0;
+      let prevY = 0, prevZ = 0;
+      let have = false;
+      for (let i = 0; i <= frames; i++) {
+        const k = from + (to - from) * (i / frames);
+        if (kind === 'attack') u.attackT = k;
+        else if (kind === 'death') { u.dead = true; u.deadT = k; }
+        else if (kind === 'guard') u.guard = k > (from + to) / 2;
+        else if (kind === 'walk') { u.moveAmt = 1; u.walkPhase = k; }
+        computePose(u, i * dt, dt);
+        if (have) {
+          /* 프레임 사이 관절 회전(rad) 변화 — 큰 값이면 모션이 '뚝' 끊긴 것 */
+          for (let j = 0; j < u.pose.rot.length; j++) {
+            const d = Math.abs(u.pose.rot[j] - prev[j]);
+            if (d > max) { max = d; maxAt = i; maxJoint = (j / 3) | 0; }
+          }
+          rootJump = Math.max(rootJump, Math.abs(u.pose.rootAdd[0] - prevY) + Math.abs(u.pose.rootAdd[2] - prevZ));
+        }
+        prev.set(u.pose.rot);
+        prevY = u.pose.rootAdd[0]; prevZ = u.pose.rootAdd[2];
+        have = true;
+      }
+      u.dead = false; u.deadT = 0; u.attackT = -1; u.guard = false; u._guardK = 2;
+      return { max: +max.toFixed(4), maxAt, maxJoint, rootJump: +rootJump.toFixed(4), frames };
+    }
   }
 };
 

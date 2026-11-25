@@ -600,6 +600,44 @@ function ok(name, cond, extra) {
   ok('🩸 절단된 유닛이 곧바로 죽어도 사망 모션·단면·피 웅덩이가 정상 처리된다',
     severDeath.dead && (severDeath.mask & 1) !== 0, severDeath);
 
+  /* ===== 18. 🎞️ 모션 연속성 — 프레임 사이 관절 회전이 튀지 않는다 ===== */
+  const motion = await page.evaluate(() => {
+    const res = {};
+    for (const cls of ['soldier', 'elite', 'knight', 'blademaster', 'wizard']) {
+      const c = window.BA.specs().classes[cls];
+      res[cls] = {
+        atk: window.BA.debug.poseTrack({ cls, kind: 'attack', from: 0, to: c.cycle, frames: Math.round(c.cycle * 60) }),
+        death: window.BA.debug.poseTrack({ cls, kind: 'death', from: 0, to: 2.5, frames: 150 }),
+        walk: window.BA.debug.poseTrack({ cls, kind: 'walk', from: 0, to: 12.56, frames: 120 })
+      };
+    }
+    return res;
+  });
+  const atkLimits = { soldier: 0.45, elite: 0.45, knight: 0.45, blademaster: 0.85, wizard: 0.35 };
+  const badAtk = Object.keys(atkLimits).filter((k) => motion[k].atk.max > atkLimits[k]);
+  const badDeath = Object.keys(motion).filter((k) => motion[k].death.max > 0.25 || motion[k].death.rootJump > 0.12);
+  ok('🎞️ 공격 모션 프레임당 관절 회전이 병종별 한계 안 (튀는 프레임 없음)',
+    badAtk.length === 0, { bad: badAtk, soldier: motion.soldier.atk.max, blade: motion.blademaster.atk.max });
+  ok('🎞️ 사망 모션 프레임당 회전·루트 이동이 작다 (끊김 없이 쓰러진다)',
+    badDeath.length === 0, badDeath.map((k) => ({ k, max: motion[k].death.max, root: motion[k].death.rootJump })));
+
+  /* ===== 19. 🩸 플레이어 팔 절단이 1인칭 무기에 반영 ===== */
+  const vmSev = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    p.severed.armR = 1; p.armsLost = 1; p.sevMask = 2;
+    p.severed.legR = 1; p.legsLost = 1; p.sevMask = 2 | 8;
+    app.camMode = 'fp';
+    for (let i = 0; i < 20; i++) app.vm.update(1 / 60, p, app.input, app.time + i / 60, app.camYaw + Math.PI, app.camPitch);
+    const model = app.vm.models[p.cls] || app.vm.models.soldier;
+    const armHidden = !!(model.userData.armGroup && model.userData.armGroup.visible === false);
+    app.updateCamera(1 / 60);
+    const eye = app.cam.position.y;
+    const swapped = (app.vm.handSwap || 0) > 0.5;
+    return { armHidden, swapped, eye: +eye.toFixed(2) };
+  });
+  ok('🩸 오른팔을 잃으면 1인칭 무기 팔을 감추고 반대손으로 옮겨 든다', vmSev.armHidden && vmSev.swapped, vmSev);
+  ok('🩸 다리를 잃으면 1인칭 눈높이가 낮아진다', vmSev.eye < 1.55, vmSev);
+
   ok('콘솔/페이지 오류 0 (헤드리스 SwiftShader)', errors.length === 0, errors.slice(0, 5));
   console.log(`\n모든 테스트 통과 (${passed}개) · 스크린샷 ${SHOTS}`);
   await browser.close();

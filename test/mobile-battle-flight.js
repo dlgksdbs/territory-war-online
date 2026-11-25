@@ -1062,26 +1062,32 @@ function ok(name, cond, extra) {
     knightGuard.front < 8900, knightGuard);
   ok('🔨 AI 기사도 막지 못한다 (가드를 강제로 켜도 피해 그대로)', knightGuard.aiHp < 8900, { hp: knightGuard.aiHp });
 
-  /* ===== 27. 🛡️ 고급 병사가 실제 난전에서 눈에 띄게 자주 막는다 ===== */
-  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 14, enemy: 14, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
-  await page.waitForFunction(() => window.BA.state().state === 'battle', { timeout: 30000 });
-  await sleep(300);
-  const guardCount = await page.evaluate(() => {
-    const b = window.BA.battle;
-    // 적군만 고급 병사로 바꿔 같은 수로 붙인다 (아군은 병사)
-    const foes = b.units.filter((u) => u.team === 'enemy' && !u.isPlayer);
-    for (const u of foes) { u.cls = 'elite'; u.maxHp = 165; u.hp = 165; u.cycle = 0.745; }
-    /* 양쪽 피해를 0으로 둬 20초 동안 계속 서로 휘두르게 한다 (막기 횟수만 비교) */
-    for (const u of b.units) if (!u.isPlayer) u.damage = 0;
-    const blocks = { soldier: 0, elite: 0 };
-    const orig = b.emit.bind(b);
-    b.emit = (e) => { if (e.type === 'block' && e.unit && blocks[e.unit.cls] !== undefined) blocks[e.unit.cls]++; return orig(e); };
-    for (let i = 0; i < 20; i++) window.BA.debug.advance(1);
-    b.emit = orig;
-    return { blocks, allyAlive: b.countAlive('ally'), enemyAlive: b.countAlive('enemy') };
+  /* ===== 27. 🛡️ 고급 병사가 실제 난전에서 눈에 띄게 자주 막는다 (렌더러 없는 순수 시뮬레이션) ===== */
+  const guardCount = await page.evaluate(async () => {
+    const { Battle } = await import('/src/battle.js');
+    const run = (cls) => {
+      const n = 14;
+      const cfg = {
+        playerClass: 'soldier', seed: 23,
+        allySoldiers: cls === 'soldier' ? n : 0, enemySoldiers: cls === 'soldier' ? n : 0,
+        allyElites: cls === 'elite' ? n : 0, enemyElites: cls === 'elite' ? n : 0,
+        allyKnights: 0, enemyKnights: 0, allyWizards: 0, enemyWizards: 0,
+        allyBlademasters: 0, enemyBlademasters: 0, allyBerserkers: 0, enemyBerserkers: 0
+      };
+      const b = new Battle({ config: cfg, playerKills: 0, autoPlayer: true }).start();
+      // 오래 싸우게 체력을 올리고 피해는 0 — 막는 횟수만 센다
+      for (const u of b.units) { u.maxHp = 3000; u.hp = 3000; u.damage = 0; }
+      let blocks = 0;
+      const orig = b.emit.bind(b);
+      b.emit = (e) => { if (e.type === 'block') blocks++; return orig(e); };
+      for (let i = 0; i < 60 * 20; i++) { b.update(1 / 60, null); b.drain(); }
+      b.emit = orig;
+      return { blocks, frames: 1200 };
+    };
+    return { soldier: run('soldier'), elite: run('elite') };
   });
-  ok('🛡️ 고급 병사 AI가 병사보다 눈에 띄게 자주 막는다 (20초 난전)',
-    guardCount.blocks.elite >= 2 && guardCount.blocks.elite > guardCount.blocks.soldier, guardCount);
+  ok('🛡️ 고급 병사 AI가 병사보다 눈에 띄게 자주 막는다 (20초 난전 · 고급 ≥ 병사 ×1.5)',
+    guardCount.elite.blocks >= 3 && guardCount.elite.blocks > guardCount.soldier.blocks * 1.5, guardCount);
 
   /* ===== 28. 🛡️ 고급 병사 방패 제거 — 3D 모델·1인칭 모두 검으로 막는다 ===== */
   await page.evaluate(() => window.BA.start({ cls: 'elite', ally: 4, enemy: 4, ae: 2, ee: 2, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));

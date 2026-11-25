@@ -1,11 +1,12 @@
 /* =============================================================================
    battle.js — 전투 시뮬레이션
    -----------------------------------------------------------------------------
-   · 아군/적군 동일 스펙, 병사·고급 병사·중갑 기사·대마법사·매화 검객 AI
+   · 아군/적군 동일 스펙, 병사·고급 병사·중갑 기사·대마법사·매화 검객·단검 광전사 AI
    · 무기 접촉 판정: 공격 모션의 '접촉 프레임'에 실제 사거리·부채꼴 안의 적을 타격
    · 🛡️ 막기: 바라보는 정면(±77°)에서 날아온 공격은 마법·망치·일섬·평타 구분 없이
-         피해 0으로 완전 방어. 뒤에서 맞으면 그대로 들어간다. 병사·고급 병사·기사·검객은
-         막을 수 있고 마법사는 막을 수 없다 (AI 는 아주 가끔만 막는다).
+         피해 0으로 완전 방어. 뒤에서 맞으면 그대로 들어간다. 병사·고급 병사·검객·광전사는
+         막을 수 있고 기사(양손 망치)·마법사는 막을 수 없다 (AI 는 병종별 빈도로 막는다).
+   · 💚 자연 회복: 살아 있는 모든 유닛이 자기 최대 체력에 비례해 매 프레임 조금씩 회복
    · 🩸 부위 절단: 머리(베임 사망 모션)·양팔(공속 -30%)·양다리(이속 -30%)
          AI 유닛끼리도 부위를 노리고, 양팔/양다리를 모두 잃으면 사망.
    · 🧠 전술 AI: 측면 포위(flank)·협공(집중)·라인 유지·마법사 거리 유지 — 후퇴 없음.
@@ -14,18 +15,19 @@
    ============================================================================= */
 import {
   CLASSES, SPELLS, SPELL_ORDER, SKILL, CORPSE_TIME, KNEEL_TIME, FALL_TIME, GROWTH_PER_KILL,
-  rosterOf, impactAt, LIMB_LOSS, GUARD_FRONT_HALF, GUARD_CHANCE, SPAWN_INTERVAL, FIELD_RATIO, FIELD_MAX
+  rosterOf, impactAt, LIMB_LOSS, GUARD_FRONT_HALF, GUARD_CHANCE, SPAWN_INTERVAL, FIELD_RATIO, FIELD_MAX,
+  REGEN_FRAC
 } from './config.js';
 import { clamp, angDiff, angLerp, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 import { makeUnitRig } from './rig.js';
 
 const DEATH_DOWN = 0.20 + KNEEL_TIME + FALL_TIME; // 눕기까지 걸리는 시간
 const DEATH_REMOVE = DEATH_DOWN + CORPSE_TIME;
-/* 🛡️ AI 병사가 한 번 막고 나서 다시 막을 수 있을 때까지의 재사용 대기(초) */
-const GUARD_COOLDOWN = 0.9;   // 막고 나서 다시 막기까지 (너프 전에 가깝게 짧게)
+/* 🛡️ 재사용 대기 기본값(초) — 병종별 값(GUARD_CHANCE.cd)이 있으면 그쪽을 쓴다 */
+const GUARD_COOLDOWN = 0.9;
 /* 증원 투입 순서 — 대형도 이 순서로 자리를 채운다 */
-const REINF_ORDER = ['soldier', 'elite', 'blademaster', 'knight', 'wizard'];
-const CLASS_LIST = ['soldier', 'elite', 'knight', 'wizard', 'blademaster'];
+const REINF_ORDER = ['soldier', 'elite', 'berserker', 'blademaster', 'knight', 'wizard'];
+const CLASS_LIST = ['soldier', 'elite', 'knight', 'wizard', 'blademaster', 'berserker'];
 /* 부위 확률 (AI 근접) — 머리 6% · 팔 24% · 다리 28% · 몸통 42% */
 const PART_TABLE = [
   [0.06, 'head'], [0.18, 'armL'], [0.30, 'armR'], [0.44, 'legL'], [0.58, 'legR']
@@ -155,7 +157,7 @@ export class Battle {
       cycle: spec.cycle,
       damage: spec.damage, armor: spec.armor, mass: spec.mass,
       /* 키·몸집에 자연스러운 편차를 준다 (같은 병종이 복제된 것처럼 보이지 않게, ±3%) */
-      scale: (cls === 'knight' ? 1.04 : cls === 'elite' ? 1.03 : 1.0) * (0.955 + sd.r2 * 0.075),
+      scale: (cls === 'knight' ? 1.04 : cls === 'elite' ? 1.03 : cls === 'berserker' ? 1.07 : 1.0) * (0.955 + sd.r2 * 0.075),
       dead: false, deadT: 0, corpseT: 0, removed: false,
       attackT: -1, cooldown: sd.r0 * 0.5, hitDone: false,
       target: null, acquireT: sd.r1 * 0.6,
@@ -163,9 +165,11 @@ export class Battle {
       mirror: 0,
       staggerT: 0, staggerMax: 0.28, staggerSide: 1, freezeT: 0, slowT: 0, _atkFreeze: -1, _guardK: undefined,
       guard: false, guardT: 0, guardCheckT: 0.9 + sd.r1 * 1.4, guardFlash: 0, guardCd: 0,
+      /* 막기 가능 병종만 확률을 갖는다 (기사·마법사는 guard=false 라 아예 쓰지 않는다) */
       guardReaction: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).react,
       guardHold: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).hold,
       guardCdMax: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).cd,
+      guardReactT: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).reactT || 0.12,
       cd: { fire: 0, lightning: 0, ice: 0, petal: 0 },
       dashT: -1, dashHit: null, dashCount: 0,
       casts: 0, kills: 0, growl: 1,
@@ -214,6 +218,8 @@ export class Battle {
     /* 중갑 기사가 맨 앞줄에 선다 — 병사 줄 뒤에 세우면 키 큰 기사의 머리·망치만
        병사들 머리 위로 떠 보여 '이상한 병사가 떠 있는' 것처럼 보인다 */
     z = block('knight', c.knight, { perRow: 16, factor: 3.4, xGap: 2.5, offset: 0.8, zGap: 2.1, jitter: 0.9, salt: 3, z });
+    /* 🩸 단검 광전사 — 산처럼 단단한 탱커라 고급 병사·병사 앞줄에 세운다 */
+    z = block('berserker', c.berserker || 0, { perRow: 26, factor: 2.8, xGap: 1.5, offset: 0.6, zGap: 1.5, jitter: 0.7, salt: 13, z: z + 0.3 });
     z = block('elite', c.elite || 0, { perRow: 34, factor: 2.6, xGap: 1.35, offset: 0.5, zGap: 1.25, jitter: 0.6, salt: 11, z: z + 0.4 });
     z = block('soldier', c.soldier, { perRow: 120, factor: 2.2, xGap: 1.05, offset: 0.5, zGap: 0.92, jitter: 0.55, salt: 1, z: Math.max(z, 13.5) });
     z = block('blademaster', c.blademaster || 0, { perRow: 20, factor: 3.2, xGap: 2.3, offset: 0.7, zGap: 1.9, jitter: 0.9, salt: 7, z: z + 0.5 });
@@ -248,8 +254,8 @@ export class Battle {
     }
     this.reinT = { ally: this.zeroTally(), enemy: this.zeroTally() };
     this.totalRoster = {
-      ally: r.ally.soldier + r.ally.elite + r.ally.knight + r.ally.wizard + r.ally.blademaster,
-      enemy: r.enemy.soldier + r.enemy.elite + r.enemy.knight + r.enemy.wizard + r.enemy.blademaster
+      ally: r.ally.soldier + r.ally.elite + r.ally.knight + r.ally.wizard + r.ally.blademaster + (r.ally.berserker || 0),
+      enemy: r.enemy.soldier + r.enemy.elite + r.enemy.knight + r.enemy.wizard + r.enemy.blademaster + (r.enemy.berserker || 0)
     };
 
     // 진영별 대형을 따로 만든다 — 적군 인원은 적군 설정(로스터)에서만 나온다
@@ -571,10 +577,11 @@ export class Battle {
 
     /* 🛡️ 검 막기 — 바라보는 정면(±77°)에서 날아온 공격은 마법·망치·일섬·평타 구분 없이
        피해 0으로 완전히 막아낸다. 뒤에서 맞으면 그대로 들어간다. (가드 브레이크 없음)
-       · 병사·고급 병사·기사·검객만 막는다. 마법사는 막을 수 없다
+       · 병사·고급 병사·매화 검객·단검 광전사만 막는다. 기사(양손 망치)·마법사는 막을 수 없다
        · from 이 주어지면 그 지점을 '날아온 곳'으로 본다 — 화염구처럼 투사체가 터진 자리에서
          퍼지는 광역 피해도 맞는 쪽이 그 방향을 바라보고 있으면 막힌다 */
-    const canGuard = !!target.guard && target.cls !== 'wizard';
+    const tSpec = CLASSES[target.cls] || CLASSES.soldier;
+    const canGuard = !!target.guard && tSpec.guard !== false;
     if (canGuard) {
       let frontal = true;
       const src = from || source;
@@ -696,9 +703,11 @@ export class Battle {
       const hx = (u.x + o.x) / 2, hz = (u.z + o.z) / 2;
       // 부위 절단은 없다 — 어디를 베든 몸통 피해로 들어간다 (피 이펙트만 강화)
       const part = 'body';
-      const dmg = this.damage(o, u.damage, u, u.cls === 'knight' ? 'hammer' : 'blade', part);
+      const heavy = u.cls === 'knight';
+      const kind = heavy ? 'hammer' : u.cls === 'berserker' ? 'stab' : 'blade';
+      const dmg = this.damage(o, u.damage, u, kind, part);
       this.emit({
-        type: 'hit', source: u, target: o, dmg, kind: u.cls === 'knight' ? 'hammer' : 'blade', part,
+        type: 'hit', source: u, target: o, dmg, kind, part,
         lethal: o.dead, hx, hz, hy: 1.1 * (o.scale || 1), angle: Math.atan2(o.x - u.x, o.z - u.z)
       });
       applied++;
@@ -943,8 +952,8 @@ export class Battle {
     if (p && !p.dead && input && !this.autoPlayer) {
       const mx = input.mx || 0, mz = input.mz || 0;
       const len = Math.hypot(mx, mz);
-      // 🛡️ 검·방패 막기 — 누르고 있는 동안 계속 (마법사만 빼고 모든 병종 가능)
-      const canGuardCls = p.cls !== 'wizard';
+      // 🛡️ 검·방패 막기 — 누르고 있는 동안 계속 (기사·마법사는 막을 수 없다)
+      const canGuardCls = (CLASSES[p.cls] || CLASSES.soldier).guard !== false;
       p.guard = canGuardCls ? !!input.guard : false;
       p.aimPart = input.aimPart || 'body';
       p.aimId = input.aimId || 0;
@@ -974,7 +983,9 @@ export class Battle {
       }
       p.yaw = input.yaw || p.yaw;
       // 플레이어 공격 진행 (막고 있으면 베지 않는다)
-      if (input.attack && !p.guard && p.cooldown <= 0 && p.attackT < 0) {
+      // · input.attack = 한 번 누름, input.hold = 버튼을 꾹 누르고 있음
+      //   → 쿨타임이 차는 대로 계속 공격이 나간다 (연타 병종은 이 경로로 자동 연타)
+      if ((input.attack || input.hold) && !p.guard && p.cooldown <= 0 && p.attackT < 0) {
         this.startAttack(p);
       }
     }
@@ -1013,6 +1024,11 @@ export class Battle {
         continue;
       }
       if (u.removed) continue;
+      /* 💚 자연 회복 — 살아 있는 모든 유닛(아군 AI·적군 AI·플레이어)이
+         자기 최대 체력에 비례해 매 프레임 조금씩 회복한다 (사망·쓰러지는 중 제외) */
+      if (u.hp < u.maxHp) {
+        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * REGEN_FRAC * dt);
+      }
       if (u.freezeT > 0) continue;
 
       // 매화 일섬 돌진
@@ -1131,25 +1147,23 @@ export class Battle {
       }
 
       // 🛡️ 검 막기 (AI) — 적이 검을 휘두르면 반응해서 막는다 (아군·적군 완전 동일 규칙)
-      //    일반 병사: 반응 확률 24%, 대치 중 10%, 한 번 막고 1.4초 재사용 대기
-      //    고급 병사: 반응 확률 42%, 충전(5회)이 남아 있을 때만
-      if (u.cls === 'soldier' || u.cls === 'elite') {
-        const elite = u.cls === 'elite';
-        const ready = true;
+      //    막을 수 있는 병종: 병사·고급 병사·매화 검객·단검 광전사 (기사·마법사는 막기 불가)
+      //    병종마다 반응 확률·미리 막아 두는 확률·반응 판단 주기가 다르다 (GUARD_CHANCE)
+      if (spec.guard !== false) {
         const windup = t && t.attackT >= 0 && t.attackT < this.impactT(t) + 0.06;
         const threat = windup && d < spec.reach + 3.2;
         u.guardRollT = (u.guardRollT || 0) - dt;
-        const chance = u.guardReaction || 0.56;
-        const holdChance = u.guardHold || 0.315;
-        if (!u.guard && ready && u.guardCd <= 0 && threat && u.guardRollT <= 0) {
-          u.guardRollT = 0.16;               // 한 번의 공격 동작에 한 번만 판단
+        const chance = u.guardReaction || 0.18;
+        const holdChance = u.guardHold || 0.08;
+        if (!u.guard && u.guardCd <= 0 && threat && u.guardRollT <= 0) {
+          u.guardRollT = u.guardReactT || 0.12;   // 한 번의 공격 동작에 한 번만 판단 (병종별 속도)
           if (u.rng() < chance) {
-            // 상대 칼이 실제로 닿는 순간까지 방패를 세운다 (타이밍 판단)
+            // 상대 칼이 실제로 닿는 순간까지 검을 세운다 (타이밍 판단)
             const eta = Math.max(0.05, this.impactT(t) - (t.attackT >= 0 ? t.attackT : 0));
             u.guard = true; u.guardT = Math.min(1.1, eta + 0.20 + u.rng() * 0.12);
             u.attackT = -1;                  // 휘두르던 손을 거두고 막기로
           }
-        } else if (!u.guard && ready && u.guardCd <= 0 && !threat) {
+        } else if (!u.guard && u.guardCd <= 0 && !threat) {
           u.guardCheckT = (u.guardCheckT || 0) - dt;
           if (u.guardCheckT <= 0) {
             u.guardCheckT = 1.1 + u.rng() * 1.1;
@@ -1381,6 +1395,7 @@ export class Battle {
       units: this.units.length,
       allyAlive, enemyAlive, allyNoPlayer,
       elite: { ally: t.ally.elite || 0, enemy: t.enemy.elite || 0 },
+      berserker: { ally: t.ally.berserker || 0, enemy: t.enemy.berserker || 0 },
       playerKills: this.playerKills,
       over: this.over,
       winner: this.winner,

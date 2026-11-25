@@ -31,7 +31,7 @@
           <div class="brand-mark">⚔</div>
           <div class="brand-text">
             <h1>BATTLE ARENA <span>3D</span></h1>
-            <p>고급 병사 · 기사 · 마법사가 벌이는 실시간 대규모 전장</p>
+            <p>여섯 병종이 벌이는 실시간 대규모 전장</p>
           </div>
         </div>
         <div class="growth-badge" id="growthBadge">
@@ -52,17 +52,17 @@
               <div class="cc-body">
                 <div class="cc-name">일반 병사</div>
                 <div class="cc-tag">BALANCED</div>
-                <div class="cc-stats"><b data-stat="hp">100</b> HP · <b data-stat="dmg">12</b> DMG</div>
+                <div class="cc-stats"><b data-stat="hp">150</b> HP · <b data-stat="dmg">150</b> DMG</div>
                 <div class="cc-power">전투력 <strong data-stat="power">1.0×</strong></div>
               </div>
             </button>
             <button class="class-card" data-cls="elite">
               <div class="cc-glow"></div>
-              <div class="cc-icon">🛡️</div>
+              <div class="cc-icon">🗡️</div>
               <div class="cc-body">
                 <div class="cc-name">고급 병사</div>
-                <div class="cc-tag">VETERAN · GUARD</div>
-                <div class="cc-stats"><b data-stat="hp">132</b> HP · <b data-stat="dmg">120</b> DMG</div>
+                <div class="cc-tag">VETERAN · SWORD GUARD</div>
+                <div class="cc-stats"><b data-stat="hp">165</b> HP · <b data-stat="dmg">150</b> DMG</div>
                 <div class="cc-power">전투력 <strong data-stat="power">1.12×</strong></div>
               </div>
             </button>
@@ -72,8 +72,8 @@
               <div class="cc-body">
                 <div class="cc-name">중갑 기사</div>
                 <div class="cc-tag">HEAVY · AOE 100</div>
-                <div class="cc-stats"><b data-stat="hp">1200</b> HP · <b data-stat="dmg">220</b> DMG</div>
-                <div class="cc-power">전투력 <strong data-stat="power">2.6×</strong></div>
+                <div class="cc-stats"><b data-stat="hp">2200</b> HP · <b data-stat="dmg">220</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">2.8×</strong></div>
               </div>
             </button>
             <button class="class-card" data-cls="blademaster">
@@ -82,7 +82,17 @@
               <div class="cc-body">
                 <div class="cc-name">매화 검객</div>
                 <div class="cc-tag">SWIFT · DASH</div>
-                <div class="cc-stats"><b data-stat="hp">150</b> HP · <b data-stat="dmg">20</b> DMG</div>
+                <div class="cc-stats"><b data-stat="hp">900</b> HP · <b data-stat="dmg">210</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">3.2×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="berserker">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🩸</div>
+              <div class="cc-body">
+                <div class="cc-name">단검 광전사</div>
+                <div class="cc-tag">RAPID · TANK</div>
+                <div class="cc-stats"><b data-stat="hp">3000</b> HP · <b data-stat="dmg">18</b> DMG</div>
                 <div class="cc-power">전투력 <strong data-stat="power">2.2×</strong></div>
               </div>
             </button>
@@ -130,6 +140,11 @@
                 <input type="range" min="0" max="100" step="1" value="1" />
                 <input class="num" type="number" inputmode="numeric" min="0" max="100" step="1" value="1" aria-label="직접 입력" />
               </div>
+              <div class="row" data-team="ally" data-unit="berserker">
+                <label><span class="ru-icon">🩸</span> 광전사</label>
+                <input type="range" min="0" max="100" step="1" value="0" />
+                <input class="num" type="number" inputmode="numeric" min="0" max="100" step="1" value="0" aria-label="직접 입력" />
+              </div>
             </div>
             <div class="army-col enemy">
               <div class="army-col-head"><i>◆</i> 적군</div>
@@ -158,6 +173,11 @@
                 <input type="range" min="0" max="100" step="1" value="1" />
                 <input class="num" type="number" inputmode="numeric" min="0" max="100" step="1" value="1" aria-label="직접 입력" />
               </div>
+              <div class="row" data-team="enemy" data-unit="berserker">
+                <label><span class="ru-icon">🩸</span> 광전사</label>
+                <input type="range" min="0" max="100" step="1" value="0" />
+                <input class="num" type="number" inputmode="numeric" min="0" max="100" step="1" value="0" aria-label="직접 입력" />
+              </div>
             </div>
           </div>
           <div class="presets" id="presets">
@@ -170,6 +190,7 @@
             <button data-preset="insane">🔥 10,000:10,000</button>
             <button data-preset="magic">🔮 마법사 대결</button>
             <button data-preset="blade">🌸 매화 검객 대결</button>
+            <button data-preset="rage">🩸 광전사 대결</button>
             <button data-preset="underdog">🔥 1 vs 1000</button>
           </div>
           <div class="count-quick" id="countQuick">

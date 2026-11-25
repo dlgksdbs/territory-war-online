@@ -634,9 +634,10 @@ async function networkTests() {
     /var GEN_HP = 500;/.test(arenaJs.body) && /var GEN_R = \+\(UNIT_R \* 1\.45\)/.test(arenaJs.body) &&
     /S\.enemyGenSpawned >= S\.enemyGenTotal/.test(arenaJs.body) &&
     /function generalSpec\(\)/.test(arenaJs.body) && /function spawnGenerals\(\)/.test(arenaJs.body));
-  ok('배틀 아레나 홈에 클래스 선택 카드 4종', /data-cls="soldier"/.test(home.body) &&
-    /data-cls="knight"/.test(home.body) && /data-cls="wizard"/.test(home.body) &&
-    /data-cls="blademaster"/.test(home.body));
+  ok('배틀 아레나 홈에 클래스 선택 카드 6종 (병사·고급·기사·검객·광전사·마법사)', /data-cls="soldier"/.test(home.body) &&
+    /data-cls="elite"/.test(home.body) && /data-cls="knight"/.test(home.body) && /data-cls="wizard"/.test(home.body) &&
+    /data-cls="blademaster"/.test(home.body) && /data-cls="berserker"/.test(home.body) &&
+    /data-unit="berserker"/.test(home.body));
   ok('기존 아레나 모듈의 장군 워해머 코드 유지',
     /HAMMER_ANIM/.test(arenaJs.body) && /function doSlam\(\)/.test(arenaJs.body));
 

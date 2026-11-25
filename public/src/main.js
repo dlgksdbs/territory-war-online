@@ -4,7 +4,7 @@
    홈(병력 편성) → 3D 전장(1인칭 참전 / 관전) → 결과 · 다시 싸우기
    ============================================================================= */
 import * as THREE from 'three';
-import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_ELITES, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt } from './config.js';
+import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_ELITES, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt, GUARD_CHANCE, REGEN_FRAC } from './config.js';
 import { buildWorld } from './world.js';
 import { UnitRenderer } from './rig.js';
 import { Battle } from './battle.js';
@@ -12,7 +12,7 @@ import { computePose, attackDuration } from './pose.js';
 import { FX } from './fx.js';
 import { ViewModel } from './viewmodel.js';
 import { Sfx } from './sfx.js';
-import { loadProgress, saveProgress, rosterOf, rosterTotal, growthMult, growthLabel, playerSpec } from './config.js';
+import { loadProgress, saveProgress, rosterOf, rosterTotal, growthMult, growthLabel, playerSpec, powerIndex } from './config.js';
 import { clamp, lerp, damp, angLerp, angDiff, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -27,16 +27,16 @@ const SPEC_PITCH_SENS = 0.0056;  // 관전 카메라 상하
 const SPECTATE_MIN_Y = 1.2;
 const SPECTATE_MAX_Y = 120;
 const _aimDir = new THREE.Vector3();
-const UNIT_KR = { soldier: '병사', elite: '고급 병사', knight: '기사', wizard: '마법사', blademaster: '검객' };
-const BUCKET_KEYS = ['soldier', 'elite', 'knight', 'wizard', 'blademaster'];
+const UNIT_KR = { soldier: '병사', elite: '고급 병사', knight: '기사', wizard: '마법사', blademaster: '검객', berserker: '광전사' };
+const BUCKET_KEYS = ['soldier', 'elite', 'knight', 'wizard', 'blademaster', 'berserker'];
 
 class App {
   constructor() {
     this.progress = loadProgress();
     this.cfg = {
       playerClass: 'soldier',
-      allySoldiers: 60, allyElites: 0, allyKnights: 2, allyWizards: 1, allyBlademasters: 1,
-      enemySoldiers: 60, enemyElites: 0, enemyKnights: 2, enemyWizards: 1, enemyBlademasters: 1
+      allySoldiers: 60, allyElites: 0, allyKnights: 2, allyWizards: 1, allyBlademasters: 1, allyBerserkers: 0,
+      enemySoldiers: 60, enemyElites: 0, enemyKnights: 2, enemyWizards: 1, enemyBlademasters: 1, enemyBerserkers: 0
     };
     this.state = 'home';
     this.paused = false;
@@ -136,10 +136,11 @@ class App {
     $$('.class-card').forEach((c) => c.classList.toggle('is-on', c.dataset.cls === this.cfg.playerClass));
     const note = {
       soldier: '검과 방패, 민첩한 연속 베기. 적을 벨 때마다 <b>+0.001%</b>씩 영구히 강해진다.',
-      elite: '금장 판금과 방패를 든 베테랑. 병사보다 <b>체력·이속·공속 +10%</b>, 정면 공격을 <b>5번</b>까지 완전히 막는다 (19초 재충전).',
-      knight: '큰 망치를 든 중갑 장군. 내려치기 한 번에 <b>최대 100명</b>을 으스러뜨린다.',
+      elite: '금장 판금의 정예 검병. 병사보다 <b>체력·이속·공속 +10%</b>, 방패 없이 <b>장검</b>으로 정면을 막아낸다.',
+      knight: '큰 망치를 든 중갑 장군. 내려치기 한 번에 <b>최대 100명</b>을 으스러뜨린다. 망치를 두 손으로 쥐므로 <b>막기 불가</b>.',
       wizard: '몸은 약하지만 <b>화염·번개·빙결</b> 세 마법으로 전장을 지운다. 버튼으로 직접 시전.',
-      blademaster: '가장 빠른 연속 베기와 기동력. <b>🌸 매화 일섬</b>으로 전방을 돌진하며 쓸어버린다.'
+      blademaster: '가장 빠른 연속 베기와 기동력. <b>🌸 매화 일섬</b>으로 전방을 돌진하며 쓸어버린다.',
+      berserker: '쌍단검을 쥔 <b>초고체력·초고속 연타</b> 탱커. 한 방은 약하지만 공격 버튼을 <b>꾹 누르면 자동 연타</b>가 나간다.'
     };
     $('#classNote').innerHTML = note[this.cfg.playerClass] || '';
     $$('.row').forEach((row) => {
@@ -168,7 +169,7 @@ class App {
       if (hp) hp.textContent = Math.round(s.hp);
       if (dmg) dmg.textContent = cls === 'wizard' ? SPELLS.fire.damage : s.damage;
       if (pw && !card.dataset.power) {
-        const m = cls === 'wizard' ? 2.4 : cls === 'knight' ? 2.6 : cls === 'blademaster' ? 3.2 : cls === 'elite' ? 1.12 : 1.0;
+        const m = powerIndex(cls);
         pw.textContent = m.toFixed(m < 1.2 ? 2 : 1) + '×';
         card.dataset.power = '1';
       }
@@ -220,6 +221,8 @@ class App {
         this.cfg.enemySoldiers = es; this.cfg.enemyKnights = ek; this.cfg.enemyWizards = ew;
         this.cfg.allyBlademasters = ab || 0; this.cfg.enemyBlademasters = eb || 0;
         this.cfg.allyElites = el || 0; this.cfg.enemyElites = eel || 0;
+        // 프리셋을 고르면 다른 병종은 초기화한다 (이전 선택이 남아 섞이지 않게)
+        this.cfg.allyBerserkers = 0; this.cfg.enemyBerserkers = 0;
       };
       if (p === 'duel') { set(0, 1, 0, 0, 1, 0); }
       else if (p === 'clash') { set(60, 2, 1, 60, 2, 1, 1, 1, 6, 6); }
@@ -230,6 +233,11 @@ class App {
       else if (p === 'veteran') { set(0, 4, 2, 0, 4, 2, 4, 4, 500, 500); this.cfg.playerClass = 'elite'; }
       else if (p === 'magic') { set(0, 0, 20, 0, 0, 20); this.cfg.playerClass = 'wizard'; }
       else if (p === 'blade') { set(0, 0, 0, 0, 0, 0, 20, 20); this.cfg.playerClass = 'blademaster'; }
+      else if (p === 'rage') {
+        set(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        this.cfg.allyBerserkers = 12; this.cfg.enemyBerserkers = 12;
+        this.cfg.playerClass = 'berserker';
+      }
       else if (p === 'underdog') { this.cfg.playerClass = 'blademaster'; set(0, 0, 0, 1000, 0, 0); }
       this._syncHome();
     });
@@ -270,19 +278,34 @@ class App {
       });
     }
     const atkBtn = $('#attackBtn');
-    atkBtn.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
+    let atkPid = null;
+    const pressAtk = (e) => {
+      if (e.cancelable) e.preventDefault();
+      atkPid = e.pointerId === undefined ? null : e.pointerId;
       this.attackHeld = true;
       this.input.attack = true;
       this._aimAssist();
+      atkBtn.classList.add('is-held');
       try { atkBtn.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
-    });
-    const releaseAtk = () => { this.attackHeld = false; };
+    };
+    /* 손을 떼면 연타도 멈춘다 — 다른 손가락(조이스틱·막기)의 up 으로는 끊기지 않게
+       내 포인터 id 만 놓는다. 캡처가 풀리거나(lostpointercapture) 화면이 가려져
+       이벤트가 유실되면 연타가 굳지 않도록 같이 놓아준다. */
+    const releaseAtk = (e) => {
+      if (e && e.pointerId !== undefined && atkPid !== null && e.pointerId !== atkPid) return;
+      atkPid = null;
+      this.attackHeld = false;
+      atkBtn.classList.remove('is-held');
+    };
+    atkBtn.addEventListener('pointerdown', pressAtk);
     atkBtn.addEventListener('pointerup', releaseAtk);
     atkBtn.addEventListener('pointercancel', releaseAtk);
-    atkBtn.addEventListener('pointerleave', releaseAtk);
+    atkBtn.addEventListener('lostpointercapture', releaseAtk);
+    atkBtn.addEventListener('contextmenu', (e) => { e.preventDefault(); });
     window.addEventListener('pointerup', releaseAtk, true);
     window.addEventListener('pointercancel', releaseAtk, true);
+    window.addEventListener('blur', () => releaseAtk());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAtk(); });
     $$('.spell-btn').forEach((b) => {
       b.addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -436,6 +459,8 @@ class App {
     if (p.get('ew')) this.cfg.enemyWizards = Number(p.get('ew'));
     if (p.get('ae')) this.cfg.allyElites = Number(p.get('ae'));
     if (p.get('ee')) this.cfg.enemyElites = Number(p.get('ee'));
+    if (p.get('abz')) this.cfg.allyBerserkers = Number(p.get('abz'));
+    if (p.get('ebz')) this.cfg.enemyBerserkers = Number(p.get('ebz'));
   }
 
   /* ------------------------------------------------------------------ 전투 */
@@ -493,6 +518,7 @@ class App {
     if (tag) tag.classList.toggle('is-on', practice);
     if (practice) this._toast('연습 모드 · 적군 0명');
     this.vm.setClass(this.cfg.playerClass);
+    if (this.cfg.playerClass === 'berserker') this._toast('🩸 공격 버튼을 꾹 누르면 자동 연타');
     this.camMode = 'fp';
     this.spectate = null;
     this.input.guard = false;
@@ -894,7 +920,8 @@ class App {
         mz: spectating ? 0 : this.input.mz,
         yaw: p.yaw,
         guard: spectating ? false : (!!this.input.guard || (this.guardMinT || 0) > 0),
-        attack: spectating ? false : (this.input.attack || this.attackHeld),
+        attack: spectating ? false : !!this.input.attack,
+        hold: spectating ? false : !!this.attackHeld,
         aimPart: this.input.aimPart || 'body',
         aimId: this.input.aimId || 0
       };
@@ -981,10 +1008,10 @@ class App {
         if (atkNow >= 0 && !this._arcSpawned && atkNow >= impactAt(p.cls) - 0.03) {
           this._arcSpawned = true;
           const petal = p.cls === 'blademaster';
-          const d = p.cls === 'knight' ? 3.6 : 3.2;
+          const d = p.cls === 'knight' ? 3.6 : p.cls === 'berserker' ? 1.9 : 3.2;
           const ax = p.x + Math.sin(p.yaw) * d;
           const az = p.z + Math.cos(p.yaw) * d;
-          this.fx.spawnArc(ax, 1.12, az, p.yaw, p.cls === 'knight' ? 0.86 : petal ? 0.62 : 0.56,
+          this.fx.spawnArc(ax, 1.12, az, p.yaw, p.cls === 'knight' ? 0.86 : p.cls === 'berserker' ? 0.40 : petal ? 0.62 : 0.56,
             'blade', 0.17, petal ? 0xffd0e6 : 0xeaf9ff, 0.06);
           if (petal) {
             for (let i = 0; i < 12; i++) {
@@ -1225,27 +1252,28 @@ class App {
       num.textContent = cd > 0 ? Math.ceil(cd) : '';
       skBtn.querySelector('.sk-label').textContent = cd > 0 ? '충전' : '매화 일섬';
     }
-    // 🛡️ 막기 버튼 — 마법사만 빼고 모든 병종(병사·고급 병사·기사·검객) · 횟수 제한 없음
+    // 🛡️ 막기 버튼 — 병사·고급 병사·매화 검객·단검 광전사만 (기사·마법사는 막기 불가)
     const gdBtn = $('#guardBtn');
     if (gdBtn) {
-      const canGuard = p.cls !== 'wizard';
+      const canGuard = (CLASSES[p.cls] || CLASSES.soldier).guard !== false;
       gdBtn.classList.toggle('is-on', canGuard);
       const chEl = document.getElementById('guardCharges');
       if (chEl) chEl.style.display = 'none';
       gdBtn.classList.remove('is-empty');
       const lbl = gdBtn.querySelector('.sk-label');
-      const want = p.cls === 'elite' ? '방패 막기' : '검 막기';
+      const want = '검 막기';
       if (lbl && lbl.textContent !== want) lbl.textContent = want;
       const ic = gdBtn.querySelector('.sk-icon');
-      if (ic) ic.textContent = p.cls === 'elite' ? '🛡️' : '🗡️';
+      if (ic) ic.textContent = '🗡️';
     }
     const atkBtn = $('#attackBtn');
     atkBtn.style.display = p.cls === 'wizard' ? 'none' : '';
     if (p.cls !== 'wizard') {
       const cd = Math.max(0, p.cooldown);
       atkBtn.classList.toggle('is-cd', cd > 0.05);
-      atkBtn.querySelector('.ab-label').textContent = p.cls === 'knight' ? '내려치기' : '베기';
-      atkBtn.querySelector('.ab-icon').textContent = p.cls === 'knight' ? '🔨' : '⚔️';
+      atkBtn.querySelector('.ab-label').textContent = p.cls === 'knight' ? '내려치기' : p.cls === 'berserker' ? '연타' : '베기';
+      atkBtn.querySelector('.ab-icon').textContent = p.cls === 'knight' ? '🔨' : p.cls === 'berserker' ? '🩸' : '⚔️';
+      atkBtn.title = p.cls === 'berserker' ? '꾹 누르고 있으면 자동 연타' : '공격';
     }
     // 사망
     const veil = $('#deadVeil');
@@ -1333,7 +1361,7 @@ window.BA = {
   },
   config: () => ({ ...app.cfg }),
   /* 밸런스 스펙 (테스트·디버그) */
-  specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS }),
+  specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS, guardChance: GUARD_CHANCE, regen: REGEN_FRAC }),
   setConfig(cfg) {
     Object.assign(app.cfg, cfg || {});
     app._syncHome();
@@ -1351,6 +1379,8 @@ window.BA = {
       if (cfg.eb !== undefined) app.cfg.enemyBlademasters = Number(cfg.eb);
       if (cfg.ae !== undefined) app.cfg.allyElites = Number(cfg.ae);
       if (cfg.ee !== undefined) app.cfg.enemyElites = Number(cfg.ee);
+      if (cfg.abz !== undefined) app.cfg.allyBerserkers = Number(cfg.abz);
+      if (cfg.ebz !== undefined) app.cfg.enemyBerserkers = Number(cfg.ebz);
     }
     app.startBattle();
   },
@@ -1487,7 +1517,8 @@ window.BA = {
           mx: app.input.mx || 0, mz: app.input.mz || 0,
           yaw: b.player ? b.player.yaw : 0,
           guard: !!app.input.guard,
-          attack: !!(app.input.attack || app.attackHeld)
+          attack: !!app.input.attack,
+          hold: !!app.attackHeld
         });
         for (let k = 0; k < b.units.length; k++) computePose(b.units[k], app.time + i / 60, 1 / 60);
         // 실제 루프와 같은 순서로 이벤트·카메라를 처리한다 (증원·히트마커·관전도 검증 가능)

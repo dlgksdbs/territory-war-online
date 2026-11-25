@@ -2,14 +2,17 @@
    config.js — 밸런스·스펙·성장 규칙 (DOM 없이도 돌아가는 순수 모듈 · npm test 대상)
    -----------------------------------------------------------------------------
    기준: ⚔️ 일반 병사 = 1.0x.
-   · 고급 병사(ELITE) = 일반 병사의 체력·이속·공속 +10% · 5회 막기 후 19초 재충전
-   · 특수 유닛(기사·마법사·검객)은 병사보다 뚜렷하게 강한 체급
+   · 고급 병사(ELITE) = 일반 병사의 체력·이속·공속 +10% · 검으로 막는 정예 검병(방패 없음)
+   · 특수 유닛(기사·마법사·검객·광전사)은 병사보다 뚜렷하게 강한 체급
+   · 중갑 기사는 막기를 쓰지 않는다 (큰 망치를 두 손으로 쥔다)
+   · 🩸 단검 광전사 = 초고체력·초고속 연타·초약딜 탱커 (이속은 일반 병사와 동일)
+   · 모든 살아 있는 유닛은 매초 최대 체력의 REGEN_FRAC 만큼 자연 회복한다
    아군·적군 스펙은 완전히 동일하다(진영은 색만 다르다).
    ============================================================================= */
 
 export const MAX_SOLDIERS = 10000;
 export const MAX_ELITES = 1000;      // 고급 병사 상한
-export const MAX_SPECIALS = 100;     // 기사·마법사·검객 상한
+export const MAX_SPECIALS = 100;     // 기사·마법사·검객·광전사 상한
 
 /* 처치당 영구 누적 성장: +0.001% = +0.00001 배 */
 export const GROWTH_PER_KILL = 0.00001;
@@ -21,16 +24,23 @@ export const FALL_TIME = 0.42;
 
 /* 🩸 부위 절단 — 팔/다리가 잘리면 해당 능력이 30% 떨어진다 (양쪽 다 잃으면 사망) */
 export const LIMB_LOSS = 0.30;
+/* 💚 자연 회복 — 살아 있는 모든 유닛이 매초 최대 체력의 이 비율만큼 스스로 회복한다.
+   (사망·쓰러지는 중 제외. 50:50 교착이 끝나지 않을 만큼 빠르지는 않게 1.5%) */
+export const REGEN_FRAC = 0.015;
 /* 정면 막기 판정 반각(rad) — 이 각도 안에서 날아온 공격은 종류를 가리지 않고 완전 방어 */
 export const GUARD_FRONT_HALF = 1.35;   // ≈ ±77°
 /* 🛡️ AI 막기 빈도 — 힘이 아니라 '막는 횟수' 기준.
-   너프 전 병사 = 반응형 0.62 / 대치 중 0.35.
-   · 일반 병사 = 그 90% (0.56 / 0.315) · 쿨타임도 짧게
-   · 고급 병사 = 그 110% (0.68 / 0.385) · 횟수 제한 없음
-   · AI 유닛은 '아주 가끔'만 막는다 (2026-11-25 하향) — 병사 10% / 고급 14%, 재사용 대기 2.6~2.8초 */
+   · react  = 상대가 휘두르는 것을 보고 막기를 켤 확률
+   · hold   = 대치 중(상대가 아직 휘두르지 않을 때) 미리 막아 두는 확률
+   · cd     = 한 번 막고 나서 다시 막을 수 있을 때까지의 재사용 대기(초)
+   · reactT = 반응 판단 주기(초) — 작을수록 칼이 날아오는 것을 빠르게 알아챈다
+   2026-11-26 조정: 병사는 조금 더 자주·빠르게, 고급 병사와 매화 검객은 눈에 보이게 자주 막는다.
+   (기사는 막기 불가 — CLASSES.knight.guard = false) */
 export const GUARD_CHANCE = {
-  soldier: { react: 0.10, hold: 0.045, cd: 2.8 },
-  elite: { react: 0.14, hold: 0.06, cd: 2.6 }
+  soldier: { react: 0.18, hold: 0.08, cd: 2.2, reactT: 0.10 },
+  elite: { react: 0.55, hold: 0.26, cd: 1.1, reactT: 0.09 },
+  blademaster: { react: 0.30, hold: 0.13, cd: 1.7, reactT: 0.08 },
+  berserker: { react: 0.22, hold: 0.09, cd: 1.9, reactT: 0.12 }
 };
 
 /* 유닛별 증원(스폰) 간격 — 고급 병사·특수 유닛은 일반 병사보다 더 자주 들어온다 */
@@ -39,12 +49,13 @@ export const SPAWN_INTERVAL = {
   elite: 0.07,
   blademaster: 0.085,
   knight: 0.10,
-  wizard: 0.11
+  wizard: 0.11,
+  berserker: 0.12
 };
 /* 전장에 동시에 서 있는 비율 (나머지는 예비 — 죽은 자리가 날 때마다 순차 투입) */
-export const FIELD_RATIO = { soldier: 0.6, elite: 0.55, knight: 0.75, wizard: 0.75, blademaster: 0.75 };
-/* 전장 동시 배치 상한 */
-export const FIELD_MAX = { soldier: 160, elite: 400, knight: 60, wizard: 60, blademaster: 60 };
+export const FIELD_RATIO = { soldier: 0.6, elite: 0.55, knight: 0.75, wizard: 0.75, blademaster: 0.75, berserker: 0.6 };
+/* 전장 동시 배치 상한 (광전사는 초당 연타가 많아 화면·연산 부담을 고려해 45명) */
+export const FIELD_MAX = { soldier: 160, elite: 400, knight: 60, wizard: 60, blademaster: 60, berserker: 45 };
 
 export const CLASSES = {
   soldier: {
@@ -53,8 +64,8 @@ export const CLASSES = {
     name: '일반 병사',
     tag: 'BALANCED',
     blurb: '검과 방패, 민첩한 연속 베기. 모든 전장의 기준.',
-    hp: 120,
-    damage: 120,        // 병사끼리도 한 방 — 검으로 막는 것이 핵심
+    hp: 150,
+    damage: 150,        // 병사끼리도 한 방 — 검으로 막는 것이 핵심
     speed: 4.15,
     radius: 0.38,
     height: 1.72,
@@ -75,10 +86,10 @@ export const CLASSES = {
     key: 'elite',
     icon: '🛡️',
     name: '고급 병사',
-    tag: 'VETERAN · GUARD',
-    blurb: '금장 판금과 방패를 든 베테랑. 체력·이속·공속이 병사보다 10% 높고, 정면 공격을 병사보다 훨씬 잘 받아넘긴다.',
-    hp: 132,            // 일반 병사(120) × 1.1
-    damage: 120,
+    tag: 'VETERAN · SWORD GUARD',
+    blurb: '금장 판금의 정예 검병. 방패 없이 장검 하나로 정면을 막아내며, 체력·이속·공속이 병사보다 10% 높다.',
+    hp: 165,            // 일반 병사(150) × 1.1
+    damage: 150,
     speed: 4.57,        // 병사 4.15 × 1.1
     radius: 0.39,
     height: 1.78,
@@ -100,9 +111,9 @@ export const CLASSES = {
     icon: '🔨',
     name: '중갑 기사',
     tag: 'HEAVY · AOE 100',
-    blurb: '큰 망치를 든 중갑 장군. 한 번의 내리치기로 전방의 적을 최대 100명까지 으스러뜨린다.',
-    hp: 1200,           // 무거운 망치 · 단단하다 (병사의 10배)
-    damage: 220,        // 일반 병사(120)를 한 번에 처치
+    blurb: '큰 망치를 든 중갑 장군. 한 번의 내리치기로 전방의 적을 최대 100명까지 으스러뜨린다. 망치를 두 손으로 쥐느라 막기는 불가.',
+    hp: 2200,           // 무거운 망치 · 산처럼 단단하다 (병사의 약 14.7배)
+    damage: 220,        // 일반 병사(150)를 한 번에 처치
     speed: 3.3,
     radius: 0.52,
     height: 1.94,
@@ -116,7 +127,8 @@ export const CLASSES = {
     aoe: 2.9,
     armor: 0.18,
     mass: 2.4,
-    viewEye: 1.78
+    viewEye: 1.78,
+    guard: false        // 망치를 두 손으로 쥔다 — 막기 불가
   },
   blademaster: {
     key: 'blademaster',
@@ -124,22 +136,47 @@ export const CLASSES = {
     name: '매화 검객',
     tag: 'SWIFT · DASH',
     blurb: '매화처럼 흩날리는 초고속 연속 베기. 스킬로 전방을 쓸어버리는 돌진 참격.',
-    hp: 650,            // 가벼운 검 · 단단한 수련 (병사의 5.4배)
-    damage: 210,        // 일반 병사(120)를 한 번에 처치
+    hp: 900,            // 가벼운 검 · 단단한 수련 (병사의 6배)
+    damage: 210,        // 일반 병사(150)를 한 번에 처치
     speed: 5.4,
     radius: 0.38,
     height: 1.76,
     reach: 2.35,
     arc: 2.3,
-    cycle: 0.34,        // 가장 빠른 공속
-    animDur: 0.80,
-    windup: 0.22,
-    impact: 0.34,
+    cycle: 0.30,        // 가장 빠른 공속 (0.34 → 0.30, 조금 더 빠르게)
+    animDur: 0.76,
+    windup: 0.20,
+    impact: 0.315,
     maxTargets: 10,     // 한 번의 베기로 최대 10명
     aoe: 0,
     armor: 0.03,
     mass: 0.95,
-    viewEye: 1.64
+    viewEye: 1.64,
+    guard: true
+  },
+  berserker: {
+    key: 'berserker',
+    icon: '🩸',
+    name: '단검 광전사',
+    tag: 'RAPID · TANK',
+    blurb: '쌍단검을 쥔 광전사. 산처럼 단단하고 손이 미친 듯 빠르지만 한 방은 아주 약하다. 공격 버튼을 꾹 누르면 자동 연타.',
+    hp: 3000,           // 초고체력 탱커 (병사의 20배)
+    damage: 18,         // 초약딜 — 대신 엄청나게 자주 찌른다
+    speed: 4.15,        // 이동속도는 일반 병사와 동일
+    radius: 0.44,
+    height: 1.80,
+    reach: 1.85,        // 단검 — 사거리가 짧다
+    arc: 2.05,
+    cycle: 0.18,        // 초고속 연타 (초당 약 5.6회)
+    animDur: 0.24,      // 모션 원본 길이 (0.18초에 맞춰 재생된다)
+    windup: 0.05,
+    impact: 0.11,
+    maxTargets: 1,
+    aoe: 0,
+    armor: 0.06,
+    mass: 1.45,
+    viewEye: 1.70,
+    guard: true
   },
   wizard: {
     key: 'wizard',
@@ -162,7 +199,8 @@ export const CLASSES = {
     aoe: 0,
     armor: 0.0,
     mass: 0.85,
-    viewEye: 1.66
+    viewEye: 1.66,
+    guard: false        // 마법사는 막을 수 없다
   }
 };
 
@@ -239,7 +277,7 @@ export const SKILL = {
 };
 
 /* 표시용 전투력 지수 (병사 = 1.00 기준) */
-export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 2.6, wizard: 2.4, blademaster: 3.2 };
+export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 2.8, wizard: 2.4, blademaster: 3.2, berserker: 2.2 };
 export function powerIndex(cls) {
   return POWER_INDEX[cls] || 1.0;
 }
@@ -298,20 +336,22 @@ export function rosterOf(cfg) {
       elite: pick(c.allyElites, MAX_ELITES),
       knight: pick(c.allyKnights, MAX_SPECIALS),
       wizard: pick(c.allyWizards, MAX_SPECIALS),
-      blademaster: pick(c.allyBlademasters, MAX_SPECIALS)
+      blademaster: pick(c.allyBlademasters, MAX_SPECIALS),
+      berserker: pick(c.allyBerserkers, MAX_SPECIALS)
     },
     enemy: {
       soldier: pick(c.enemySoldiers, MAX_SOLDIERS),
       elite: pick(c.enemyElites, MAX_ELITES),
       knight: pick(c.enemyKnights, MAX_SPECIALS),
       wizard: pick(c.enemyWizards, MAX_SPECIALS),
-      blademaster: pick(c.enemyBlademasters, MAX_SPECIALS)
+      blademaster: pick(c.enemyBlademasters, MAX_SPECIALS),
+      berserker: pick(c.enemyBerserkers, MAX_SPECIALS)
     }
   };
 }
 
 export function sideTotal(r) {
-  return r.soldier + (r.elite || 0) + r.knight + r.wizard + (r.blademaster || 0);
+  return r.soldier + (r.elite || 0) + r.knight + r.wizard + (r.blademaster || 0) + (r.berserker || 0);
 }
 
 export function rosterTotal(r) {

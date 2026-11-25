@@ -121,6 +121,11 @@ export class Sfx {
       this._noise(0.16, 'bandpass', 1500, 3800, 0.20, 1.7);
       this._noise(0.22, 'bandpass', 900, 2200, 0.12, 2.4, 0.03);
       this._metal(2100, 0.020, 0.05, 0.10, 1.1);
+    } else if (cls === 'berserker') {
+      // 🩸 단검 광전사 — 짧은 단검 두 자루의 연속 찌르기: 아주 짧고 마른 '쉭'
+      this._noise(0.10, 'bandpass', 1900, 3400, 0.13, 1.9);
+      this._noise(0.13, 'highpass', 2800, 5200, 0.05, 1.2, 0.02);
+      this._metal(2350, 0.010, 0.01, 0.07, 1.05);
     } else {
       // 일반 병사 — "촥" 하는 균형 잡힌 스윕 + 칼끝의 금속 뉘앙스
       this._noise(0.20, 'bandpass', 700, 2700, 0.22, 1.15);
@@ -149,6 +154,11 @@ export class Sfx {
       this._metal(2450, 0.10 * g, 0, 0.18, 1.02);
       this._noise(0.40, 'highpass', 3200, 7000, 0.06 * g, 0.8, 0.03);
       this._tone('sine', 190, 70, 0.14, 0.10 * g);
+    } else if (kind === 'stab') {
+      // 🩸 단검 — 얇게 찌르고 들어가는 짧은 소리 (연타로 겹쳐도 시끄럽지 않게 낮다)
+      this._tone('sine', 210, 110, 0.09, 0.14 * g);
+      this._noise(0.07, 'bandpass', 2400, 1300, 0.13 * g, 2.2);
+      this._metal(2050, 0.028 * g, 0.004, 0.07, 1.0);
     } else {
       // 검: 저음 펀치 + 썰리는 노이즈 + 금속 팅 (레이어 3겹)
       this._tone('sine', 150, 48, 0.16, 0.30 * g);

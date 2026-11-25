@@ -188,26 +188,75 @@ function buildStaff(env) {
   return g;
 }
 
-/* 🛡️ 고급 병사 — 금장 장검과 왼팔 방패(화면 아래 왼쪽에 살짝 보인다) */
+/* ⚔️ 고급 병사 — 금장 장검 하나 (방패 없이 검으로 막는 정예 검병) */
 function buildEliteSword() {
   const g = buildSword();
   const gold = matGold();
   // 장검의 금장 가드 장식
   g.add(box(0.30, 0.05, 0.05, gold, [0, 0.062, 0]));
   g.add(sph(0.035, gold, [0, 0.062, 0.03], [1, 0.6, 0.8]));
-  // 방패
-  const sh = new THREE.Group();
-  sh.position.set(-0.60, -0.50, -0.60);
-  sh.rotation.set(0.16, 0.44, 0.10);
-  const face = matCloth(0x2b4a63);
-  sh.add(box(0.46, 0.60, 0.035, face, [0, 0, 0]));
-  sh.add(box(0.50, 0.055, 0.05, gold, [0, 0.29, 0]));
-  sh.add(box(0.50, 0.055, 0.05, gold, [0, -0.29, 0]));
-  sh.add(box(0.055, 0.60, 0.05, gold, [-0.23, 0, 0]));
-  sh.add(box(0.055, 0.60, 0.05, gold, [0.23, 0, 0]));
-  sh.add(sph(0.085, matSteel(), [0, 0, 0.03], [1, 1, 0.55]));
-  g.add(sh);
-  g.userData.shield = sh;
+  // 검을 받쳐 잡는 왼손 (방패는 없다)
+  const lh = new THREE.Group();
+  lh.position.set(-0.30, -0.30, -0.34);
+  lh.rotation.set(-0.30, 0.55, 0.35);
+  lh.add(box(0.10, 0.11, 0.10, matDark(), [0, 0, 0]));
+  lh.add(box(0.12, 0.045, 0.09, matSteel(), [0, -0.06, 0]));
+  const larm = new THREE.Group();
+  larm.position.set(-0.02, -0.12, 0.0);
+  larm.rotation.set(0.35, 0.30, 0.70);
+  larm.add(capsule(0.055, 0.26, matCloth(0x2b4a63), [0, -0.14, 0]));
+  lh.add(larm);
+  g.add(lh);
+  return g;
+}
+
+/* 🩸 단검 광전사 — 양손에 짧은 단검 (오른손 주도 · 왼손은 아래에서 받쳐 찌른다) */
+function buildDaggers() {
+  const g = new THREE.Group();
+  const steel = matSteel(), bronze = matGold(), leather = matLeather(), dark = matDark();
+  const cloth = matCloth(0x45251f);
+  const gleamMat = new THREE.MeshBasicMaterial({ color: 0xe8f4ff, transparent: true, opacity: 0.55 });
+
+  const blade = () => {
+    const b = new THREE.Group();
+    b.add(cyl(0.024, 0.028, 0.15, leather, [0, -0.03, 0]));
+    for (let i = 0; i < 3; i++) b.add(cyl(0.031, 0.031, 0.011, bronze, [0, -0.085 + i * 0.04, 0]));
+    b.add(box(0.135, 0.032, 0.045, bronze, [0, 0.055, 0]));            // 가드
+    b.add(box(0.072, 0.30, 0.016, steel, [0, 0.215, 0]));              // 날
+    b.add(box(0.018, 0.26, 0.018, dark, [0, 0.215, 0]));               // 혈조
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.048, 0.13, 4), steel);
+    tip.position.set(0, 0.415, 0); tip.rotation.y = Math.PI / 4; tip.scale.z = 0.3;
+    b.add(tip);
+    b.add(sph(0.036, bronze, [0, -0.115, 0], [1, 0.9, 1]));
+    b.add(box(0.10, 0.12, 0.11, dark, [0, -0.045, 0.01]));            // 손
+    b.add(box(0.118, 0.045, 0.10, steel, [0, -0.10, 0.01]));
+    return b;
+  };
+
+  /* 오른손(주도) */
+  const r = blade();
+  const gleam = box(0.008, 0.28, 0.019, gleamMat, [0.026, 0.215, 0.004]);
+  r.add(gleam);
+  g.add(r);
+  g.userData.gleam = gleam;
+  const armR = new THREE.Group();
+  armR.position.set(0.02, -0.16, 0.02);
+  armR.rotation.set(0.35, -0.25, -0.55);
+  armR.add(capsule(0.062, 0.30, cloth, [0, -0.16, 0]));
+  armR.add(cyl(0.075, 0.068, 0.10, matSteel(), [0, -0.02, 0]));
+  g.add(armR);
+  g.userData.armGroup = armR;
+
+  /* 왼손(보조) — 화면 왼쪽 아래에서 받쳐 든다 */
+  const l = blade();
+  l.position.set(-0.26, -0.09, 0.03);
+  l.rotation.set(0.22, 0.18, 0.12);
+  g.add(l);
+  const armL = new THREE.Group();
+  armL.position.set(-0.24, -0.25, 0.02);
+  armL.rotation.set(0.45, 0.30, 0.85);
+  armL.add(capsule(0.058, 0.30, cloth, [0, -0.16, 0]));
+  g.add(armL);
   return g;
 }
 
@@ -338,6 +387,18 @@ const CURVES = {
       { t: 0.86, p: [-0.29, -0.615, -0.605], r: [0.0, 0.09, 0.07], ease: 'inout' },
       { t: 1.06, p: [-0.30, -0.62, -0.60], r: [-0.06, 0.10, 0.10], ease: 'inout' }
     ]
+  },
+  /* 🩸 단검 광전사 — 짧고 빠른 찌르기 (0.24초를 0.18초에 압축 재생) */
+  berserker: {
+    idle: { p: [0.26, -0.48, -0.60], r: [-0.20, -0.55, -0.28] },
+    dur: 0.24,
+    keys: [
+      { t: 0.00, p: [0.26, -0.48, -0.60], r: [-0.20, -0.55, -0.28] },
+      { t: 0.05, p: [0.34, -0.44, -0.56], r: [-0.02, -0.70, -0.18], ease: 'out' },
+      { t: 0.11, p: [0.12, -0.34, -0.92], r: [-1.15, 0.10, 0.10], ease: 'out' },
+      { t: 0.17, p: [0.28, -0.46, -0.66], r: [-0.42, -0.40, -0.20], ease: 'inout' },
+      { t: 0.24, p: [0.26, -0.48, -0.60], r: [-0.20, -0.55, -0.28], ease: 'inout' }
+    ]
   }
 };
 
@@ -354,6 +415,7 @@ const GUARD = {
   elite: { p: [0.32, -0.50, -0.90], r: [-0.50, 0.52, 0.42] },
   blademaster: { p: [0.36, -0.52, -0.90], r: [-0.45, 0.60, 0.55] },
   knight: { p: [0.26, -0.58, -0.96], r: [-0.70, 0.30, -0.30] },
+  berserker: { p: [0.30, -0.52, -0.94], r: [-0.50, 0.45, 0.52] },
   wizard: { p: [-0.06, -0.46, -0.56], r: [0.10, -0.20, -0.14] }
 };
 
@@ -416,7 +478,8 @@ export class ViewModel {
       elite: buildEliteSword(),
       knight: buildHammer(),
       wizard: buildStaff(),
-      blademaster: buildKatana()
+      blademaster: buildKatana(),
+      berserker: buildDaggers()
     };
     for (const k in this.models) {
       this.models[k].visible = false;
@@ -452,7 +515,7 @@ export class ViewModel {
   setClass(cls) {
     for (const k in this.models) this.models[k].visible = k === cls;
     /* 클래스별 무기 크기 — 큰 망치는 화면을 덮지 않게 조금 작게 */
-    this.inner.scale.setScalar(cls === 'knight' ? 0.44 : cls === 'wizard' ? 0.50 : 0.525);
+    this.inner.scale.setScalar(cls === 'knight' ? 0.44 : cls === 'wizard' ? 0.50 : cls === 'berserker' ? 0.50 : 0.525);
     this.className = cls;
     this.palm.visible = cls === 'wizard';
     this.guardK = 0;
@@ -558,7 +621,7 @@ export class ViewModel {
       if (player.attackT >= impT) {
         const cyc = (CLASSES[this.className] || CLASSES.soldier).cycle;
         const k = (player.attackT - impT) / Math.max(0.001, cyc - impT);
-        recoil = Math.exp(-k * 7.5) * (this.className === 'knight' ? 0.085 : this.className === 'blademaster' ? 0.035 : 0.045);
+        recoil = Math.exp(-k * 7.5) * (this.className === 'knight' ? 0.085 : this.className === 'blademaster' ? 0.035 : this.className === 'berserker' ? 0.020 : 0.045);
       }
     }
     if (this._imp) {
@@ -631,7 +694,7 @@ export class ViewModel {
     if (!this.enabled) return false;
     const model = this.models[this.className];
     if (!model) return false;
-    const h = this.className === 'knight' ? 1.62 : this.className === 'wizard' ? 1.2 : this.className === 'blademaster' ? 1.12 : 1.02;
+    const h = this.className === 'knight' ? 1.62 : this.className === 'wizard' ? 1.2 : this.className === 'blademaster' ? 1.12 : this.className === 'berserker' ? 0.62 : 1.02;
     const b = h * 0.12;
     _v1.set(0, b, 0); model.localToWorld(_v1);
     _v2.set(0, h, 0); model.localToWorld(_v2);

@@ -3,6 +3,9 @@
 /* =============================================================================
    배틀 아레나 3D · 모바일(390×844 세로) 실제 렌더 검증
    -----------------------------------------------------------------------------
+   · ⚔️ 병종 밸런스: 병사 150/150 · 기사 체력 2200·막기 불가 · 검객 900/0.30초 · 고급 병사 방패 제거
+   · 🩸 신규 6번째 병종 '단검 광전사' — 3000 체력 · 18 공격력 · 0.18초 연타 · 홀드 자동 연타
+   · 💚 자연 회복: 살아 있는 모든 유닛이 초당 최대 체력의 1.5% 를 스스로 회복
    · ☀️ 밝기·광택: 노출/조명/안개가 어둡지 않고, 갑옷이 번쩍이지 않는 범위인지
    · 🛡️ 새 막기 판정: 정면(±77°)은 마법·망치·일섬·평타 모두 0 피해, 뒤는 그대로
    · 🛡️ 고급 병사: 5회 충전 · 19초 재충전 (HUD 표시 포함)
@@ -103,16 +106,26 @@ function ok(name, cond, extra) {
   /* ===== 0. 스펙 ===== */
   const specs = await page.evaluate(() => window.BA.specs());
   const C = specs.classes;
+  ok('⚔️ 일반 병사 = 체력 150 · 공격력 150 (한 방)', C.soldier.hp === 150 && C.soldier.damage === 150,
+    { hp: C.soldier.hp, damage: C.soldier.damage });
   ok('🛡️ 고급 병사 = 병사 대비 체력·이속·공속 +10%',
     Math.abs(C.elite.hp - C.soldier.hp * 1.1) < 0.01 &&
     Math.abs(C.elite.speed - C.soldier.speed * 1.1) < 0.01 &&
     Math.abs(C.elite.cycle - C.soldier.cycle / 1.1) < 0.005,
     { hp: C.elite.hp, speed: C.elite.speed, cycle: C.elite.cycle });
-  ok('🔨 기사 체력 1200 · 한 번에 100명', C.knight.hp === 1200 && C.knight.maxTargets === 100);
-  ok('🌸 검객 체력 650 · 한 번에 10명 · 이속 상향', C.blademaster.hp === 650 && C.blademaster.maxTargets === 10 && C.blademaster.speed > 5.0);
-  ok('🔮 마법사 이속·마법 쿨타임 조정', C.wizard.speed < 3.6 && specs.spells.fire.cooldown === 3.8 &&
-    specs.spells.lightning.cooldown === 6.6 && specs.spells.ice.cooldown === 8.6);
-  ok('일반 병사는 힘 그대로 (hp 120 · damage 120 · 한 방)', C.soldier.hp === 120 && C.soldier.damage === 120);
+  ok('🔨 기사 체력 2000~2400 · 한 번에 100명 · 막기 불가',
+    C.knight.hp >= 2000 && C.knight.hp <= 2400 && C.knight.maxTargets === 100 && C.knight.guard === false,
+    { hp: C.knight.hp, guard: C.knight.guard });
+  ok('🌸 검객 체력 900 · 공속 조금 빠르게(0.30초) · 한 번에 10명 · 막기 가능',
+    C.blademaster.hp === 900 && C.blademaster.maxTargets === 10 && C.blademaster.speed > 5.0 &&
+    C.blademaster.cycle <= 0.305 && C.blademaster.guard === true,
+    { hp: C.blademaster.hp, cycle: C.blademaster.cycle });
+  ok('🩸 단검 광전사 = 3000 체력 · 18 공격력 · 0.18초 연타 · 병사와 같은 이속 · 막기 가능',
+    C.berserker && C.berserker.hp === 3000 && C.berserker.damage === 18 &&
+    C.berserker.cycle === 0.18 && C.berserker.speed === C.soldier.speed && C.berserker.guard === true,
+    C.berserker && { hp: C.berserker.hp, dmg: C.berserker.damage, cycle: C.berserker.cycle, speed: C.berserker.speed });
+  ok('🔮 마법사 이속·마법 쿨타임 조정 · 막기 불가', C.wizard.speed < 3.6 && C.wizard.guard === false &&
+    specs.spells.fire.cooldown === 3.8 && specs.spells.lightning.cooldown === 6.6 && specs.spells.ice.cooldown === 8.6);
   ok('이속: 병사·기사 상향', C.soldier.speed > 3.9 && C.knight.speed > 3.1);
 
   /* ===== 0b. 밝기 · 광택 ===== */
@@ -135,11 +148,13 @@ function ok(name, cond, extra) {
     }));
     return { cards, rows };
   });
-  ok('클래스 카드 5종 (고급 병사 포함)', home.cards.length === 5 && home.cards.includes('elite') && home.cards.includes('wizard'), home.cards);
+  ok('클래스 카드 6종 (고급 병사·단검 광전사 포함)',
+    home.cards.length === 6 && home.cards.includes('elite') && home.cards.includes('wizard') && home.cards.includes('berserker'), home.cards);
   ok('상한: 고급 병사 슬라이더 최대 1,000', home.rows.filter((r) => r.unit === 'elite').every((r) => r.max === 1000));
-  ok('상한: 매화 검객·중갑 기사·마법사 최대 100', home.rows.filter((r) => ['knight', 'wizard', 'blademaster'].includes(r.unit)).every((r) => r.max === 100),
+  ok('상한: 매화 검객·중갑 기사·마법사·단검 광전사 최대 100', home.rows.filter((r) => ['knight', 'wizard', 'blademaster', 'berserker'].includes(r.unit)).every((r) => r.max === 100),
     home.rows.filter((r) => r.unit !== 'soldier' && r.unit !== 'elite').map((r) => r.unit + ':' + r.max));
-  ok('아군·적군 양쪽에 고급 병사 줄이 있다', home.rows.filter((r) => r.unit === 'elite').length === 2);
+  ok('아군·적군 양쪽에 고급 병사·단검 광전사 줄이 있다',
+    home.rows.filter((r) => r.unit === 'elite').length === 2 && home.rows.filter((r) => r.unit === 'berserker').length === 2);
 
   /* ===== 2. 고급 병사로 참전 ===== */
   await page.evaluate(() => {
@@ -155,7 +170,7 @@ function ok(name, cond, extra) {
   }, { timeout: 30000 });
   await sleep(900);
   const begun = await st();
-  ok('고급 병사로 1인칭 참전 · 5회 막기 충전을 들고 시작', begun.camMode === 'fp' && begun.player.cls === 'elite', { cam: begun.camMode, cls: begun.player.cls });
+  ok('고급 병사로 1인칭 참전', begun.camMode === 'fp' && begun.player.cls === 'elite', { cam: begun.camMode, cls: begun.player.cls });
   const guard0 = await page.evaluate(() => {
     const s = window.BA.state();
     const b = document.getElementById('guardBtn');
@@ -167,7 +182,8 @@ function ok(name, cond, extra) {
       chText: ch.textContent, chDisplay: getComputedStyle(ch).display
     };
   });
-  ok('🛡️ 방패 막기 버튼 (횟수 제한 없음 — 충전 표시 없음)', guard0.display !== 'none' && /방패/.test(guard0.label) && guard0.chDisplay === 'none', guard0);
+  ok('⚔️ 고급 병사 막기 버튼 = "검 막기" (방패 없음 · 횟수 제한 없음)', guard0.display !== 'none' &&
+    guard0.label === '검 막기' && guard0.chDisplay === 'none', guard0);
 
   const model = await page.evaluate(() => {
     const r = window.BA.app.unitRenderer;
@@ -245,8 +261,14 @@ function ok(name, cond, extra) {
     return { hp: u.hp, react: units.guardReaction, hold: units.guardHold, cdMax: units.guardCdMax };
   });
   ok('🛡️ 고급 병사는 횟수 제한 없이 12번 연속 완전 방어', eliteGuard.hp === 900, eliteGuard);
-  ok('🛡️ AI 막기 빈도는 아주 가끔 (고급 0.14/0.06 · 재사용 대기 2.4초 이상)', Math.abs(eliteGuard.react - 0.14) < 0.01 &&
-    Math.abs(eliteGuard.hold - 0.06) < 0.01 && eliteGuard.cdMax >= 2.0, eliteGuard);
+  ok('🛡️ AI 막기 빈도 상향 — 고급 병사 0.55/0.26 (병사 0.18/0.08 · 검객 0.30/0.13)',
+    Math.abs(eliteGuard.react - 0.55) < 0.01 && Math.abs(eliteGuard.hold - 0.26) < 0.01 &&
+    eliteGuard.cdMax <= 1.2 && eliteGuard.react > 0.5, eliteGuard);
+  const gc = specs.guardChance || {};
+  ok('🛡️ AI 막기 확률표 — 병사·고급·검객·광전사만 (기사·마법사는 막기 없음)',
+    gc.soldier && gc.elite && gc.blademaster && gc.berserker && !gc.knight && !gc.wizard &&
+    gc.elite.react > gc.soldier.react * 2 && gc.blademaster.react > gc.soldier.react &&
+    gc.soldier.reactT <= 0.12 && gc.elite.reactT <= 0.10, gc);
 
   /* ===== 6. 🔌 장기전에도 입력·게이지가 살아 있다 ===== */
   await page.evaluate(() => window.BA.start({
@@ -599,7 +621,7 @@ function ok(name, cond, extra) {
   /* ===== 18. 🎞️ 모션 연속성 — 프레임 사이 관절 회전이 튀지 않는다 ===== */
   const motion = await page.evaluate(() => {
     const res = {};
-    for (const cls of ['soldier', 'elite', 'knight', 'blademaster', 'wizard']) {
+    for (const cls of ['soldier', 'elite', 'knight', 'blademaster', 'wizard', 'berserker']) {
       const c = window.BA.specs().classes[cls];
       res[cls] = {
         atk: window.BA.debug.poseTrack({ cls, kind: 'attack', from: 0, to: c.cycle, frames: Math.round(c.cycle * 60) }),
@@ -609,7 +631,8 @@ function ok(name, cond, extra) {
     }
     return res;
   });
-  const atkLimits = { soldier: 0.45, elite: 0.45, knight: 0.45, blademaster: 0.85, wizard: 0.35 };
+  /* 광전사는 0.18초 주기로 0.24초 모션을 압축 재생한다 — 프레임당 회전이 원래 크다 */
+  const atkLimits = { soldier: 0.45, elite: 0.45, knight: 0.45, blademaster: 0.85, wizard: 0.35, berserker: 1.15 };
   const badAtk = Object.keys(atkLimits).filter((k) => motion[k].atk.max > atkLimits[k]);
   const badDeath = Object.keys(motion).filter((k) => motion[k].death.max > 0.25 || motion[k].death.rootJump > 0.12);
   ok('🎞️ 공격 모션 프레임당 관절 회전이 병종별 한계 안 (튀는 프레임 없음)',
@@ -670,7 +693,7 @@ function ok(name, cond, extra) {
 
   /* ===== 21. 🛡️ 막기 버튼 — 실터치(홀드·탭)로 모든 병종이 막는다 ===== */
   const guardRuns = [];
-  for (const cls of ['soldier', 'elite', 'knight', 'blademaster']) {
+  for (const cls of ['soldier', 'elite', 'blademaster', 'berserker']) {
     await page.evaluate((c) => window.BA.start({ cls: c, ally: 6, enemy: 2, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }), cls);
     await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
     await sleep(300);
@@ -743,10 +766,8 @@ function ok(name, cond, extra) {
     guardRuns.map((g) => ({ cls: g.held.cls, front: g.held.frontHp, rear: g.held.rearHp, blocks: g.held.blockEv })));
   ok('🛡️ 막기 중 1인칭 무기가 막기 자세로 올라온다', guardRuns.every((g) => g.held.guardK > 0.6),
     guardRuns.map((g) => ({ cls: g.held.cls, guardK: g.held.guardK })));
-  ok('🛡️ 병종별 막기 라벨 — 방패/검', guardRuns.every((g) => {
-    const want = g.held.cls === 'elite' ? '방패 막기' : '검 막기';
-    return g.rect.label === want;
-  }), guardRuns.map((g) => ({ cls: g.held.cls, label: g.rect.label })));
+  ok('🛡️ 막기 라벨은 모두 "검 막기" (방패 병종 없음)', guardRuns.every((g) => g.rect.label === '검 막기'),
+    guardRuns.map((g) => ({ cls: g.held.cls, label: g.rect.label })));
   /* 🔮 마법사는 막기 버튼이 없고, 마법 3버튼만 뜬다 */
   await page.evaluate(() => window.BA.start({ cls: 'wizard', ally: 4, enemy: 2, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
   await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
@@ -787,7 +808,8 @@ function ok(name, cond, extra) {
     // 적 마법사를 플레이어 정면(+z) 8m 에 고정하고, 양쪽 체력을 크게 둔다
     wiz.x = p.x; wiz.z = p.z + 8; wiz.yaw = Math.PI;
     wiz.hp = 1e6; wiz.maxHp = 1e6; wiz.cooldown = 0;
-    p.maxHp = 1e6; p.hp = 1e6; p.yaw = 0;
+    /* 💚 자연 회복(초당 최대 체력 1.5%)이 피해량을 덮지 않도록 최대 체력을 작게 둔다 */
+    p.maxHp = 300; p.hp = 300; p.yaw = 0;
     const blocks = [];
     const orig = b.emit.bind(b);
     b.emit = (e) => { if (e.type === 'block') blocks.push({ heavy: !!e.heavy, cls: e.unit && e.unit.cls }); return orig(e); };
@@ -826,9 +848,9 @@ function ok(name, cond, extra) {
     return out;
   });
   ok('🛡️ 적 마법사의 화염구·번개·빙결도 정면에서 막으면 0 피해 (막힘 이벤트·강타)', magicBlock.err == null &&
-    magicBlock.fire.hp >= 1e6 - 0.5 && magicBlock.fire.blocks >= 1 && magicBlock.fire.heavy &&
-    magicBlock.lightning.hp >= 1e6 - 0.5 && magicBlock.lightning.blocks >= 1 && magicBlock.lightning.heavy &&
-    magicBlock.ice.hp >= 1e6 - 0.5 && magicBlock.ice.blocks >= 1 && magicBlock.ice.heavy, magicBlock);
+    magicBlock.fire.hp >= 299.5 && magicBlock.fire.blocks >= 1 && magicBlock.fire.heavy &&
+    magicBlock.lightning.hp >= 299.5 && magicBlock.lightning.blocks >= 1 && magicBlock.lightning.heavy &&
+    magicBlock.ice.hp >= 299.5 && magicBlock.ice.blocks >= 1 && magicBlock.ice.heavy, magicBlock);
   ok('❄️ 막아낸 빙결은 얼리지 않는다', magicBlock.ice && magicBlock.ice.frozen === false, magicBlock.ice);
   ok('뒤를 돌면 마법이 그대로 들어간다', !!magicBlock.rear && magicBlock.rear.dealt > 1, magicBlock.rear);
 
@@ -931,6 +953,198 @@ function ok(name, cond, extra) {
   });
   ok('🔨 기사 공속 2% 너프 (주기 1.01 → 1.03)',
     knightSpd.cycle > 1.02 && knightSpd.cycle < 1.04, knightSpd);
+
+  /* ===== 24. 🩸 신규 병종 — 단검 광전사 스폰·3D 모델·1인칭·HUD ===== */
+  await page.evaluate(() => window.BA.start({
+    cls: 'berserker', ally: 3, enemy: 3, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0, abz: 4, ebz: 4
+  }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(500);
+  const bers = await page.evaluate(() => {
+    const b = window.BA.battle, app = window.BA.app, p = b.player;
+    const all = b.units.filter((u) => u.cls === 'berserker');
+    const ai = all.filter((u) => !u.isPlayer);
+    const one = ai[0] || p;
+    const c = app.unitRenderer.classes.berserker;
+    return {
+      cls: p.cls, playerHp: p.maxHp, playerDmg: p.damage, cycle: p.cycle,
+      allyAI: ai.filter((u) => u.team === 'ally').length,
+      enemyAI: ai.filter((u) => u.team === 'enemy').length,
+      hp: one.maxHp, dmg: one.damage, speed: one.speed,
+      soldierSpeed: window.BA.specs().classes.soldier.speed,
+      buckets: Object.keys(app.unitRenderer.classes),
+      parts: c ? c.parts.length : 0,
+      vmModel: !!app.vm.models.berserker,
+      hudIcon: document.getElementById('psClass').textContent,
+      atkLabel: document.querySelector('#attackBtn .ab-label').textContent,
+      guardOn: document.getElementById('guardBtn').classList.contains('is-on')
+    };
+  });
+  ok('🩸 단검 광전사가 양 진영에 스폰되고 1인칭·HUD·3D 모델이 붙는다',
+    bers.cls === 'berserker' && bers.allyAI === 4 && bers.enemyAI === 4 &&
+    Math.abs(bers.playerHp - 3000) < 120 && bers.cycle === 0.18 && bers.speed === bers.soldierSpeed &&
+    bers.buckets.includes('berserker') && bers.parts > 20 && bers.vmModel &&
+    bers.hudIcon === '🩸' && bers.atkLabel === '연타' && bers.guardOn === true, bers);
+
+  const poseBers = await page.evaluate(() => {
+    const r = {};
+    r.atk = window.BA.debug.poseTrack({ cls: 'berserker', kind: 'attack', from: 0, to: 0.18, frames: 11 });
+    r.guard = window.BA.debug.poseTrack({ cls: 'berserker', kind: 'guard', from: 0, to: 0.5, frames: 30 });
+    return r;
+  });
+  ok('🩸 광전사 모션이 0.18초 주기에 맞게 재생된다 (공격·막기 모두 끊김 없음)',
+    !!poseBers.atk && poseBers.atk.max < 1.15 && poseBers.guard.max < 0.6,
+    { atk: poseBers.atk, guard: poseBers.guard });
+
+  /* ===== 25. 🩸 공격 버튼 홀드 자동 연타 (손을 떼면 멈춤) ===== */
+  await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    app.paused = false;
+    p.dead = false; p.hp = p.maxHp; p.cooldown = 0; p.attackT = -1;
+    app.camMode = 'fp';
+    if (b.playerSafe) { b.playerSafe = false; app.spectate = null; }
+  });
+  const atkRect = await page.evaluate(() => {
+    const r = document.getElementById('attackBtn').getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  });
+  await page.touchscreen.touchStart(atkRect.x, atkRect.y);
+  await sleep(60);
+  const heldRun = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    let n = 0;
+    const orig = b.emit.bind(b);
+    b.emit = (e) => { if (e.type === 'attack' && e.unit === p) n++; return orig(e); };
+    const held = !!app.attackHeld;
+    window.BA.debug.advance(1.2);
+    b.emit = orig;
+    return { held, n, cycle: p.cycle, cooldown: +p.cooldown.toFixed(2) };
+  });
+  await page.touchscreen.touchEnd();
+  const releasedRun = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    let n = 0;
+    const orig = b.emit.bind(b);
+    b.emit = (e) => { if (e.type === 'attack' && e.unit === p) n++; return orig(e); };
+    window.BA.debug.advance(0.8);
+    b.emit = orig;
+    return { n, held: !!app.attackHeld, attackInput: !!app.input.attack };
+  });
+  ok('🩸 공격 버튼을 꾹 누르면 쿨타임마다 자동으로 연타가 나간다 (1.2초에 5회 이상)',
+    heldRun.held && heldRun.n >= 5, heldRun);
+  ok('🩸 손을 떼면 연타가 즉시 멈춘다', releasedRun.held === false && releasedRun.n === 0, releasedRun);
+
+  /* ===== 26. 🔨 기사는 막기를 쓸 수 없다 (플레이어·AI 모두) ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'knight', ally: 2, enemy: 2, ae: 0, ee: 0, ak: 1, ek: 1, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(400);
+  const knightGuard = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    app.paused = false;
+    const btn = document.getElementById('guardBtn');
+    const shown = btn.classList.contains('is-on') && getComputedStyle(btn).display !== 'none';
+    p.guard = false;
+    b.playerSafe = false;
+    b.update(1 / 60, { mx: 0, mz: 0, yaw: p.yaw, guard: true, attack: false, aimPart: 'body', aimId: 0 });
+    const pGuard = !!p.guard;
+    p.maxHp = 9000; p.hp = 9000;
+    b.damage(p, 500, { x: p.x, z: p.z + 3, team: 'enemy', id: 9101 }, 'blade');
+    const front = p.hp;
+    // AI 기사도 guard 플래그를 강제로 켜도 막지 못한다
+    const k = window.BA.debug.spawn('knight', 'enemy', 0, 0);
+    k.x = 0; k.z = 0; k.yaw = 0; k.hp = 9000; k.maxHp = 9000;
+    k.guard = true; k.guardT = 99;
+    b.damage(k, 500, { x: 0, z: 2, team: 'ally', id: 9102 }, 'blade');
+    return { shown, pGuard, front, aiHp: k.hp, cls: p.cls, hp: p.maxHp };
+  });
+  ok('🔨 기사 — 막기 버튼 숨김·입력 무시, 정면 공격이 그대로 들어간다',
+    knightGuard.cls === 'knight' && knightGuard.shown === false && knightGuard.pGuard === false &&
+    knightGuard.front < 8900, knightGuard);
+  ok('🔨 AI 기사도 막지 못한다 (가드를 강제로 켜도 피해 그대로)', knightGuard.aiHp < 8900, { hp: knightGuard.aiHp });
+
+  /* ===== 27. 🛡️ 고급 병사가 실제 난전에서 눈에 띄게 자주 막는다 ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 14, enemy: 14, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle', { timeout: 30000 });
+  await sleep(300);
+  const guardCount = await page.evaluate(() => {
+    const b = window.BA.battle;
+    // 적군만 고급 병사로 바꿔 같은 수로 붙인다 (아군은 병사)
+    const foes = b.units.filter((u) => u.team === 'enemy' && !u.isPlayer);
+    for (const u of foes) { u.cls = 'elite'; u.maxHp = 165; u.hp = 165; u.cycle = 0.745; }
+    /* 양쪽 피해를 0으로 둬 20초 동안 계속 서로 휘두르게 한다 (막기 횟수만 비교) */
+    for (const u of b.units) if (!u.isPlayer) u.damage = 0;
+    const blocks = { soldier: 0, elite: 0 };
+    const orig = b.emit.bind(b);
+    b.emit = (e) => { if (e.type === 'block' && e.unit && blocks[e.unit.cls] !== undefined) blocks[e.unit.cls]++; return orig(e); };
+    for (let i = 0; i < 20; i++) window.BA.debug.advance(1);
+    b.emit = orig;
+    return { blocks, allyAlive: b.countAlive('ally'), enemyAlive: b.countAlive('enemy') };
+  });
+  ok('🛡️ 고급 병사 AI가 병사보다 눈에 띄게 자주 막는다 (20초 난전)',
+    guardCount.blocks.elite >= 2 && guardCount.blocks.elite > guardCount.blocks.soldier, guardCount);
+
+  /* ===== 28. 🛡️ 고급 병사 방패 제거 — 3D 모델·1인칭 모두 검으로 막는다 ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'elite', ally: 4, enemy: 4, ae: 2, ee: 2, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(500);
+  const noShield = await page.evaluate(() => {
+    const app = window.BA.app;
+    const c = app.unitRenderer.classes && app.unitRenderer.classes.elite;
+    if (!c) return { missing: true };
+    const chest = c.parts.filter((pv) => pv.userData.joint === 3);   // J.chest = 3
+    const cloth = chest.filter((pv) => pv.userData.matKey === 'cloth');
+    let minX = 0;
+    for (const pv of cloth) {
+      pv.geometry.computeBoundingBox();
+      minX = Math.min(minX, pv.geometry.boundingBox.min.x);
+    }
+    const vmElite = app.vm.models.elite;
+    return {
+      chestParts: chest.length, clothParts: cloth.length, minX: +minX.toFixed(3),
+      vmShield: !!(vmElite && vmElite.userData.shield),
+      label: document.querySelector('#guardBtn .sk-label').textContent
+    };
+  });
+  ok('🛡️ 고급 병사 3D 모델에 방패가 없다 (흉갑 왼쪽 판 제거 · 장검은 그대로)',
+    !noShield.missing && noShield.minX > -0.28, noShield);
+  ok('🛡️ 고급 병사 1인칭에 방패가 없고 막기 라벨은 "검 막기"',
+    noShield.vmShield === false && noShield.label === '검 막기', noShield);
+
+  /* ===== 29. 💚 자연 회복 — 살아 있는 모든 유닛이 최대 체력 비례로 회복 ===== */
+  const regenProbe = await page.evaluate(() => {
+    const b = window.BA.battle;
+    const spec = window.BA.specs();
+    const pick = [b.units.find((u) => u.team === 'ally' && !u.isPlayer && !u.dead),
+      b.units.find((u) => u.team === 'enemy' && !u.dead), b.player].filter((u) => u && !u.dead);
+    const saved = b.units.map((u) => [u, u.damage]);
+    for (const u of b.units) if (!u.isPlayer) { u.damage = 0; u.freezeT = 2; }
+    const before = pick.map((u) => { u.hp = u.maxHp * 0.5; return u.hp; });
+    const maxs = pick.map((u) => u.maxHp);
+    for (let i = 0; i < 60; i++) b.update(1 / 60, null);
+    const gained = pick.map((u, i) => u.hp - before[i]);
+    // 사망 유닛은 회복하지 않는다
+    const d = window.BA.debug.spawn('soldier', 'enemy', 0, 0);
+    d.dead = true; d.hp = 0; d.maxHp = 150;
+    b.update(1 / 60, null);
+    const deadHp = d.hp;
+    // 상한 고정 — 최대 체력을 넘지 않는다
+    if (pick[0]) { pick[0].hp = pick[0].maxHp - 0.01; }
+    for (let i = 0; i < 30; i++) b.update(1 / 60, null);
+    const capped = pick[0] ? pick[0].hp <= pick[0].maxHp + 0.0001 : true;
+    for (const [u, dmg] of saved) u.damage = dmg;
+    return {
+      frac: spec.regen,
+      gained: gained.map((g) => +g.toFixed(3)),
+      expect: maxs.map((m) => +(m * spec.regen).toFixed(3)),
+      deadHp, capped, n: pick.length
+    };
+  });
+  const regenOk = regenProbe.gained.length >= 2 && regenProbe.gained.every((g, i) =>
+    Math.abs(g - regenProbe.expect[i]) <= Math.max(0.02, regenProbe.expect[i] * 0.05));
+  ok('💚 살아 있는 아군·적군·플레이어가 1초에 최대 체력의 1.5%씩 자연 회복한다',
+    regenProbe.frac === 0.015 && regenOk, regenProbe);
+  ok('💚 사망 유닛은 회복하지 않고, 회복은 최대 체력에서 멈춘다',
+    regenProbe.deadHp === 0 && regenProbe.capped === true, regenProbe);
 
   ok('콘솔/페이지 오류 0 (헤드리스 SwiftShader)', errors.length === 0, errors.slice(0, 5));
   console.log(`\n모든 테스트 통과 (${passed}개) · 스크린샷 ${SHOTS}`);

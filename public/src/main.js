@@ -716,6 +716,13 @@ class App {
     if (step >= 2) r.setPixelRatio(Math.min(dpr, 1.5));
     else if (step === 1) r.setPixelRatio(Math.min(dpr, 1.15));
     else r.setPixelRatio(1);
+    /* 해상도와 함께 상세 모델 반경도 조절한다 (셰이더 재컴파일 없이 인스턴스만 줄어든다) */
+    const ur = this.unitRenderer;
+    if (ur) {
+      if (step >= 2) { ur.lodNear = 15; ur.lodFar = 36; }
+      else if (step === 1) { ur.lodNear = 13; ur.lodFar = 32; }
+      else { ur.lodNear = 11; ur.lodFar = 27; }
+    }
     if (medMs) console.log('PERF quality=' + step + ' median=' + medMs.toFixed(1) + 'ms dpr=' + r.getPixelRatio().toFixed(2));
   }
 

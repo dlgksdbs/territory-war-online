@@ -74,9 +74,13 @@ function buildSword(env) {
   for (let i = 0; i < 5; i++) g.add(cyl(0.029, 0.029, 0.012, gold, [0, -0.12 + i * 0.04, 0]));
   g.add(box(0.24, 0.032, 0.045, gold, [0, 0.058, 0]));
   g.add(box(0.30, 0.018, 0.02, gold, [0, 0.058, 0], [0, 0, 0]));
-  const blade = box(0.062, 0.92, 0.014, steel, [0, 0.56, 0]);
+  const blade = box(0.064, 0.94, 0.014, steel, [0, 0.57, 0]);
   g.add(blade);
-  g.add(box(0.018, 0.86, 0.016, matDark(), [0, 0.55, 0]));
+  g.add(box(0.016, 0.86, 0.016, matDark(), [0, 0.55, 0]));
+  /* 날을 따라 흐르는 광택선 — 회전할 때 금속이 번뜩인다 */
+  const gleam = box(0.008, 0.88, 0.017, new THREE.MeshBasicMaterial({ color: 0xe8f4ff, transparent: true, opacity: 0.55 }), [0.026, 0.56, 0]);
+  g.add(gleam);
+  g.userData.gleam = gleam;
   // 칼끝
   const tip = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.16, 4), steel);
   tip.position.set(0, 1.09, 0); tip.rotation.y = Math.PI / 4; tip.scale.z = 0.32;
@@ -277,17 +281,17 @@ function buildPalm() {
    → 지나친 팔로우스루 → 손목을 풀며 회수 */
 const CURVES = {
   soldier: {
-    idle: { p: [0.33, -0.40, -0.60], r: [-0.28, -0.48, 0.34] },
+    idle: { p: [0.25, -0.46, -0.58], r: [-0.16, -0.60, -0.30] },
     dur: 0.92,
     keys: [
-      { t: 0.00, p: [0.33, -0.40, -0.60], r: [-0.28, -0.48, 0.34] },
-      { t: 0.10, p: [0.37, -0.37, -0.56], r: [-0.06, -0.66, 0.20], ease: 'inout' },
+      { t: 0.00, p: [0.25, -0.46, -0.58], r: [-0.16, -0.60, -0.30] },
+      { t: 0.10, p: [0.37, -0.40, -0.56], r: [-0.04, -0.72, -0.24], ease: 'inout' },
       { t: 0.27, p: [0.44, -0.23, -0.60], r: [0.44, -1.06, -0.34], ease: 'out' },
       { t: 0.39, p: [0.17, -0.21, -0.82], r: [-0.72, 0.16, 0.86], ease: 'out' },
       { t: 0.50, p: [-0.16, -0.40, -0.70], r: [-1.05, 0.52, 1.72], ease: 'out' },
       { t: 0.63, p: [0.00, -0.47, -0.64], r: [-0.78, 0.34, 1.28], ease: 'inout' },
-      { t: 0.80, p: [0.22, -0.46, -0.58], r: [-0.44, -0.14, 0.64], ease: 'inout' },
-      { t: 0.92, p: [0.33, -0.40, -0.60], r: [-0.28, -0.48, 0.34], ease: 'inout' }
+      { t: 0.80, p: [0.24, -0.47, -0.58], r: [-0.26, -0.38, 0.06], ease: 'inout' },
+      { t: 0.92, p: [0.25, -0.46, -0.58], r: [-0.16, -0.60, -0.30], ease: 'inout' }
     ]
   },
   knight: {
@@ -306,16 +310,16 @@ const CURVES = {
     ]
   },
   blademaster: {
-    idle: { p: [0.30, -0.44, -0.62], r: [-0.20, -0.55, 0.55] },
+    idle: { p: [0.24, -0.46, -0.58], r: [-0.12, -0.62, -0.26] },
     dur: 0.80,
     keys: [
-      { t: 0.00, p: [0.30, -0.44, -0.62], r: [-0.20, -0.55, 0.55] },
-      { t: 0.07, p: [0.35, -0.40, -0.58], r: [0.10, -0.82, 0.30], ease: 'inout' },
-      { t: 0.21, p: [0.41, -0.22, -0.64], r: [0.46, -1.12, -0.30], ease: 'out' },
+      { t: 0.00, p: [0.24, -0.46, -0.58], r: [-0.12, -0.62, -0.26] },
+      { t: 0.07, p: [0.28, -0.40, -0.58], r: [0.10, -0.82, 0.10], ease: 'inout' },
+      { t: 0.21, p: [0.34, -0.22, -0.64], r: [0.46, -1.06, -0.22], ease: 'out' },
       { t: 0.31, p: [0.05, -0.35, -0.86], r: [-0.72, 0.28, 1.30], ease: 'out' },
       { t: 0.41, p: [-0.17, -0.52, -0.70], r: [-1.06, 0.72, 2.12], ease: 'out' },
       { t: 0.56, p: [0.10, -0.52, -0.62], r: [-0.64, 0.10, 1.10], ease: 'inout' },
-      { t: 0.80, p: [0.30, -0.44, -0.62], r: [-0.20, -0.55, 0.55], ease: 'inout' }
+      { t: 0.80, p: [0.24, -0.46, -0.58], r: [-0.12, -0.62, -0.26], ease: 'inout' }
     ]
   },
   wizard: {
@@ -341,11 +345,11 @@ CURVES.elite = (() => {
 
 /* 막기 자세 — 무기를 화면 대각선으로 세워 상체 앞을 가린다 (병사·검객은 검날이 얼굴을 가로지름) */
 const GUARD = {
-  soldier: { p: [0.10, -0.40, -0.62], r: [-0.30, 0.72, 0.30] },
-  elite: { p: [0.04, -0.34, -0.58], r: [-0.26, 0.66, 0.24] },
-  blademaster: { p: [0.12, -0.38, -0.60], r: [-0.22, 0.80, 0.42] },
-  knight: { p: [0.00, -0.40, -0.62], r: [-0.12, 0.52, -0.48] },
-  wizard: { p: [-0.16, -0.44, -0.56], r: [0.12, -0.26, -0.16] }
+  soldier: { p: [0.27, -0.42, -0.60], r: [-0.26, 0.58, 0.34] },
+  elite: { p: [0.24, -0.38, -0.58], r: [-0.22, 0.52, 0.30] },
+  blademaster: { p: [0.30, -0.40, -0.58], r: [-0.18, 0.64, 0.46] },
+  knight: { p: [0.16, -0.44, -0.62], r: [-0.10, 0.44, -0.42] },
+  wizard: { p: [-0.06, -0.46, -0.56], r: [0.10, -0.20, -0.14] }
 };
 
 /* 오른손(마법사는 손바닥) 키프레임 */
@@ -371,13 +375,17 @@ function sample(keys, t, outP, outR) {
   }
 }
 
+/* 세로 화면(390×844)에서 무기가 프레임 밖으로 밀려나지 않도록 하는 화면 프레이밍 계수 */
+const FRAMING_X = 0.80;
+const FRAMING_Y = 0.94;
+
 export class ViewModel {
   constructor(renderer, mainScene, camera) {
     this.renderer = renderer;
     this.mainScene = mainScene;
     this.camera = camera;
     this.scene = new THREE.Scene();
-    this.cam = new THREE.PerspectiveCamera(58, 1, 0.01, 12);
+    this.cam = new THREE.PerspectiveCamera(66, 1, 0.01, 12);
     this.cam.position.set(0, 0, 0);
 
     this.scene.environment = mainScene.environment;
@@ -395,7 +403,7 @@ export class ViewModel {
     this.root = new THREE.Group();
     this.scene.add(this.root);
     this.inner = new THREE.Group();
-    this.inner.scale.setScalar(0.48);
+    this.inner.scale.setScalar(0.525);
     this.root.add(this.inner);
     this.className = 'soldier';
     this.models = {
@@ -443,7 +451,7 @@ export class ViewModel {
     this.guardK = 0;
     this.swapT = 0;
     const cur = CURVES[cls] || CURVES.soldier;
-    this.root.position.set(cur.idle.p[0], cur.idle.p[1], cur.idle.p[2]);
+    this.root.position.set(cur.idle.p[0] * FRAMING_X, cur.idle.p[1] * FRAMING_Y, cur.idle.p[2]);
     this.root.rotation.set(cur.idle.r[0], cur.idle.r[1], cur.idle.r[2]);
     if (cls === 'wizard') {
       this.palm.position.set(0.30, -0.44, -0.52);
@@ -473,15 +481,16 @@ export class ViewModel {
     // 대기 흔들림 + 이동 흔들림
     const mv = player ? (player.moveAmt || 0) : 0;
     const ph = (player && player.walkPhase) || this.time * 1.5;
-    const sway = Math.sin(this.time * 0.9) * 0.006 + Math.sin(this.time * 1.7) * 0.003;
+    const sway = Math.sin(this.time * 0.9) * 0.007 + Math.sin(this.time * 1.7) * 0.0035;
+    const breatheY = Math.sin(this.time * 1.35) * 0.004;
     const walkX = Math.sin(ph) * 0.016 * mv;
     const walkY = Math.abs(Math.cos(ph)) * 0.018 * mv;
     this.bob = lerp(this.bob, walkY, Math.min(1, dt * 8));
 
     this.root.position.set(
-      p[0] + sway + walkX,
-      p[1] - this.bob,
-      p[2] - 0.34
+      p[0] * FRAMING_X + sway + walkX,
+      p[1] * FRAMING_Y - this.bob + breatheY,
+      p[2] - 0.30
     );
     this.root.rotation.set(
       r[0] + Math.sin(this.time * 1.1) * 0.006 + walkY * 0.6,
@@ -495,6 +504,24 @@ export class ViewModel {
     // 클래스 교체 시 살짝 아래에서 올라온다
     this.root.position.y -= (1 - swap) * 0.34;
     this.root.position.z -= (1 - swap) * 0.2;
+
+    // 손목 관성 — 프레임 사이 각도 변화량을 재서 손목/칼끝이 반 박자 늦게 따라온다
+    if (atk >= 0 && atk < cur.dur) {
+      sample(cur.keys, Math.max(0, atk - 0.03), this._p2, this._r2);
+      const drx = (r[0] - this._r2[0]), drz = (r[2] - this._r2[2]);
+      this.root.rotation.x += clamp(drx * 1.6, -0.16, 0.16);
+      this.root.rotation.z += clamp(drz * 1.4, -0.18, 0.18);
+      this.root.position.y += clamp((p[1] - this._p2[1]) * 0.35, -0.02, 0.02);
+      const gl = this.models[this.className] && this.models[this.className].userData.gleam;
+      if (gl) {
+        const imp = impactAt(this.className);
+        const k = Math.max(0, 1 - Math.abs(atk - imp) / 0.18);
+        gl.material.opacity = 0.25 + k * 0.65;
+      }
+    } else {
+      const gl0 = this.models[this.className] && this.models[this.className].userData.gleam;
+      if (gl0) gl0.material.opacity = 0.3;
+    }
 
     // 타격 순간의 반동 — 무기가 적을 맞고 살짝 밀려 돌아온다
     let recoil = 0;
@@ -523,8 +550,8 @@ export class ViewModel {
     if (gk > 0.001) {
       const gd = GUARD[this.className] || GUARD.soldier;
       const tremble = Math.sin(this.time * 9.5) * 0.004 + Math.sin(this.time * 15.3) * 0.002;
-      this.root.position.x = lerp(this.root.position.x, gd.p[0], gk);
-      this.root.position.y = lerp(this.root.position.y, gd.p[1] + tremble, gk);
+      this.root.position.x = lerp(this.root.position.x, gd.p[0] * FRAMING_X, gk);
+      this.root.position.y = lerp(this.root.position.y, gd.p[1] * FRAMING_Y + tremble, gk);
       this.root.position.z = lerp(this.root.position.z, gd.p[2], gk);
       this.root.rotation.x = lerp(this.root.rotation.x, gd.r[0] + tremble * 2, gk);
       this.root.rotation.y = lerp(this.root.rotation.y, gd.r[1], gk);
@@ -544,7 +571,7 @@ export class ViewModel {
         this.palm.rotation.set(this._r2[0], this._r2[1], this._r2[2]);
         if (t > 1.1) this._castT = -1;
       } else {
-        this.palm.position.set(0.30 + sway * 1.4 + walkX, -0.44 - this.bob + Math.sin(this.time * 1.3) * 0.005, -0.52);
+        this.palm.position.set((0.30 + sway * 1.4 + walkX) * FRAMING_X, -0.44 * FRAMING_Y - this.bob + Math.sin(this.time * 1.3) * 0.005, -0.52);
         this.palm.rotation.set(0.10 + Math.sin(this.time * 1.1) * 0.03, -0.25 + Math.sin(this.time * 0.8) * 0.04, 0);
       }
       const orb = this.palm.userData.orb;
@@ -586,8 +613,10 @@ export class ViewModel {
   }
 
   render(renderer, width, height) {
-    if (this.cam.aspect !== width / height) {
-      this.cam.aspect = width / height;
+    /* 세로 화면에서도 무기가 프레임 밖으로 나가지 않도록 최소 가로 시야를 확보한다 */
+    const aspect = Math.max(width / height, 0.80);
+    if (this.cam.aspect !== aspect) {
+      this.cam.aspect = aspect;
       this.cam.updateProjectionMatrix();
     }
     this.scene.updateMatrixWorld(true);

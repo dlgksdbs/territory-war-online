@@ -12,6 +12,9 @@ import { clamp, lerp, smoothstep, easeOutCubic, easeInCubic, easeOutQuint, seg, 
 import { CLASSES, SKILL } from './config.js';
 import { J, JOINT_COUNT } from './rig.js';
 
+/* 자세 블렌딩용 스크래치 (프레임마다 새 배열을 만들지 않는다) */
+const _prevRot = new Float32Array(JOINT_COUNT * 3);
+const _prevRoot = new Float32Array(3);
 const R = (p, j, x, y, z, w) => {
   const i = j * 3, k = w === undefined ? 1 : w;
   p.rot[i] += x * k; p.rot[i + 1] += y * k; p.rot[i + 2] += z * k;
@@ -128,6 +131,18 @@ const BASE = {
     ROT('footL', -0.04, 0, 0)
   ]
 };
+
+/* 자세 한 덩어리를 w 만큼 부드럽게 섞는다 (가드·돌진처럼 켜고 끄는 자세의 튐 방지) */
+function blendSection(p, w, fn) {
+  if (w <= 0.001) return;
+  _prevRot.set(p.rot);
+  _prevRoot[0] = p.rootAdd[0]; _prevRoot[1] = p.rootAdd[1]; _prevRoot[2] = p.rootAdd[2];
+  fn();
+  if (w >= 0.999) return;
+  const rot = p.rot;
+  for (let i = 0; i < rot.length; i++) rot[i] = _prevRot[i] + (rot[i] - _prevRot[i]) * w;
+  for (let i = 0; i < 3; i++) p.rootAdd[i] = _prevRoot[i] + (p.rootAdd[i] - _prevRoot[i]) * w;
+}
 
 /* 공격 키프레임 — [시간, {관절: [x,y,z], root:[y,z,x회전]} ...] */
 const ATTACK = {
@@ -346,46 +361,55 @@ function applyKeys(p, cls, t) {
    --------------------------------------------------------------------------- */
 function applyLocomotion(p, cls, phase, move, t, u) {
   if (move <= 0.001) return;
-  const heavy = cls === 'knight' ? 0.74 : cls === 'wizard' ? 0.46 : 1;
+  const sev = (u && u.severed) || {};
+  const heavy = cls === 'knight' ? 0.72 : cls === 'wizard' ? 0.44 : 1;
   const amp = clamp(move, 0, 1) * heavy;
   const s = Math.sin(phase), c = Math.cos(phase);
-  const stride = cls === 'knight' ? 0.50 : cls === 'wizard' ? 0.33 : 0.68;
+  const stride = cls === 'knight' ? 0.50 : cls === 'wizard' ? 0.33 : cls === 'blademaster' ? 0.74 : 0.70;
   const thighAmp = stride * amp;
 
-  /* 다리: 앞으로 내딛는 동안 무릎을 접고, 뒤로 밀 때 다리를 편다 */
-  const thR = -s * thighAmp;
-  const thL = s * thighAmp;
-  const swingR = Math.max(0, -c), swingL = Math.max(0, c);
-  const kneeR = (0.14 + swingR * 1.32) * amp + 0.06;
-  const kneeL = (0.14 + swingL * 1.32) * amp + 0.06;
-  R(p, J.thighR, thR, 0, 0);
-  R(p, J.thighL, thL, 0, 0);
-  R(p, J.shinR, kneeR, 0, 0);
-  R(p, J.shinL, kneeL, 0, 0);
-  /* 발목: 차기 순간 발끝이 들리고, 디딤에서 발바닥이 땅에 붙는다 */
-  R(p, J.footR, -thR * 0.55 - kneeR * 0.46 + swingR * 0.34, 0, 0);
-  R(p, J.footL, -thL * 0.55 - kneeL * 0.46 + swingL * 0.34, 0, 0);
+  /* 다리: 앞으로 내딛는 동안 무릎을 접고, 뒤로 밀 때 다리를 편다.
+     · 딛는 발은 발바닥이 지면을 훑고(무릎이 살짝 굽어 충격을 먹는다)
+     · 뒤꿈치가 먼저 닿아 발끝으로 밀어내는 리듬을 넣는다 */
+  const step = (side, ph, rev) => {
+    const sn = Math.sin(ph), cs = Math.cos(ph);
+    const swingW = Math.max(0, -cs);            // 다리를 앞으로 차는 구간
+    const stanceW = Math.max(0, cs);            // 발이 땅을 미는 구간
+    const thigh = -sn * thighAmp;
+    const knee = (0.12 + swingW * 1.28 + stanceW * 0.22) * amp + 0.055;
+    R(p, rev ? J.thighL : J.thighR, thigh, 0, 0);
+    R(p, rev ? J.shinL : J.shinR, knee, 0, 0);
+    /* 발목: 차는 동안 발끝이 들리고, 디딤에서는 뒤꿈치→발끝 순으로 구른다 */
+    R(p, rev ? J.footL : J.footR,
+      -thigh * 0.52 - knee * 0.62 + swingW * (0.42 + 0.10 * sn) - stanceW * 0.10, 0, 0);
+  };
+  if (!sev.legR) step('R', phase, false);
+  if (!sev.legL) step('L', phase + Math.PI, true);
 
   /* 골반: 좌우 흔들림(롤) · 걸음마다 돌아가는 요 · 위아래 반동(2배 주기) */
-  const bob = Math.abs(s) * (cls === 'knight' ? 0.06 : 0.038) * amp;
-  p.rootAdd[1] -= bob + 0.008 * amp;
-  R(p, J.pelvis, 0.02 * amp, -s * 0.12 * amp, -s * 0.055 * amp);
+  const bob = Math.abs(s) * (cls === 'knight' ? 0.058 : 0.036) * amp;
+  p.rootAdd[1] -= bob + 0.006 * amp;
+  R(p, J.pelvis, 0.02 * amp, -s * 0.13 * amp, -s * 0.062 * amp);
   /* 허리는 앞으로 기울고(속도 비례), 어깨는 골반과 반대로 비틀려 팔이 따라온다 */
-  const lean = (cls === 'knight' ? 0.10 : cls === 'wizard' ? 0.05 : 0.085) * amp;
-  R(p, J.spine, lean, s * 0.13 * amp, s * 0.03 * amp);
-  R(p, J.chest, 0.02 * amp, s * 0.10 * amp, -s * 0.02 * amp);
-  R(p, J.neck, -lean * 0.55, -s * 0.09 * amp, 0);
+  const lean = (cls === 'knight' ? 0.11 : cls === 'wizard' ? 0.05 : 0.092) * amp;
+  R(p, J.spine, lean, s * 0.145 * amp, s * 0.032 * amp);
+  R(p, J.chest, 0.02 * amp + lean * 0.18, s * 0.11 * amp, -s * 0.022 * amp);
+  R(p, J.neck, -lean * 0.58, -s * 0.10 * amp, 0);
 
   /* 팔: 무기 팔은 무게 때문에 작게, 반대 팔은 크게 흔들린다 · 팔꿈치가 늦게 따라온다 */
-  const armSwing = (cls === 'knight' ? 0.13 : cls === 'wizard' ? 0.09 : 0.30) * amp;
+  const armSwing = (cls === 'knight' ? 0.12 : cls === 'wizard' ? 0.09 : 0.31) * amp;
   R(p, J.shR, s * 0.05 * amp, 0, 0);
-  R(p, J.shL, -s * 0.07 * amp, 0, 0);
-  R(p, J.armR, s * armSwing * 0.62, 0, s * 0.03 * amp);
-  R(p, J.armL, -s * armSwing, 0, -s * 0.03 * amp);
-  R(p, J.elbR, Math.max(0, s) * 0.30 * amp + 0.06 * amp, 0, 0);
-  R(p, J.elbL, Math.max(0, -s) * 0.34 * amp + 0.06 * amp, 0, 0);
-  R(p, J.handR, -s * 0.10 * amp, 0, 0);
-  R(p, J.handL, s * 0.06 * amp, 0, 0);
+  R(p, J.shL, -s * 0.075 * amp, 0, 0);
+  if (!sev.armR) {
+    R(p, J.armR, s * armSwing * 0.62, 0, s * 0.03 * amp);
+    R(p, J.elbR, Math.max(0, s) * 0.30 * amp + 0.06 * amp, 0, 0);
+    R(p, J.handR, -s * 0.11 * amp, 0, 0);
+  }
+  if (!sev.armL) {
+    R(p, J.armL, -s * armSwing, 0, -s * 0.03 * amp);
+    R(p, J.elbL, Math.max(0, -s) * 0.34 * amp + 0.06 * amp, 0, 0);
+    R(p, J.handL, s * 0.06 * amp, 0, 0);
+  }
   /* 머리는 흔들림을 상쇄해 시선을 고정 */
   R(p, J.head, -bob * 0.7 - lean * 0.4, s * 0.05 * amp, 0);
 }
@@ -394,69 +418,81 @@ function applyLocomotion(p, cls, phase, move, t, u) {
    사망 모션 — 무릎 꿇고 쓰러진다 / 🩸 목이 베이면 잠시 서 있다가 머리 없이 쓰러진다
    --------------------------------------------------------------------------- */
 const KNEEL_T = 0.62, FALL_T = 0.40;
-export function applyDeath(p, cls, t, kind) {
+export function applyDeath(p, cls, t, kind, dir) {
   if (kind === 'behead') { applyBehead(p, cls, t); return; }
   if (kind === 'bleed') { applyBleed(p, cls, t); return; }
   // t: 사망 후 경과 시간(초)
-  const heavy = cls === 'knight' ? 1.15 : cls === 'wizard' ? 0.92 : 1;
-  const hitP = smoothstep(seg(t, 0, 0.16));
-  const kneelP = smoothstep(seg(t, 0.14, 0.20 + KNEEL_T * heavy));
+  const heavy = cls === 'knight' ? 1.16 : cls === 'wizard' ? 0.92 : 1;
+  const side = (dir || 0) >= 0 ? 1 : -1;
+  const hitP = smoothstep(seg(t, 0, 0.15));
+  /* 무릎이 먼저 풀리고(0.10~0.16) 체중이 앞으로 실리며 천천히 꿇는다 */
+  const kneeDrop = smoothstep(seg(t, 0.10, 0.26));
+  const kneelP = smoothstep(seg(t, 0.16, 0.20 + KNEEL_T * heavy));
   const fallP = easeInCubic(seg(t, 0.20 + KNEEL_T * heavy, 0.20 + KNEEL_T * heavy + FALL_T));
-  const settleP = smoothstep(seg(t, 0.20 + KNEEL_T * heavy + FALL_T * 0.6, 0.20 + KNEEL_T * heavy + FALL_T + 0.5));
+  const settleP = smoothstep(seg(t, 0.20 + KNEEL_T * heavy + FALL_T * 0.6, 0.20 + KNEEL_T * heavy + FALL_T + 0.55));
 
-  // 1) 맞은 순간 젖혀짐
-  const hk = hitP * (1 - kneelP * 0.6);
-  R(p, J.spine, -0.34 * hk, 0.12 * hk, 0);
-  R(p, J.chest, -0.16 * hk, 0.08 * hk, 0);
-  R(p, J.head, -0.40 * hk, -0.10 * hk, 0.06 * hk);
-  R(p, J.armR, -0.45 * hk, 0, 0.5 * hk);
-  R(p, J.armL, -0.55 * hk, 0, -0.55 * hk);
-  R(p, J.elbR, -0.5 * hk, 0, 0);
-  R(p, J.elbL, -0.6 * hk, 0, 0);
-  p.rootAdd[0] -= 0.10 * hk;
+  // 1) 맞은 순간 젖혀짐 — 어깨가 먼저 돌고 머리가 늦게 따라온다
+  const hk = hitP * (1 - kneelP * 0.55);
+  R(p, J.spine, -0.30 * hk, 0.13 * hk, 0.04 * hk);
+  R(p, J.chest, -0.16 * hk, 0.09 * hk, 0.02 * hk);
+  R(p, J.neck, -0.12 * hk, 0, 0);
+  R(p, J.head, -0.34 * hk, -0.12 * hk, 0.07 * hk);
+  R(p, J.armR, -0.40 * hk, 0, 0.46 * hk);
+  R(p, J.armL, -0.52 * hk, 0, -0.52 * hk);
+  R(p, J.elbR, -0.46 * hk, 0, 0);
+  R(p, J.elbL, -0.58 * hk, 0, 0);
+  p.rootAdd[0] -= 0.09 * hk;
+  p.rootAdd[2] -= 0.05 * hk;
 
-  // 2) 무릎 꿇기
-  const kk = kneelP * (1 - fallP);
-  const drop = 0.50 * kneelP;
+  // 2) 무릎 풀림 → 꿇기 (골반이 뒤로 빠지고 상체는 앞으로)
+  const drop = 0.52 * kneelP;
   p.rootAdd[0] -= drop;
-  R(p, J.thighR, -1.20 * kk, 0, 0.10 * kk);
-  R(p, J.thighL, -1.10 * kk, 0, -0.10 * kk);
-  R(p, J.shinR, 2.05 * kk, 0, 0);
-  R(p, J.shinL, 1.95 * kk, 0, 0);
-  R(p, J.footR, -0.55 * kk, 0, 0);
-  R(p, J.footL, -0.50 * kk, 0, 0);
-  R(p, J.pelvis, 0.20 * kk, 0, 0);
-  R(p, J.spine, 0.52 * kk, -0.10 * kk, 0.05 * kk);
-  R(p, J.chest, 0.26 * kk, -0.06 * kk, 0);
-  R(p, J.neck, 0.16 * kk, 0, 0);
-  R(p, J.head, 0.30 * kk, 0.08 * kk, 0.08 * kk);
-  // 팔은 무기력을 잃고 아래로
-  R(p, J.armR, 0.30 * kk, 0, -0.10 * kk);
-  R(p, J.elbR, 0.42 * kk, 0, 0);
-  R(p, J.handR, 0.55 * kk, 0, -0.3 * kk);
-  R(p, J.armL, 0.25 * kk, 0, 0.10 * kk);
-  R(p, J.elbL, 0.35 * kk, 0, 0);
+  R(p, J.pelvis, 0.24 * kneelP, side * 0.05 * kneelP, side * 0.03 * kneelP);
+  R(p, J.thighR, -1.22 * kneelP, 0, 0.10 * kneelP);
+  R(p, J.thighL, -1.10 * kneelP, 0, -0.10 * kneelP);
+  R(p, J.shinR, 2.08 * kneelP, 0, 0);
+  R(p, J.shinL, 1.96 * kneelP, 0, 0);
+  R(p, J.footR, -0.58 * kneelP, 0, 0);
+  R(p, J.footL, -0.52 * kneelP, 0, 0);
+  R(p, J.spine, 0.50 * kneelP + 0.10 * kneeDrop, -0.10 * kneelP, 0.05 * kneelP);
+  R(p, J.chest, 0.24 * kneelP, -0.06 * kneelP, 0);
+  R(p, J.neck, 0.18 * kneelP, 0, 0);
+  R(p, J.head, 0.26 * kneelP, 0.08 * kneelP, 0.08 * kneelP * side);
+  // 팔은 무기력을 잃고 아래로 — 검을 쥔 팔이 먼저 떨어진다
+  R(p, J.shR, 0.12 * kneelP, 0, -0.05 * kneelP);
+  R(p, J.armR, 0.34 * kneelP, 0, -0.12 * kneelP);
+  R(p, J.elbR, 0.46 * kneelP, 0, 0);
+  R(p, J.handR, 0.58 * kneelP, 0, -0.30 * kneelP);
+  R(p, J.shL, 0.06 * kneelP, 0, 0.05 * kneelP);
+  R(p, J.armL, 0.22 * kneelP, 0, 0.14 * kneelP);
+  R(p, J.elbL, 0.30 * kneelP, 0, 0);
   // 바닥에 닿는 순간의 작은 반동
-  const bounce = Math.sin(clamp((t - 0.14 - KNEEL_T * heavy * 0.75) * 9, 0, Math.PI)) * 0.022 * kneelP;
+  const bounce = Math.sin(clamp((t - 0.14 - KNEEL_T * heavy * 0.75) * 9, 0, Math.PI)) * 0.024 * kneelP;
   p.rootAdd[0] += bounce;
 
-  // 3) 앞으로 쓰러짐 (발목을 축으로 몸 전체 피치)
-  p.rot[0] += fallP * 1.36;                 // root X 회전
-  p.rootAdd[0] -= fallP * 0.09;
-  R(p, J.spine, 0.25 * fallP, 0, 0);
-  R(p, J.head, 0.20 * fallP, 0.10 * fallP, 0);
-  R(p, J.armR, -0.25 * fallP, 0, -0.55 * fallP);
-  R(p, J.armL, -0.20 * fallP, 0, 0.55 * fallP);
-  R(p, J.elbR, -0.40 * fallP, 0, 0);
-  R(p, J.elbL, -0.35 * fallP, 0, 0);
-  R(p, J.thighR, 0.20 * fallP, 0, 0);
-  R(p, J.thighL, 0.16 * fallP, 0, 0);
+  // 3) 앞으로 고꾸라짐 (발목을 축으로 몸 전체 피치) — 맞은 쪽으로 살짝 비틀어진다
+  p.rot[0] += fallP * 1.34;
+  p.rot[2] += fallP * 0.10 * side;
+  p.rootAdd[0] -= fallP * 0.10;
+  R(p, J.spine, 0.26 * fallP, 0, -0.06 * fallP * side);
+  R(p, J.head, 0.18 * fallP, 0.10 * fallP, 0.04 * fallP);
+  // 쓰러지며 팔이 앞으로 뻗어 바닥을 짚으려 한다
+  R(p, J.armR, -0.30 * fallP, 0, -0.52 * fallP);
+  R(p, J.armL, -0.26 * fallP, 0, 0.52 * fallP);
+  R(p, J.elbR, -0.44 * fallP, 0, 0);
+  R(p, J.elbL, -0.38 * fallP, 0, 0);
+  R(p, J.thighR, 0.22 * fallP, 0, 0);
+  R(p, J.thighL, 0.18 * fallP, 0, 0);
 
-  // 4) 정지 후 미세한 안착
-  const sk = settleP * (1 - fallP * 0.4);
+  // 4) 안착 — 몸이 살짝 가라앉고 어깨가 풀린다
+  const sk = settleP * (1 - fallP * 0.35);
   p.rot[1] += 0.06 * sk;
-  p.rootAdd[0] -= 0.02 * sk;
-  p.rootAdd[2] += 0.06 * sk;
+  p.rot[2] += 0.03 * sk * side;
+  p.rootAdd[0] -= 0.022 * sk;
+  p.rootAdd[2] += 0.055 * sk;
+  R(p, J.armR, 0.10 * sk, 0, 0);
+  R(p, J.armL, 0.08 * sk, 0, 0);
+  R(p, J.head, 0.06 * sk, 0, 0);
 }
 
 /* 🩸 양팔·양다리를 잃은 사망 — 무릎을 꿇고 발악하다 과다출혈로 고꾸라진다 */
@@ -593,8 +629,11 @@ export function computePose(u, t, dt) {
   }
 
   // 피격 경직 — 맞은 방향으로 젖혀지고 무릎이 꿇리는 반동
+  //  (맞은 프레임에 k 가 0.78 로 튀던 것을 sin 충격 곡선으로 바꿔 '툭' 끊기는 느낌을 없앤다)
   if (u.staggerT > 0) {
-    const k = smoothstep(Math.min(1, u.staggerT / 0.28));
+    const smax = Math.max(0.12, u.staggerMax || 0.28);
+    const e = clamp(1 - u.staggerT / smax, 0, 1);
+    const k = Math.pow(Math.sin(Math.PI * Math.min(1, e * 1.04)), 0.66);
     const side = u.staggerSide || 1;
     R(p, J.spine, 0.30 * k, side * 0.22 * k, 0);
     R(p, J.chest, 0.14 * k, side * 0.07 * k, 0);
@@ -614,7 +653,10 @@ export function computePose(u, t, dt) {
   if (u.lookYaw) R(p, J.head, 0, clamp(u.lookYaw, -0.6, 0.6) * 0.55, 0);
 
   // 🛡️ 막기 자세 — 상체를 살짝 숙이고 두 발을 벌려 버티며 무기를 대각선으로 세운다
-  if (u.guard) {
+  //  (AI 가 막기를 켜고 끌 때 자세가 순간이동하지 않도록 0.1초 동안 섞는다)
+  const guardTarget = u.guard && !u.dead ? 1 : 0;
+  u._guardK = u._guardK === undefined ? guardTarget : u._guardK + (guardTarget - u._guardK) * Math.min(1, dt * 15);
+  if (u._guardK > 0.002) blendSection(p, u._guardK, () => {
     // 공통: 무게중심을 낮추고 두 발을 앞뒤로 벌린 안정된 자세
     R(p, J.thighR, -0.30, 0, 0.16);
     R(p, J.shinR, 0.54, 0, 0);
@@ -668,12 +710,14 @@ export function computePose(u, t, dt) {
       R(p, J.armR, -0.95, -0.20, -0.30);
       R(p, J.elbR, -1.15, 0, 0);
     }
-  }
+  });
 
   // 🌸 매화 일섬 돌진 자세
   if (u.dashT !== undefined && u.dashT >= 0) {
     const k = clamp(u.dashT / SKILL.dashTime, 0, 1);
     const lunge = Math.sin(Math.min(1, k * 1.3) * Math.PI);
+    const wDash = smoothstep(clamp(u.dashT / 0.07, 0, 1)) * smoothstep(clamp((SKILL.dashTime - u.dashT) / 0.09, 0, 1));
+    if (wDash > 0.002) blendSection(p, wDash, () => {
     R(p, J.spine, 0.55 + 0.2 * lunge, -0.75, 0.10);
     R(p, J.chest, 0.15, -0.45, 0.05);
     R(p, J.head, -0.15, 0.45, 0);
@@ -687,6 +731,7 @@ export function computePose(u, t, dt) {
     R(p, J.thighL, 0.55, 0, -0.12);
     R(p, J.shinL, 0.95, 0, 0);
     p.rootAdd[0] -= 0.12 * lunge;
+    });
   }
 
   // 🩸 한쪽 팔을 잃은 전용 자세 — 어깨를 말고 몸을 비틀어 균형을 잡는다
@@ -705,26 +750,42 @@ export function computePose(u, t, dt) {
   if (u.legsLost === 1) {
     const lostR = !!u.severed.legR;
     const ph = u.walkPhase || 0;
-    const bob = Math.abs(Math.sin(ph * 0.5)) * clamp(move, 0, 1);
-    const sway = Math.sin(ph * 0.5) * clamp(move, 0, 1);
+    const hopPh = ph * 0.62;
+    const hop = Math.max(0, Math.sin(hopPh));          // 떠오르는 구간
+    const land = Math.max(0, -Math.sin(hopPh));        // 착지 압축
+    const bob = hop * clamp(move, 0, 1);
+    const sway = Math.sin(hopPh) * clamp(move, 0, 1);
     R(p, J.pelvis, 0.10 * move, sway * 0.10, (lostR ? -0.26 : 0.26) * move);
     R(p, J.spine, 0.10 * move, -sway * 0.12, (lostR ? 0.16 : -0.16) * move);
     R(p, J.chest, 0.03 * move, 0, (lostR ? 0.10 : -0.10) * move);
     R(p, J.neck, -0.06 * move, 0, 0);
     R(p, J.head, -0.05 * move - bob * 0.06, sway * 0.10, (lostR ? -0.10 : 0.10) * move);
-    // 남은 다리를 크게 접었다 편다
-    R(p, lostR ? J.thighL : J.thighR, -0.80 * bob, 0, 0);
-    R(p, lostR ? J.shinL : J.shinR, 1.15 * bob, 0, 0);
-    R(p, lostR ? J.footL : J.footR, -0.40 * bob, 0, 0);
+    // 남은 다리를 크게 접었다 편다 + 착지할 때 무릎이 충격을 먹는다
+    R(p, lostR ? J.thighL : J.thighR, -0.86 * bob + 0.10 * land, 0, 0);
+    R(p, lostR ? J.shinL : J.shinR, 1.20 * bob + 0.34 * land, 0, 0);
+    R(p, lostR ? J.footL : J.footR, -0.42 * bob - 0.18 * land, 0, 0);
     // 잘린 쪽 어깨·몸이 그쪽으로 흘러내린다
-    p.rootAdd[0] += bob * 0.11 - 0.13;
+    p.rootAdd[0] += bob * 0.12 - 0.13 + land * 0.05;
     p.rootAdd[2] += (lostR ? 0.02 : -0.02) * move;
   }
 
   // 사망
   if (u.dead) {
     const kind = u.behead ? 'behead' : (u.deathKind === 'bleed' ? 'bleed' : null);
-    applyDeath(p, cls, u.deadT || 0, kind);
+    applyDeath(p, cls, u.deadT || 0, kind, u.staggerSide || 1);
+    // 죽는 순간 휘두르던 팔 자세를 0.2초 동안 겹쳐 준다 (팔이 순간이동하던 문제)
+    if (u._atkFreeze !== undefined && u._atkFreeze >= 0 && (u.deadT || 0) < 0.22) {
+      const w = 1 - clamp((u.deadT || 0) / 0.20, 0, 1);
+      const def = ATTACK[cls] || ATTACK.soldier;
+      blendSection(p, w, () => applyKeys(p, cls, Math.min(def.dur, u._atkFreeze)));
+    }
+  } else if (u.freezeT > 0) {
+    /* 얼어붙은 동안의 미세한 떨림 (움직임은 battle 에서 멈춘다) */
+    const fk = clamp(u.freezeT / 0.3, 0, 1);
+    const shiver = Math.sin(t * 31 + ph) * 0.014 * fk;
+    R(p, J.spine, shiver, 0, shiver * 0.7);
+    R(p, J.chest, shiver * 0.7, 0, 0);
+    R(p, J.head, shiver * 0.9, 0, 0);
   }
 
   // 루트 위치·회전

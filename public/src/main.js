@@ -281,6 +281,8 @@ class App {
     atkBtn.addEventListener('pointerup', releaseAtk);
     atkBtn.addEventListener('pointercancel', releaseAtk);
     atkBtn.addEventListener('pointerleave', releaseAtk);
+    window.addEventListener('pointerup', releaseAtk, true);
+    window.addEventListener('pointercancel', releaseAtk, true);
     $$('.spell-btn').forEach((b) => {
       b.addEventListener('pointerdown', (e) => {
         e.preventDefault();
@@ -303,6 +305,8 @@ class App {
       guardBtn.addEventListener('pointerup', release);
       guardBtn.addEventListener('pointercancel', release);
       guardBtn.addEventListener('pointerleave', release);
+      window.addEventListener('pointerup', release, true);
+      window.addEventListener('pointercancel', release, true);
     }
     this._bindJoystick();
     this._bindLook();
@@ -363,6 +367,10 @@ class App {
     };
     joy.addEventListener('pointerup', end);
     joy.addEventListener('pointercancel', end);
+    joy.addEventListener('lostpointercapture', end);
+    /* 🖐️ 이벤트를 놓쳐도(다른 손가락이 먼저 올라감·화면 밖) 이동이 멈춘 채 굳지 않게 */
+    window.addEventListener('pointerup', (e) => { if (id !== null && e.pointerId === id) end(e); }, true);
+    window.addEventListener('pointercancel', (e) => { if (id !== null && e.pointerId === id) end(e); }, true);
   }
 
   _bindLook() {
@@ -455,7 +463,7 @@ class App {
       buckets[u.cls].push(u);
     }
     this.unitRenderer = new UnitRenderer(this.scene, {
-      shadowUnits: this.quality !== 'low' && this.battle.units.length <= 160,
+      shadowUnits: this.quality !== 'low' && this.battle.units.length <= 420,
       // 전장이 클수록 상세 모델 예산을 줄여 프레임을 지킨다 (실루엣이 나머지를 채운다)
       detailCap: this.battle.units.length > 1600 ? 70 : this.battle.units.length > 800 ? 100 : 140
     });
@@ -799,7 +807,7 @@ class App {
       const eye = spec.viewEye;
       // 화면 흔들림 없음 — 걸음 헤드밥·호흡·공격/피격 반동·화면 흔들림·시선 롤을 모두 제거했다.
       // 카메라는 눈높이에 정확히 고정되고, 시점만 드래그한 그대로 유지된다.
-      this.cam.position.set(p.x, p.dead ? 0.5 : eye, p.z);
+      this.cam.position.set(p.x, p.dead ? 0.92 : eye, p.z);
       this.camYaw = p.yaw + Math.PI;
       this.cam.rotation.set(this.camPitch, this.camYaw, 0, 'YXZ');
       this.cam.fov = 62;
@@ -930,6 +938,19 @@ class App {
 
     this.updateCamera(dt);
     const camPos = this.cam.position;
+
+    /* 1인칭 — 코앞(2.1m)까지 파고든 아군은 화면을 가리므로 잠시 숨긴다 (관전·디버그에서는 그대로) */
+    if (this.camMode === 'fp' && !this.debugCam && p && !p.dead) {
+      for (let i = 0; i < units.length; i++) {
+        const u = units[i];
+        if (u.isPlayer || u.team !== p.team) continue;
+        const ddx = u.x - camPos.x, ddz = u.z - camPos.z;
+        const d2 = ddx * ddx + ddz * ddz;
+        const near = u._hidByCam ? d2 < 3.4 * 3.4 : d2 < 2.9 * 2.9;
+        if (near && !u._hidByCam) { u.hideModel = true; u._hidByCam = true; }
+        else if (!near && u._hidByCam) { u.hideModel = false; u._hidByCam = false; }
+      }
+    }
 
     // 렌더러
     if (this.unitRenderer) this.unitRenderer.update(units, camPos, this.time, dt);
@@ -1469,7 +1490,7 @@ window.BA = {
         for (let k = 0; k < b.units.length; k++) computePose(b.units[k], app.time + i / 60, 1 / 60);
         // 실제 루프와 같은 순서로 이벤트·카메라를 처리한다 (증원·히트마커·관전도 검증 가능)
         const evs = b.drain();
-        if (app.fx) app.fx.handle(evs, b);
+        if (app.fx) { app.fx.handle(evs, b); app.fx.update(1 / 60, b, app.cam); }
         for (const e of evs) app._onEvent(e);
         if (app.cam) app.updateCamera(1 / 60);
         if (b.over) break;

@@ -151,6 +151,15 @@ class Trail {
   constructor(scene, color, n) {
     this.n = n || 12;
     this.samples = [];
+    /* 샘플을 미리 잡아 둔 버퍼에 복사한다 (프레임마다 clone → GC 스파이크 방지) */
+    this.sx = new Float32Array(this.n + 2);
+    this.sy = new Float32Array(this.n + 2);
+    this.sz = new Float32Array(this.n + 2);
+    this.ex = new Float32Array(this.n + 2);
+    this.ey = new Float32Array(this.n + 2);
+    this.ez = new Float32Array(this.n + 2);
+    this.sage = new Float32Array(this.n + 2);
+    this.count = 0;
     this.color = new THREE.Color(color);
     const cap = this.n * 2;
     this.pos = new Float32Array(cap * 3);
@@ -183,32 +192,42 @@ class Trail {
     this.active = false;
   }
   push(base, tip, dt, k) {
-    this.samples.unshift({ b: base.clone(), t: tip.clone(), age: 0 });
-    if (this.samples.length > this.n) this.samples.pop();
+    const cap = this.n + 1;
+    const last = Math.min(this.count, cap - 1);
+    for (let i = last; i > 0; i--) {
+      this.sx[i] = this.sx[i - 1]; this.sy[i] = this.sy[i - 1]; this.sz[i] = this.sz[i - 1];
+      this.ex[i] = this.ex[i - 1]; this.ey[i] = this.ey[i - 1]; this.ez[i] = this.ez[i - 1];
+      this.sage[i] = this.sage[i - 1];
+    }
+    this.sx[0] = base.x; this.sy[0] = base.y; this.sz[0] = base.z;
+    this.ex[0] = tip.x; this.ey[0] = tip.y; this.ez[0] = tip.z;
+    this.sage[0] = 0;
+    this.count = Math.min(this.count + 1, cap);
     this.active = true;
     this.k = k === undefined ? 1 : k;
   }
   update(dt) {
-    if (!this.samples.length) { this.mesh.visible = false; return; }
-    for (const s of this.samples) s.age += dt;
-    // 수명 지난 샘플 제거
-    while (this.samples.length && this.samples[this.samples.length - 1].age > 0.22) this.samples.pop();
-    if (this.samples.length < 2) { this.samples.length = 0; this.mesh.visible = false; return; }
-    const n = this.samples.length;
+    if (!this.count) { this.mesh.visible = false; return; }
+    for (let i = 0; i < this.count; i++) this.sage[i] += dt;
+    while (this.count > 0 && this.sage[this.count - 1] > 0.22) this.count--;
+    if (this.count < 2) { this.count = 0; this.mesh.visible = false; return; }
+    const n = this.count;
     for (let i = 0; i < this.n; i++) {
-      const s = this.samples[Math.min(i, n - 1)];
-      const a = i < n ? Math.pow(1 - s.age / 0.22, 1.5) * (this.k || 1) : 0;
+      const j = Math.min(i, n - 1);
+      const tGrad = i / Math.max(1, this.n - 1);
+      const a = Math.pow(1 - this.sage[j] / 0.22, 1.5) * (this.k || 1);
       const i6 = i * 6;
-      this.pos[i6] = s.b.x; this.pos[i6 + 1] = s.b.y; this.pos[i6 + 2] = s.b.z;
-      this.pos[i6 + 3] = s.t.x; this.pos[i6 + 4] = s.t.y; this.pos[i6 + 5] = s.t.z;
-      this.alpha[i * 2] = a * 0.15;
-      this.alpha[i * 2 + 1] = a;
+      this.pos[i6] = this.sx[j]; this.pos[i6 + 1] = this.sy[j]; this.pos[i6 + 2] = this.sz[j];
+      this.pos[i6 + 3] = this.ex[j]; this.pos[i6 + 4] = this.ey[j]; this.pos[i6 + 5] = this.ez[j];
+      /* 폭이 끝으로 갈수록 가늘어지고, 안쪽(칼날 끝)은 밝고 바깥은 옅다 */
+      this.alpha[i * 2] = a * (0.10 + 0.10 * tGrad);
+      this.alpha[i * 2 + 1] = a * (0.55 + 0.45 * tGrad);
     }
     this.geo.attributes.position.needsUpdate = true;
     this.geo.attributes.aAlpha.needsUpdate = true;
     this.mesh.visible = true;
   }
-  clear() { this.samples.length = 0; this.mesh.visible = false; }
+  clear() { this.count = 0; this.samples.length = 0; this.mesh.visible = false; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -328,12 +347,28 @@ export class FX {
 
     /* 🩸 절단 파츠 풀 — 잘린 팔·다리·머리가 튀어오른다 (인스턴스 3콜 · 수명 6초) */
     const limbMat = new THREE.MeshStandardMaterial({
-      color: 0x9e7657, roughness: 0.72, metalness: 0.05, envMapIntensity: 0.5
+      color: 0x9e7657, roughness: 0.70, metalness: 0.05, envMapIntensity: 0.5, vertexColors: true
     });
+    const cutFace = (g) => {
+      /* 위쪽(+Y) 끝을 붉은 살점·뼈 색으로 물들인다 — 떨어진 팔다리의 잘린 면 */
+      const pos = g.attributes.position;
+      const col = new Float32Array(pos.count * 3);
+      g.computeBoundingBox();
+      const y1 = g.boundingBox.max.y, y0 = g.boundingBox.min.y;
+      for (let i = 0; i < pos.count; i++) {
+        const t = clamp((pos.getY(i) - y0) / Math.max(0.001, y1 - y0), 0, 1);
+        const k = Math.pow(t, 3.2);
+        col[i * 3] = 0.86 + 0.14 * (1 - k);
+        col[i * 3 + 1] = 0.62 - 0.50 * k;
+        col[i * 3 + 2] = 0.56 - 0.46 * k;
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      return g;
+    };
     const limbGeo = {
-      arm: new THREE.CapsuleGeometry(0.062, 0.28, 3, 8),
-      leg: new THREE.CapsuleGeometry(0.078, 0.34, 3, 8),
-      head: new THREE.SphereGeometry(0.125, 10, 8)
+      arm: cutFace(new THREE.CapsuleGeometry(0.062, 0.28, 3, 8)),
+      leg: cutFace(new THREE.CapsuleGeometry(0.078, 0.34, 3, 8)),
+      head: cutFace(new THREE.SphereGeometry(0.125, 10, 8))
     };
     this.limbPool = {};
     for (const k of ['arm', 'leg', 'head']) {
@@ -348,6 +383,8 @@ export class FX {
     }
     /* 목에서 뿜어지는 피 분수 (머리 베임 — 몸이 서 있는 동안) */
     this.jets = [];
+    /* 🩸 잘린 팔·다리 단면에서 뚝뚝 흘러내리는 피 (2.6초) */
+    this.stumps = [];
     /* 발밑에 고이는 핏물 */
     const poolTex = glowTexture('rgba(150,10,12,0.95)', 'rgba(90,4,6,0.0)');
     this.bloodPools = [];
@@ -356,7 +393,7 @@ export class FX {
         map: poolTex, transparent: true, opacity: 0, depthWrite: false, color: 0x8c0d10
       }));
       m.rotation.x = -Math.PI / 2;
-      m.position.y = 0.028;
+      m.position.y = 0.052;
       m.visible = false;
       m.renderOrder = 2;
       scene.add(m);
@@ -454,7 +491,7 @@ export class FX {
         polygonOffset: true, polygonOffsetFactor: -3, color: 0xffffff, fog: true
       }));
       m.rotation.x = -Math.PI / 2;
-      m.position.y = 0.035;
+      m.position.y = 0.056;
       m.renderOrder = 2;
       m.visible = false;
       scene.add(m);
@@ -470,12 +507,17 @@ export class FX {
   }
 
   buildShadows(units) {
-    if (this.shadowMesh) { this.scene.remove(this.shadowMesh); this.shadowMesh.geometry.dispose(); this.shadowMesh = null; }
+    if (this.shadowMesh) {
+      this.scene.remove(this.shadowMesh);
+      this.shadowMesh.geometry.dispose();
+      if (this.shadowMesh.dispose) this.shadowMesh.dispose();
+      this.shadowMesh = null;
+    }
     if (!units || !units.length) { this.shadowUnits = null; return; }
     const geo = new THREE.PlaneGeometry(1, 1);
     geo.rotateX(-Math.PI / 2);
     const mat = new THREE.MeshBasicMaterial({
-      map: blobTexture(), transparent: true, opacity: 0.55, depthWrite: false,
+      map: blobTexture(), transparent: true, opacity: 0.62, depthWrite: false,
       color: 0x000000, blending: THREE.NormalBlending
     });
     const m = new THREE.InstancedMesh(geo, mat, Math.max(1, units.length));
@@ -961,6 +1003,7 @@ export class FX {
       });
     }
     this.bloodPool(px, pz, kind === 'head' ? 1.15 : 0.8);
+    if (this.stumps.length < 18) this.stumps.push({ unit: e.unit, part, t: 0, life: 2.6, acc: 0, x: px, y: py, z: pz });
     this.flash(px, py, pz, kind === 'head' ? 1.2 : 0.8, 0xff5a5a, 0.10);
     if (kind === 'head') {
       // 목에서 뿜어지는 피 — 몸이 서 있는 동안 계속
@@ -985,7 +1028,7 @@ export class FX {
 
   bloodPool(x, z, r) {
     const p = this.bloodPools[this.bloodPoolIdx++ % this.bloodPools.length];
-    p.m.position.set(x, 0.028 + (this.rng() - 0.5) * 0.004, z);
+    p.m.position.set(x, 0.050 + (this.rng() - 0.5) * 0.004, z);
     p.m.rotation.z = this.rng() * TAU;
     p.m.scale.setScalar(r * 0.6);
     p.m.visible = true;
@@ -1126,30 +1169,48 @@ export class FX {
     g.life = 0; g.max = life || 0.5; g.r = r; g.mode = 'ring';
   }
 
+  /* 부채꼴 충격파 — 메시/지오메트리를 매번 만들면 GPU 메모리가 샌다.
+     반지름 1짜리 원호를 미리 만들어 두고 스케일·회전으로 재사용한다. */
   ringSector(x, z, yaw, r, height, color, life, halfAngle) {
-    // 부채꼴 충격파 — 링을 잘라 쓰지 않고 가는 원호 메시
-    const segs = 24;
-    const geo = new THREE.BufferGeometry();
-    const arr = [];
-    const idx = [];
-    for (let i = 0; i <= segs; i++) {
-      const a = yaw - halfAngle + (i / segs) * halfAngle * 2;
-      const w = (i / segs);
-      arr.push(Math.sin(a) * (r - height), 0.06, Math.cos(a) * (r - height));
-      arr.push(Math.sin(a) * r, 0.06, Math.cos(a) * r);
-      if (i < segs) { const b = i * 2; idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2); }
+    if (!this.sectorPool) {
+      this.sectorPool = [];
+      this.sectorIdx = 0;
+      const segs = 24;
+      const arr = [];
+      const idx = [];
+      for (let i = 0; i <= segs; i++) {
+        const a = -1 + (i / segs) * 2;
+        const inner = 0.72;
+        arr.push(Math.sin(a) * inner, 0.06, Math.cos(a) * inner);
+        arr.push(Math.sin(a), 0.06, Math.cos(a));
+        if (i < segs) { const b = i * 2; idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2); }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      geo.setIndex(idx);
+      for (let i = 0; i < 14; i++) {
+        const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+          color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
+          depthWrite: false, side: THREE.DoubleSide
+        }));
+        m.visible = false;
+        m.renderOrder = 6;
+        this.scene.add(m);
+        this.sectorPool.push({ m, life: 0, max: 1 });
+      }
     }
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
-    geo.setIndex(idx);
-    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending,
-      depthWrite: false, side: THREE.DoubleSide
-    }));
-    m.position.set(x, 0, z);
-    m.visible = true;
-    this.scene.add(m);
+    const item = this.sectorPool[this.sectorIdx++ % this.sectorPool.length];
+    item.m.position.set(x, 0, z);
+    item.m.rotation.set(0, yaw, 0);
+    item.m.scale.set(r, 1, r);
+    item.m.material.color.setHex(color);
+    item.m.material.opacity = 0.7;
+    item.m.visible = true;
+    item.life = 0;
+    item.max = life || 0.5;
+    item.half = halfAngle || 1;
     this.sectorFades = this.sectorFades || [];
-    this.sectorFades.push({ m, life: 0, max: life || 0.5 });
+    this.sectorFades.push(item);
   }
 
   spawnWound(unit, kind, angle) {
@@ -1163,11 +1224,11 @@ export class FX {
     const s = kind === 'crush' ? 0.42 : 0.34;
     const px = (this.rng() - 0.5) * 0.16;
     const py = 0.04 + (this.rng() - 0.5) * 0.22;
-    w.local.compose(
-      new THREE.Vector3(px, py, 0.17),
-      new THREE.Quaternion().setFromEuler(new THREE.Euler((this.rng() - 0.5) * 0.3, 0, (angle || 0) + (this.rng() - 0.5) * 0.5)),
-      new THREE.Vector3(s, s, s)
-    );
+    _wv.set(px, py, 0.17);
+    _we.set((this.rng() - 0.5) * 0.3, 0, (angle || 0) + (this.rng() - 0.5) * 0.5);
+    _wq.setFromEuler(_we);
+    _ws.set(s, s, s);
+    w.local.compose(_wv, _wq, _ws);
     w.mesh.visible = true;
     w.mesh.material.opacity = 1;
   }
@@ -1202,7 +1263,7 @@ export class FX {
           transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false
         }));
         m.rotation.x = -Math.PI / 2;
-        m.position.y = 0.05;
+        m.position.y = 0.058;
         m.visible = false;
         this.scene.add(m);
         this.groundFlashPool.push({ m, life: 0, max: 0.5 });
@@ -1282,14 +1343,17 @@ export class FX {
       g.mesh.scale.setScalar(0.6 + k * g.r * 1.8);
       g.mesh.material.opacity = 0.85 * (1 - k) * (1 - k);
     }
-    if (this.sectorFades) {
-      for (const s of this.sectorFades) {
-        s.life += dt;
-        const k = clamp(s.life / s.max, 0, 1);
-        s.m.material.opacity = 0.7 * (1 - k) * (1 - k);
-        if (s.life > s.max) { s.m.visible = false; }
+    if (this.sectorFades && this.sectorFades.length) {
+      let w2 = 0;
+      for (let i = 0; i < this.sectorFades.length; i++) {
+        const sd = this.sectorFades[i];
+        sd.life += dt;
+        const k = clamp(sd.life / sd.max, 0, 1);
+        sd.m.material.opacity = 0.7 * (1 - k) * (1 - k);
+        if (sd.life > sd.max) sd.m.visible = false;
+        else this.sectorFades[w2++] = sd;
       }
-      this.sectorFades = this.sectorFades.filter((s) => s.life <= s.max + 0.2);
+      this.sectorFades.length = w2;
     }
 
     /* 폭발 구체 */
@@ -1483,6 +1547,33 @@ export class FX {
       mesh.visible = n > 0;
     }
 
+    /* 🩸 절단 단면에서 흘러내리는 피 — 몸이 움직여도 관절을 따라간다 */
+    for (let i = this.stumps.length - 1; i >= 0; i--) {
+      const sp = this.stumps[i];
+      sp.t += dt;
+      const u = sp.unit;
+      if (sp.t > sp.life || (u && u.removed)) { this.stumps.splice(i, 1); continue; }
+      let ox = sp.x, oy = sp.y, oz = sp.z;
+      const jn = sp.part === 'head' ? 'neck' : sp.part;
+      if (u && u.joints && J[jn] !== undefined && (u.dead || u.dslot >= 0)) {
+        this.unitPoint(u, jn, 0, sp.part === 'head' ? 0.05 : -0.06, 0, _v1);
+        ox = _v1.x; oy = _v1.y; oz = _v1.z;
+      }
+      sp.acc += dt;
+      const interval = 0.16;
+      while (sp.acc > interval) {
+        sp.acc -= interval;
+        const fade = 1 - sp.t / sp.life;
+        this.sparks.spawn({
+          x: ox + (this.rng() - 0.5) * 0.12, y: oy, z: oz + (this.rng() - 0.5) * 0.12,
+          vx: (this.rng() - 0.5) * 0.35, vy: 0.15 + this.rng() * 0.25 * fade, vz: (this.rng() - 0.5) * 0.35,
+          life: 0.5 + this.rng() * 0.45, size: 0.035 + this.rng() * 0.045,
+          r: 0.60, g: 0.04, b: 0.05, gravity: -8, drag: 0.4, fade: 1.1
+        });
+      }
+      if (this.rng() < dt * 1.2) this.bloodPool(ox, oz, 0.30 + this.rng() * 0.22);
+    }
+
     /* 목에서 솟는 피 — 머리가 베인 몸이 서 있는 짧은 시간 동안 */
     for (let i = this.jets.length - 1; i >= 0; i--) {
       const j = this.jets[i];
@@ -1544,7 +1635,7 @@ export class FX {
         if (i >= this.shadowUnits.length) break;
         if (u.removed) { this.shadowMesh.setMatrixAt(i++, _hiddenM4); continue; }
         const s = u.radius * (u.dead ? 3.6 : 3.0) * (u.scale || 1);
-        _v1.set(u.x, 0.045, u.z);
+        _v1.set(u.x, 0.055, u.z);
         _q1.setFromEuler(_e1.set(0, 0, 0));
         _v2.set(s, 1, s);
         _m1.compose(_v1, _q1, _v2);
@@ -1605,9 +1696,9 @@ export class FX {
       if (!tr.active && tr.samples.length === 0) {
         tr.mat.uniforms.uColor.value.setHex(u.team === 'enemy' ? 0xff7a6a : 0x8fd8ff);
       }
-      const base = this.unitPoint(u, 'handR', 0, 0, 0.15, _v1).clone();
-      const tip = this.unitPoint(u, 'handR', 0, 0, u.cls === 'knight' ? 1.55 : 1.0, _v2).clone();
-      tr.push(base, tip, 0, u.cls === 'knight' ? 1.5 : 1.0);
+      this.unitPoint(u, 'handR', 0, 0, 0.15, _v1);
+      this.unitPoint(u, 'handR', 0, 0, u.cls === 'knight' ? 1.55 : 1.0, _v2);
+      tr.push(_v1, _v2, 0, u.cls === 'knight' ? 1.5 : 1.0);
     }
     // 남은 트레일은 자연 소멸
   }
@@ -1637,6 +1728,9 @@ export class FX {
       pool.mesh.visible = false;
     }
     this.jets.length = 0;
+    this.stumps.length = 0;
+    if (this.sectorPool) for (const sp of this.sectorPool) { sp.life = sp.max + 1; sp.m.visible = false; }
+    if (this.sectorFades) this.sectorFades.length = 0;
     for (const bp of this.bloodPools) { bp.life = bp.max + 1; bp.m.visible = false; }
     this.boltLife = 1e9; this.boltCore.visible = false; this.boltGlow.visible = false;
     this.shards.length = 0;
@@ -1654,3 +1748,7 @@ const _q1 = new THREE.Quaternion();
 const _e1 = new THREE.Euler();
 const _m1 = new THREE.Matrix4();
 const _hiddenM4 = new THREE.Matrix4().makeScale(0, 0, 0);
+const _wv = new THREE.Vector3();
+const _ws = new THREE.Vector3();
+const _wq = new THREE.Quaternion();
+const _we = new THREE.Euler();

@@ -452,6 +452,154 @@ function ok(name, cond, extra) {
   ok('🌸 적 매화 검객 AI가 플레이어를 향해 매화 일섬을 쓴다', dashInfo.n >= 1, dashInfo);
   await shot('53-petal-ai.png');
 
+  /* ===== 11. 🐞 장기전 부활 · 쿨타임 먹통 회귀 방지 ===== */
+  const revive = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    app.paused = false;
+    const p = b.player;
+    // 부활 직후 다시 맞아 죽지 않도록 주변 적의 공격력을 0으로
+    for (const u of b.units) if (!u.isPlayer) u.damage = 0;
+    // 플레이어를 일부러 죽인다 → 3.6초 뒤 부활. 그 사이 시체 제거 시간(3.14초)이 지나도
+    // 목록에 남아 있어야 쿨타임이 계속 돈다 (예전 '버튼 먹통'의 원인).
+    p.hp = 1; p.maxHp = 1;
+    b.damage(p, 999, null, 'blade');
+    const dead0 = p.dead;
+    for (let i = 0; i < 300; i++) b.update(1 / 60, null);   // 5초
+    const revived = !p.dead;
+    const inList = b.units.includes(p);
+    p.cooldown = 0.8;
+    for (let i = 0; i < 12; i++) b.update(1 / 60, null);
+    const cdDrops = p.cooldown < 0.8;
+    // 부활한 플레이어가 공격도 할 수 있다
+    b.player.cooldown = 0;
+    b.startAttack(b.player);
+    const canAttack = b.player.attackT >= 0;
+    return { dead0, revived, inList, cdDrops, canAttack, deadT: p.deadT, removed: p.removed };
+  });
+  ok('🐞 죽었다 부활한 플레이어가 목록에 남아 쿨타임이 계속 돈다 (먹통 회귀 방지)',
+    revive.dead0 && revive.revived && revive.inList && revive.cdDrops, revive);
+  ok('🐞 부활 직후 공격이 다시 가능하다', revive.canAttack, revive);
+
+  /* ===== 12. 🩸 단면(스텀프) 파츠가 실제로 그려진다 ===== */
+  const stump = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    const THREE = window.__THREE;
+    app.paused = true; app.camMode = 'fp';
+    const u = b.units.find((x) => !x.isPlayer && !x.dead) || b.units.find((x) => !x.dead);
+    // 카메라 3m 앞에 세운다 (상세 슬롯을 받는 거리)
+    const cp = app.cam.position;
+    u.x = cp.x; u.z = cp.z + 3; u.y = 0; u.yaw = Math.PI; u.hideModel = false;
+    u._hidByCam = false;
+    u.severed.armR = 1; u.armsLost = 1; u.sevMask = 2;
+    for (let i = 0; i < 3; i++) app.unitRenderer.update(b.units, cp, app.time + i * 0.016, 1 / 60);
+    const c = app.unitRenderer.classes[u.cls];
+    const armStem = c.parts.filter((p) => p.userData.sevOnly === 2);
+    const legStem = c.parts.filter((p) => p.userData.sevOnly === 8);
+    const m = new THREE.Matrix4();
+    const scaleOf = (p) => {
+      if (!p || u.dslot < 0) return -1;
+      p.getMatrixAt(u.dslot, m);
+      const e = m.elements;
+      return Math.hypot(e[0], e[1], e[2]);
+    };
+    const armScale = armStem.length ? Math.max(...armStem.map(scaleOf)) : -1;
+    const legScale = legStem.length ? Math.max(...legStem.map(scaleOf)) : -1;
+    // 잘린 팔(마스크 2) 파츠의 인스턴스는 숨김(스케일 0)이어야 한다
+    const armPart = c.parts.find((p) => p.userData.sev === 2 && !p.userData.sevOnly);
+    const armPartScale = armPart ? scaleOf(armPart) : -1;
+    return { dslot: u.dslot, stems: armStem.length, armScale: +armScale.toFixed(3), legScale: +legScale.toFixed(3), armPartScale: +armPartScale.toFixed(3) };
+  });
+  ok('🩸 절단 부위에 단면 파츠(살점·뼈)가 그려지고, 잘린 팔 파츠는 숨겨진다',
+    stump.dslot >= 0 && stump.stems > 0 && stump.armScale > 0.5 && stump.legScale < 0.01 && stump.armPartScale < 0.01, stump);
+
+  /* ===== 13. ❄️ 얼음 부채꼴 이펙트를 반복해도 풀이 늘지 않는다 (GPU 누수 회귀 방지) ===== */
+  const iceLeak = await page.evaluate(() => {
+    const app = window.BA.app, fx = app.fx;
+    for (let i = 0; i < 20; i++) fx.ringSector(0, 0, 0, 6, 1, 0xbfefff, 0.4, 1.0);
+    const pool = fx.sectorPool.length;
+    const geos = app.renderer.info.memory.geometries;
+    for (let i = 0; i < 20; i++) fx.ringSector(0, 0, 0, 6, 1, 0xbfefff, 0.4, 1.0);
+    return { pool, pool2: fx.sectorPool.length, geos, geos2: app.renderer.info.memory.geometries };
+  });
+  ok('❄️ 얼음 부채꼴 이펙트를 40번 써도 메시 풀이 고정 (지오메트리 누수 없음)',
+    iceLeak.pool === iceLeak.pool2 && iceLeak.geos === iceLeak.geos2, iceLeak);
+
+  /* ===== 14. 👁️ 관전 ↔ 1인칭 반복 왕복 ===== */
+  const flip = await page.evaluate(async () => {
+    const app = window.BA.app, b = window.BA.battle;
+    app.paused = false;
+    const log = [];
+    for (let i = 0; i < 6; i++) {
+      app.camMode = 'spectate'; app.spectate = null; app._enterSpectate();
+      for (let k = 0; k < 6; k++) b.update(1 / 60, null);
+      const inSpec = app.camMode === 'spectate' && b.playerSafe === true;
+      app.camMode = 'fp'; app._exitSpectate();
+      for (let k = 0; k < 6; k++) b.update(1 / 60, null);
+      const inFp = app.camMode === 'fp' && b.playerSafe === false;
+      log.push({ inSpec, inFp, dead: b.player.dead, hp: +b.player.hp.toFixed(0) });
+    }
+    return { ok: log.every((l) => l.inSpec && l.inFp && !l.dead), log: log.slice(-2) };
+  });
+  ok('👁️ 관전 ↔ 참전을 6번 반복해도 시점·무적 상태가 정상', flip.ok, flip.log);
+
+  /* ===== 15. 🖐️ 멀티터치 — 조이스틱 + 베기 + 막기 동시 ===== */
+  const multi = await page.evaluate(async () => {
+    const app = window.BA.app, b = window.BA.battle;
+    app.paused = false;
+    app.camMode = 'fp'; app._exitSpectate();
+    const p = b.player; p.dead = false; p.hp = p.maxHp;
+    const joy = document.getElementById('joy');
+    const atk = document.getElementById('attackBtn');
+    const gd = document.getElementById('guardBtn');
+    const mk = (type, id, x, y, el) => el.dispatchEvent(new PointerEvent(type, { pointerId: id, pointerType: 'touch', isPrimary: id === 1, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+    const r = joy.getBoundingClientRect();
+    // 이전 테스트가 남긴 조이스틱 포인터를 먼저 놓는다
+    mk('pointerup', 77, r.left, r.top, joy);
+    mk('pointerdown', 1, r.left + r.width / 2, r.top + r.height / 2, joy);
+    mk('pointermove', 1, r.left + r.width / 2 + 30, r.top + r.height / 2, joy);
+    mk('pointerdown', 2, 300, 700, atk);
+    mk('pointerdown', 3, 250, 640, gd);
+    for (let k = 0; k < 10; k++) b.update(1 / 60, { mx: app.input.mx, mz: app.input.mz, yaw: p.yaw, guard: app.input.guard, attack: app.input.attack || app.attackHeld, aimPart: 'body' });
+    const moved = Math.hypot(app.input.mx, app.input.mz) > 0.1;
+    const guarding = p.guard === true;
+    mk('pointerup', 1, r.left, r.top, joy);
+    mk('pointerup', 2, 300, 700, atk);
+    mk('pointerup', 3, 250, 640, gd);
+    return { moved, guarding, attackHeld: app.attackHeld, guardInput: app.input.guard };
+  });
+  ok('🖐️ 조이스틱 이동 + 막기 버튼을 동시에 눌러도 둘 다 반영된다', multi.moved && multi.guarding, multi);
+
+  /* ===== 16. 🔁 재시작 3회 — 렌더러/GPU 리소스가 쌓이지 않는다 ===== */
+  const restarts = await page.evaluate(async () => {
+    const app = window.BA.app;
+    const before = { geos: app.renderer.info.memory.geometries, tex: app.renderer.info.memory.textures };
+    const runs = [];
+    for (let i = 0; i < 3; i++) {
+      window.BA.start({ cls: 'elite', ally: 30, enemy: 30, ae: 4, ee: 4, ak: 1, ek: 1, aw: 1, ew: 1, ab: 1, eb: 1 });
+      const okStart = window.BA.state().state === 'battle' && window.BA.battle.units.length > 20;
+      for (let k = 0; k < 30; k++) window.BA.battle.update(1 / 60, null);
+      const p = window.BA.battle.player;
+      p.cooldown = 0; window.BA.battle.startAttack(p);
+      runs.push({ okStart, attack: p.attackT >= 0 });
+    }
+    const after = { geos: app.renderer.info.memory.geometries, tex: app.renderer.info.memory.textures };
+    return { runs, before, after, classes: Object.keys(app.unitRenderer.classes).length };
+  });
+  ok('🔁 3회 재시작해도 매번 시작·공격이 되고 GPU 리소스가 폭증하지 않는다',
+    restarts.runs.every((r) => r.okStart && r.attack) && restarts.after.geos <= restarts.before.geos + 40, restarts);
+
+  /* ===== 17. 🩸 절단 직후 사망 — 예외 없이 파츠·스텀프 처리 ===== */
+  const severDeath = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle;
+    const u = b.units.find((x) => !x.isPlayer && !x.dead);
+    u.hp = 10; u.maxHp = 200; u.severed.armL = 1; u.armsLost = 1;
+    b.damage(u, 999, b.player, 'blade', 'legR');
+    for (let k = 0; k < 40; k++) { b.update(1 / 60, null); app.fx.update(1 / 60, b, app.cam); }
+    return { dead: u.dead, mask: u.sevMask, beheaded: !!u.behead, stumps: app.fx.stumps.length, pools: app.fx.bloodPools.filter((p) => p.visible).length };
+  });
+  ok('🩸 절단된 유닛이 곧바로 죽어도 사망 모션·단면·피 웅덩이가 정상 처리된다',
+    severDeath.dead && (severDeath.mask & 1) !== 0, severDeath);
+
   ok('콘솔/페이지 오류 0 (헤드리스 SwiftShader)', errors.length === 0, errors.slice(0, 5));
   console.log(`\n모든 테스트 통과 (${passed}개) · 스크린샷 ${SHOTS}`);
   await browser.close();

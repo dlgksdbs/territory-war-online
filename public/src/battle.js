@@ -37,9 +37,15 @@ class Grid {
   constructor(cell) {
     this.cell = cell || 4;
     this.map = new Map();
+    /* 셀 배열을 매 프레임 새로 만들면 GC 가 계속 돈다 — 빈 배열을 모아 재사용한다 */
+    this.pool = [];
+    this.cells = [];
   }
   key(cx, cz) { return (cx + 4096) * 8192 + (cz + 4096); }
   build(units) {
+    const cells = this.cells;
+    for (let i = 0; i < cells.length; i++) { cells[i].length = 0; this.pool.push(cells[i]); }
+    cells.length = 0;
     this.map.clear();
     const c = this.cell;
     for (let i = 0; i < units.length; i++) {
@@ -47,7 +53,11 @@ class Grid {
       if (u.dead || u.removed) continue;
       const k = this.key(Math.floor(u.x / c), Math.floor(u.z / c));
       let arr = this.map.get(k);
-      if (!arr) { arr = []; this.map.set(k, arr); }
+      if (!arr) {
+        arr = this.pool.length ? this.pool.pop() : [];
+        this.map.set(k, arr);
+        cells.push(arr);
+      }
       arr.push(u);
     }
   }
@@ -134,7 +144,7 @@ export class Battle {
   newUnit(cls, team, x, z, isPlayer, seed) {
     const spec = CLASSES[cls] || CLASSES.soldier;
     const id = this.nextId++;
-    const rig = makeUnitRig();
+    const rig = (this.rigPool && this.rigPool.length) ? this.rigPool.pop() : makeUnitRig();
     const sd = seed || this.unitSeed((this.nextId * 13) | 0);
     const elite = cls === 'elite';
     const u = {
@@ -150,7 +160,7 @@ export class Battle {
       target: null, acquireT: sd.r1 * 0.6,
       moveAmt: 0, walkPhase: sd.r2 * TAU, animPhase: sd.r0 * TAU,
       mirror: 0,
-      staggerT: 0, staggerSide: 1, freezeT: 0, slowT: 0,
+      staggerT: 0, staggerMax: 0.28, staggerSide: 1, freezeT: 0, slowT: 0, _atkFreeze: -1, _guardK: undefined,
       guard: false, guardT: 0, guardCheckT: 0.9 + sd.r1 * 1.4, guardFlash: 0, guardCd: 0,
       guardReaction: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).react,
       guardHold: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).hold,
@@ -269,6 +279,10 @@ export class Battle {
     }
 
     // 플레이어 — 대형의 한 자리를 그대로 이어받는다 (인원 대칭 유지)
+    //  · 직접 참전이면 아군 대열의 맨 앞(적 쪽)에 선다 — 시작부터 등짝이 시야를 가리지 않게
+    let frontZ = -Infinity;
+    for (const u of this.units) if (u.team === 'ally' && u.z > frontZ) frontZ = u.z;
+    this.spawnPoint = { x: 0, z: (isFinite(frontZ) ? frontZ + 1.5 : -9.0) };
     const px = this.autoPlayer && playerCarve ? playerCarve.x : this.spawnPoint.x;
     const pz = this.autoPlayer && playerCarve ? -playerCarve.z : this.spawnPoint.z;
     const pseed = playerCarve ? this.unitSeed(form.indexOf(playerCarve)) : this.unitSeed(0);
@@ -287,7 +301,7 @@ export class Battle {
       if (u === pu || u.dead) continue;
       const dx = u.x - pu.x, dz = u.z - pu.z;
       const d = Math.hypot(dx, dz);
-      const clear = 2.4;
+      const clear = 3.0;
       if (d < clear) {
         const a = d > 0.001 ? Math.atan2(dx, dz) : u.rng() * TAU;
         u.x = pu.x + Math.sin(a) * clear;
@@ -315,7 +329,19 @@ export class Battle {
   /* 사라진 유닛 정리 */
   prune() {
     if (!this.units.some((u) => u.removed)) return;
-    this.units = this.units.filter((u) => !u.removed);
+    const pool = this.rigPool || (this.rigPool = []);
+    this.units = this.units.filter((u) => {
+      if (!u.removed) return true;
+      /* 사라진 유닛의 관절·포즈 버퍼를 재사용 풀에 돌려준다 (장기전에서 매번 새로 만들지 않게)
+         · 플레이어의 리그는 부활 때 그대로 쓰므로 절대 풀에 넣지 않는다 */
+      if (!u.isPlayer && pool.length < 256 && u.pose && u.joints && u._jq && u._jm) {
+        u.pose.rot.fill(0);
+        u.pose.root[0] = u.pose.root[1] = u.pose.root[2] = 0;
+        u.pose.rootAdd[0] = u.pose.rootAdd[1] = u.pose.rootAdd[2] = 0;
+        pool.push({ pose: u.pose, joints: u.joints, _jq: u._jq, _jm: u._jm, rootMat: u.rootMat });
+      }
+      return false;
+    });
     this.byId = new Map(this.units.map((u) => [u.id, u]));
     this.buildOrder();
   }
@@ -434,6 +460,11 @@ export class Battle {
   respawnPlayer() {
     const p = this.player;
     if (!p) return;
+    if (!this.units.includes(p)) {
+      this.units.push(p);
+      this.byId.set(p.id, p);
+      this.buildOrder();
+    }
     const mult = 1 + this.playerKills * GROWTH_PER_KILL;
     p.dead = false; p.deadT = 0; p.corpseT = 0; p.removed = false;
     p.hp = CLASSES[p.cls].hp * mult;
@@ -450,7 +481,9 @@ export class Battle {
     p.cycle = CLASSES[p.cls].cycle;
     p.sevMask = 0;
     p.deathKind = null;
-    p.guard = false; p.guardT = 0;
+    p.guard = false; p.guardT = 0; p.guardCd = 0; p._guardK = 0;
+    p.staggerT = 0; p.staggerMax = 0.28; p._atkFreeze = -1; p.moveAmt = 0;
+    p._tier = -1; p._hidByCam = false; p.hideModel = false;
     this.emit({ type: 'respawn', unit: p });
   }
 
@@ -637,9 +670,10 @@ export class Battle {
     if (lethal) {
       this.kill(target, source, kind, { part: p });
     } else {
-      target.staggerT = Math.max(target.staggerT, kind === 'hammer' ? 0.34 : 0.22);
+      const st = kind === 'hammer' || kind === 'ice' ? 0.40 : 0.22;
+      target.staggerT = Math.max(target.staggerT, st);
+      target.staggerMax = Math.max(target.staggerMax || 0, st);
       target.staggerSide = source && source.x < target.x ? 1 : -1;
-      if (kind === 'hammer' || kind === 'ice') target.staggerT = Math.max(target.staggerT, 0.4);
     }
     return dmg;
   }
@@ -662,6 +696,8 @@ export class Battle {
         x: target.x, y: 1.62 * (target.scale || 1), z: target.z, yaw: target.yaw });
     }
     this.lastDeathAt = this.time;
+    // 죽는 순간 휘두르던 동작(접촉 프레임 전이면 그 자세)을 기억 — pose 가 0.2초 동안 겹쳐 준다
+    target._atkFreeze = target.attackT >= 0 ? target.attackT : -1;
     target.dead = true;
     target.deadT = 0;
     target.corpseT = 0;
@@ -748,8 +784,8 @@ export class Battle {
     if (u.cls === 'knight') {
       this.emit({ type: 'slam', unit: u, x: u.x + Math.sin(u.yaw) * 1.8, z: u.z + Math.cos(u.yaw) * 1.8, hit: applied });
       // 히트스톱은 '내가 때렸을 때'만 — AI 100명의 타격이 겹치면 전장이 영원히 느려지던 원인
-      if (u.isPlayer) this.hitStop = Math.max(this.hitStop, 0.085);
-    } else if (applied && u.isPlayer) {
+      if (u.isPlayer && !this.autoPlayer) this.hitStop = Math.max(this.hitStop, 0.085);
+    } else if (applied && u.isPlayer && !this.autoPlayer) {
       this.hitStop = Math.max(this.hitStop, 0.055);
     }
     return applied;
@@ -1026,7 +1062,10 @@ export class Battle {
 
       if (u.dead) {
         u.deadT += dt;
-        if (u.deadT > DEATH_REMOVE) u.removed = true;
+        /* 🐞 플레이어는 부활 대기 중에도 목록에 남긴다.
+           (예전에는 3.14초 뒤 시체로 제거되고 부활은 3.6초라, 부활한 플레이어가 목록에 없어
+            쿨타임이 영원히 돌지 않아 '공격 버튼이 먹통'이 됐다) */
+        if (u.deadT > DEATH_REMOVE && !(u.isPlayer && !this.autoPlayer)) u.removed = true;
         continue;
       }
       if (u.removed) continue;

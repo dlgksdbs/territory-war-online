@@ -788,6 +788,12 @@ export function computePose(u, t, dt) {
     R(p, J.head, shiver * 0.9, 0, 0);
   }
 
+  /* 🩸 시체는 툭 사라지지 않고 마지막 0.45초 동안 땅으로 가라앉는다 (DEATH_REMOVE 3.14 - 0.45) */
+  if (u.dead && u.deadT > 2.69) {
+    const k = clamp((u.deadT - 2.69) / 0.45, 0, 1);
+    p.rootAdd[1] -= k * k * 0.45;
+  }
+
   // 루트 위치·회전
   p.root[0] = u.x;
   p.root[1] = (u.y || 0) + p.rootAdd[1] + p.rootAdd[0];

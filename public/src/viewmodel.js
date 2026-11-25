@@ -98,6 +98,7 @@ function buildSword(env) {
   arm.add(capsule(0.062, 0.30, cloth, [0, -0.16, 0]));
   arm.add(cyl(0.072, 0.062, 0.10, matSteel(), [0, -0.03, 0]));
   g.add(arm);
+  g.userData.armGroup = arm;
   return g;
 }
 
@@ -131,6 +132,7 @@ function buildHammer(env) {
   armR.rotation.set(0.4, -0.2, -0.6);
   armR.add(capsule(0.068, 0.30, cloth, [0, -0.17, 0]));
   g.add(armR);
+  g.userData.armGroup = armR;
   const armL = new THREE.Group();
   armL.position.set(-0.04, 0.28, 0.0);
   armL.rotation.set(0.25, 0.3, 0.8);
@@ -182,6 +184,7 @@ function buildStaff(env) {
   arm.add(capsule(0.06, 0.30, matCloth(0x2a3f66), [0, -0.16, 0]));
   arm.add(cyl(0.075, 0.07, 0.16, matCloth(0x2a3f66), [0, 0.02, 0]));
   g.add(arm);
+  g.userData.armGroup = arm;
   return g;
 }
 
@@ -204,6 +207,7 @@ function buildEliteSword() {
   sh.add(box(0.055, 0.60, 0.05, gold, [0.23, 0, 0]));
   sh.add(sph(0.085, matSteel(), [0, 0, 0.03], [1, 1, 0.55]));
   g.add(sh);
+  g.userData.shield = sh;
   return g;
 }
 
@@ -244,6 +248,7 @@ function buildKatana() {
   arm.add(capsule(0.058, 0.30, cloth, [0, -0.16, 0]));
   arm.add(cyl(0.075, 0.07, 0.14, cloth, [0, 0.0, 0]));
   g.add(arm);
+  g.userData.armGroup = arm;
   return g;
 }
 
@@ -446,6 +451,8 @@ export class ViewModel {
 
   setClass(cls) {
     for (const k in this.models) this.models[k].visible = k === cls;
+    /* 클래스별 무기 크기 — 큰 망치는 화면을 덮지 않게 조금 작게 */
+    this.inner.scale.setScalar(cls === 'knight' ? 0.44 : cls === 'wizard' ? 0.50 : 0.525);
     this.className = cls;
     this.palm.visible = cls === 'wizard';
     this.guardK = 0;
@@ -462,8 +469,34 @@ export class ViewModel {
   triggerCast() { this._castT = 0; }
   impulse(k) { this._imp = (this._imp || 0) + (k === undefined ? 0.05 : k); }
 
-  update(dt, player, input, time) {
+  update(dt, player, input, time, lookYawArg, lookPitchArg) {
     this.time = time;
+    /* 🗡️ 시점 회전 관성 — 고개를 돌리면 무기가 반 박자 늦게 따라온다 */
+    const lookYaw = lookYawArg || 0;
+    const lookPitch = lookPitchArg || 0;
+    if (this._lookPrev === undefined) { this._lookPrev = { yaw: lookYaw, pitch: lookPitch }; }
+    const dYaw = Math.atan2(Math.sin(lookYaw - this._lookPrev.yaw), Math.cos(lookYaw - this._lookPrev.yaw));
+    const dPitch = lookPitch - this._lookPrev.pitch;
+    this._lookPrev.yaw = lookYaw; this._lookPrev.pitch = lookPitch;
+    const lagScale = 0.55;
+    this._lagYaw = (this._lagYaw || 0) * Math.max(0, 1 - dt * 9) - dYaw * lagScale;
+    this._lagPitch = (this._lagPitch || 0) * Math.max(0, 1 - dt * 9) - dPitch * lagScale;
+    this._lagYaw = clamp(this._lagYaw, -0.05, 0.05);
+    this._lagPitch = clamp(this._lagPitch, -0.05, 0.05);
+    /* 🩸 플레이어의 절단 상태를 1인칭 무기에도 반영한다 */
+    const sev = (player && player.severed) || {};
+    const model = this.models[this.className];
+    if (model) {
+      if (model.userData.armGroup) model.userData.armGroup.visible = !sev.armR;
+      if (model.userData.shield) model.userData.shield.visible = !sev.armL;
+    }
+    /* 오른팔을 잃으면 검을 왼손으로 쥔 것처럼 반대쪽으로 옮긴다 */
+    const handSwap = sev.armR ? 1 : 0;
+    this.handSwap = this.handSwap === undefined ? 0 : this.handSwap + (handSwap - this.handSwap) * Math.min(1, dt * 8);
+    /* 한쪽 다리를 잃으면 걸을 때마다 몸이 그쪽으로 쏠린다 */
+    const limp = sev.legL || sev.legR ? 1 : 0;
+    this.limp = this.limp === undefined ? 0 : this.limp + (limp - this.limp) * Math.min(1, dt * 6);
+
     const cur = CURVES[this.className] || CURVES.soldier;
     this.swapT = Math.min(1, this.swapT + dt * 3.4);
     const swap = easeOutCubic(this.swapT);
@@ -487,16 +520,22 @@ export class ViewModel {
     const walkY = Math.abs(Math.cos(ph)) * 0.018 * mv;
     this.bob = lerp(this.bob, walkY, Math.min(1, dt * 8));
 
+    const sw = this.handSwap || 0;
+    const limpAmt = this.limp || 0;
+    const limpY = limpAmt * (mv > 0.1 ? Math.abs(Math.sin(ph * 0.5)) * 0.045 : 0.02);
+    const limpRoll = limpAmt * (sev.legR ? -0.06 : 0.06);
     this.root.position.set(
-      p[0] * FRAMING_X + sway + walkX,
-      p[1] * FRAMING_Y - this.bob + breatheY,
+      p[0] * FRAMING_X * (1 - sw * 2) + sway + walkX,
+      p[1] * FRAMING_Y - this.bob + breatheY - limpY,
       p[2] - 0.30
     );
     this.root.rotation.set(
       r[0] + Math.sin(this.time * 1.1) * 0.006 + walkY * 0.6,
       r[1] + sway * 1.4,
-      r[2] + Math.sin(this.time * 0.7) * 0.008
+      r[2] + Math.sin(this.time * 0.7) * 0.008 + limpRoll + this._lagYaw * 0.9
     );
+    this.root.position.x += this._lagYaw * 0.22;
+    this.root.rotation.x += this._lagPitch * 0.7;
     // 달릴 때 무기 무게가 뒤로 쏠리는 느낌
     this.root.rotation.x += mv * 0.10;
     this.root.rotation.z += Math.sin(ph) * 0.03 * mv;

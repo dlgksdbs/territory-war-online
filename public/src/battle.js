@@ -154,7 +154,8 @@ export class Battle {
       speed: spec.speed, radius: spec.radius, reach: spec.reach, arc: spec.arc,
       cycle: spec.cycle,
       damage: spec.damage, armor: spec.armor, mass: spec.mass,
-      scale: cls === 'knight' ? 1.04 : cls === 'elite' ? 1.03 : cls === 'wizard' ? 1.0 : 1.0,
+      /* 키·몸집에 자연스러운 편차를 준다 (같은 병종이 복제된 것처럼 보이지 않게, ±3%) */
+      scale: (cls === 'knight' ? 1.04 : cls === 'elite' ? 1.03 : 1.0) * (0.955 + sd.r2 * 0.075),
       dead: false, deadT: 0, corpseT: 0, removed: false,
       attackT: -1, cooldown: sd.r0 * 0.5, hitDone: false,
       target: null, acquireT: sd.r1 * 0.6,
@@ -1410,6 +1411,12 @@ export class Battle {
       u.x += u._pushX || 0;
       u.z += u._pushZ || 0;
       u._pushX = 0; u._pushZ = 0;
+      /* 방어: 어떤 이유로든 좌표가 깨지면 전장 밖으로 튀지 않게 되돌린다 */
+      if (!isFinite(u.x) || !isFinite(u.z)) {
+        u.x = (u.team === 'ally' ? 0 : 0) + (this.rng() - 0.5) * 4;
+        u.z = (u.team === 'ally' ? -14 : 14) + (this.rng() - 0.5) * 4;
+        u.vx = 0; u.vz = 0; u.target = null;
+      }
       const r = Math.hypot(u.x, u.z);
       if (r > this.arenaR) { u.x *= this.arenaR / r; u.z *= this.arenaR / r; }
     }

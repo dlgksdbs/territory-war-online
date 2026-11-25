@@ -804,7 +804,14 @@ class App {
 
     if (this.camMode === 'fp') {
       const spec = CLASSES[p.cls];
-      const eye = spec.viewEye;
+      let eye = spec.viewEye;
+      /* 🩸 다리를 잃으면 눈높이가 낮아지고 걸음마다 몸이 흔들린다 (화면 흔들림이 아니라 절뚝임) */
+      if (p.severed && (p.severed.legL || p.severed.legR)) {
+        const one = (p.severed.legL ? 1 : 0) + (p.severed.legR ? 1 : 0);
+        const limp = Math.abs(Math.sin((p.walkPhase || 0) * 0.5)) * (p.moveAmt || 0);
+        eye -= 0.10 * one + limp * 0.055;
+      }
+      if (p.severed && p.severed.armR) eye -= 0.02;
       // 화면 흔들림 없음 — 걸음 헤드밥·호흡·공격/피격 반동·화면 흔들림·시선 롤을 모두 제거했다.
       // 카메라는 눈높이에 정확히 고정되고, 시점만 드래그한 그대로 유지된다.
       this.cam.position.set(p.x, p.dead ? 0.92 : eye, p.z);
@@ -965,7 +972,7 @@ class App {
 
     // 뷰모델
     if (this.vm) {
-      this.vm.update(dt, p, this.input, this.time);
+      this.vm.update(dt, p, this.input, this.time, this.camYaw + Math.PI, this.camPitch);
       if (this.camMode === 'fp' && this.vm.enabled && !this.debugCam) {
         if (p.attackT >= 0) {
           const base = _v1, tip = _v2;

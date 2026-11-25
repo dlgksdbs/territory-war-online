@@ -998,7 +998,7 @@ void main() {
       out.castleWindowMat.opacity = 0.82 + Math.sin(t * 1.7) * 0.07 + Math.sin(t * 3.9 + 1.2) * 0.05;
       if (out.castleWindows) out.castleWindows.material.color.setHSL(0.075, 0.85, 0.52 + Math.sin(t * 0.9) * 0.05);
     }
-    runeMat.opacity = 0.20 + Math.sin(t * 1.6) * 0.06;
+    runeMat.opacity = 0.14 + Math.sin(t * 1.6) * 0.045;
     rune.rotation.z = t * 0.06;
     // 공기 중 먼지 · 불티 · 바닥 안개
     updateMotes(embers, dt, t, camPos, 0.55);

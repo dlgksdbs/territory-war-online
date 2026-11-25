@@ -291,20 +291,28 @@ class App {
     });
     const skillBtn = $('#skillBtn');
     skillBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.useSkill(); });
-    // 🛡️ 일반 병사 방패 막기 — 꾹 누르고 있는 동안
+    // 🛡️ 검·방패 막기 — 누르고 있는 동안(홀드) + 짧게 톡 눌러도 잠깐 막는다
     const guardBtn = $('#guardBtn');
     if (guardBtn) {
+      let pid = null;
       const press = (e) => {
-        e.preventDefault();
+        if (e.cancelable) e.preventDefault();
+        pid = e.pointerId;
         this.input.guard = true;
+        this.guardMinT = Math.max(this.guardMinT || 0, 0.40);   // 탭 한 번만 해도 0.4초는 막힌다
         guardBtn.classList.add('is-held');
         try { guardBtn.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
       };
-      const release = () => { this.input.guard = false; guardBtn.classList.remove('is-held'); };
+      const release = (e) => {
+        if (pid !== null && e && e.pointerId !== undefined && e.pointerId !== pid) return;
+        pid = null;
+        this.input.guard = false;
+        guardBtn.classList.remove('is-held');
+      };
       guardBtn.addEventListener('pointerdown', press);
       guardBtn.addEventListener('pointerup', release);
       guardBtn.addEventListener('pointercancel', release);
-      guardBtn.addEventListener('pointerleave', release);
+      guardBtn.addEventListener('contextmenu', (e) => { e.preventDefault(); });
       window.addEventListener('pointerup', release, true);
       window.addEventListener('pointercancel', release, true);
     }
@@ -319,7 +327,10 @@ class App {
       this.keys = this.keys || {};
       this.keys[e.code] = true;
       if (e.code === 'Space') { e.preventDefault(); this.attackHeld = true; this.input.attack = true; this._aimAssist(); }
-      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') { this.input.guard = true; const gb = $('#guardBtn'); if (gb) gb.classList.add('is-held'); }
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') {
+        this.input.guard = true; this.guardMinT = Math.max(this.guardMinT || 0, 0.40);
+        const gb = $('#guardBtn'); if (gb) gb.classList.add('is-held');
+      }
       if (e.code === 'Digit1') this.castSpell('fire');
       if (e.code === 'Digit2') this.castSpell('lightning');
       if (e.code === 'Digit3') this.castSpell('ice');
@@ -645,29 +656,20 @@ class App {
       this.input.aimId = 0; this.input.aimPart = 'body';
       return;
     }
-    // 부위 판정 — 조준선이 유닛의 어느 높이·어느 쪽에 닿았는지
-    const sc = best.scale || 1;
-    const relY = (hitY - (best.y || 0)) / (1.72 * sc);
-    const rx = Math.cos(best.yaw), rz = -Math.sin(best.yaw);          // 유닛 기준 오른쪽
-    const lx = (hitX - best.x) * rx + (hitZ - best.z) * rz;
-    let part = 'body';
-    if (relY > 0.80) part = 'head';
-    else if (relY < 0.42) part = lx < 0 ? 'legR' : 'legL';
-    else if (relY > 0.50 && Math.abs(lx) > 0.16) part = lx < 0 ? 'armR' : 'armL';
+    // 부위 절단이 없다 — 에임은 항상 몸통
     this.input.aimId = best.id;
-    this.input.aimPart = part;
+    this.input.aimPart = 'body';
     this._aimUnit = best;
     if (!this._aimOn) { el.classList.add('is-on'); this._aimOn = true; }
     const hp = Math.max(0, Math.ceil(best.hp));
     const mx = Math.max(1, Math.ceil(best.maxHp));
-    const key = best.id + ':' + hp + ':' + part;
+    const key = best.id + ':' + hp;
     if (key !== this._aimKey) {
       this._aimKey = key;
       const nEl = document.getElementById('aiName');
       const hEl = document.getElementById('aiHp');
       const bar = document.getElementById('aiBar');
-      const partTxt = part === 'head' ? ' · 머리' : part === 'armL' || part === 'armR' ? ' · 팔' : part === 'legL' || part === 'legR' ? ' · 다리' : '';
-      if (nEl) nEl.textContent = '적 ' + (UNIT_KR[best.cls] || '병사') + partTxt;
+      if (nEl) nEl.textContent = '적 ' + (UNIT_KR[best.cls] || '병사');
       if (hEl) hEl.textContent = hp + ' / ' + mx;
       if (bar) {
         bar.style.width = clamp((hp / mx) * 100, 0, 100) + '%';
@@ -811,15 +813,8 @@ class App {
 
     if (this.camMode === 'fp') {
       const spec = CLASSES[p.cls];
-      let eye = spec.viewEye;
-      /* 🩸 다리를 잃으면 눈높이가 낮아지고 걸음마다 몸이 흔들린다 (화면 흔들림이 아니라 절뚝임) */
-      if (p.severed && (p.severed.legL || p.severed.legR)) {
-        const one = (p.severed.legL ? 1 : 0) + (p.severed.legR ? 1 : 0);
-        const limp = Math.abs(Math.sin((p.walkPhase || 0) * 0.5)) * (p.moveAmt || 0);
-        eye -= 0.10 * one + limp * 0.055;
-      }
-      if (p.severed && p.severed.armR) eye -= 0.02;
-      // 화면 흔들림 없음 — 걸음 헤드밥·호흡·공격/피격 반동·화면 흔들림·시선 롤을 모두 제거했다.
+      const eye = spec.viewEye;
+      // 화면 흔들림 없음 — 걸음 헤드밥·호흡·공격/피격 반동·시선 롤을 모두 제거했다.
       // 카메라는 눈높이에 정확히 고정되고, 시점만 드래그한 그대로 유지된다.
       this.cam.position.set(p.x, p.dead ? 0.92 : eye, p.z);
       this.camYaw = p.yaw + Math.PI;
@@ -883,6 +878,9 @@ class App {
       scale = 0.35;
     }
 
+    // 탭 막기 최소 유지 시간
+    if (this.guardMinT > 0) this.guardMinT = Math.max(0, this.guardMinT - dt);
+
     const p = this.battle.player;
     const spectating = this.camMode === 'spectate';
     // 입력 → 전투 (프레임이 길어지면 잘게 나눠 시뮬레이션한다 — 접촉 프레임을 놓치지 않게)
@@ -895,7 +893,7 @@ class App {
         mx: spectating ? 0 : this.input.mx,
         mz: spectating ? 0 : this.input.mz,
         yaw: p.yaw,
-        guard: spectating ? false : !!this.input.guard,
+        guard: spectating ? false : (!!this.input.guard || (this.guardMinT || 0) > 0),
         attack: spectating ? false : (this.input.attack || this.attackHeld),
         aimPart: this.input.aimPart || 'body',
         aimId: this.input.aimId || 0
@@ -953,18 +951,7 @@ class App {
     this.updateCamera(dt);
     const camPos = this.cam.position;
 
-    /* 1인칭 — 코앞(2.1m)까지 파고든 아군은 화면을 가리므로 잠시 숨긴다 (관전·디버그에서는 그대로) */
-    if (this.camMode === 'fp' && !this.debugCam && p && !p.dead) {
-      for (let i = 0; i < units.length; i++) {
-        const u = units[i];
-        if (u.isPlayer || u.team !== p.team) continue;
-        const ddx = u.x - camPos.x, ddz = u.z - camPos.z;
-        const d2 = ddx * ddx + ddz * ddz;
-        const near = u._hidByCam ? d2 < 3.0 * 3.0 : d2 < 2.5 * 2.5;
-        if (near && !u._hidByCam) { u.hideModel = true; u._hidByCam = true; }
-        else if (!near && u._hidByCam) { u.hideModel = false; u._hidByCam = false; }
-      }
-    }
+    /* 1인칭 — 코앞에 붙은 아군도 숨기지 않는다. 아군이 시야를 가리는 것은 그대로 둔다 */
 
     // 렌더러
     if (this.unitRenderer) this.unitRenderer.update(units, camPos, this.time, dt);
@@ -1082,13 +1069,6 @@ class App {
     } else if (e.type === 'death') {
       const u = e.unit;
       this.sfx.death(u ? dOf(u.x, u.z) : 0);
-    } else if (e.type === 'sever') {
-      // 🩸 부위 절단 — 금속이 갈라지는 소리, 내 몸이면 화면에 알린다
-      this.sfx.sever(dOf(e.x, e.z), e.part === 'head');
-      if (e.unit && e.unit.isPlayer && e.part !== 'head') {
-        this.fx.hitFlash = Math.max(this.fx.hitFlash, 0.95);
-        this._toast((e.part === 'armL' || e.part === 'armR') ? '🩸 팔이 잘렸다 — 공속 30% 감소' : '🩸 다리가 잘렸다 — 이속 30% 감소');
-      }
     } else if (e.type === 'guardEmpty') {
       if (e.unit && e.unit.isPlayer) this._toast('🛡️ 방패 충전을 다 썼다 — 19초 재충전');
     } else if (e.type === 'guardReady') {
@@ -1239,10 +1219,10 @@ class App {
       num.textContent = cd > 0 ? Math.ceil(cd) : '';
       skBtn.querySelector('.sk-label').textContent = cd > 0 ? '충전' : '매화 일섬';
     }
-    // 🛡️ 막기 버튼 — 일반 병사(검 막기) / 고급 병사(방패 막기) · 횟수 제한 없음
+    // 🛡️ 막기 버튼 — 마법사만 빼고 모든 병종(병사·고급 병사·기사·검객) · 횟수 제한 없음
     const gdBtn = $('#guardBtn');
     if (gdBtn) {
-      const canGuard = p.cls === 'soldier' || p.cls === 'elite';
+      const canGuard = p.cls !== 'wizard';
       gdBtn.classList.toggle('is-on', canGuard);
       const chEl = document.getElementById('guardCharges');
       if (chEl) chEl.style.display = 'none';
@@ -1250,6 +1230,8 @@ class App {
       const lbl = gdBtn.querySelector('.sk-label');
       const want = p.cls === 'elite' ? '방패 막기' : '검 막기';
       if (lbl && lbl.textContent !== want) lbl.textContent = want;
+      const ic = gdBtn.querySelector('.sk-icon');
+      if (ic) ic.textContent = p.cls === 'elite' ? '🛡️' : '🗡️';
     }
     const atkBtn = $('#attackBtn');
     atkBtn.style.display = p.cls === 'wizard' ? 'none' : '';

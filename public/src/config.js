@@ -107,7 +107,7 @@ export const CLASSES = {
     height: 1.94,
     reach: 2.9,
     arc: 2.35,
-    cycle: 1.15,        // 묵직하고 느린 공속
+    cycle: 1.01,        // 묵직하되 살짝 빨라진 공속 (1.15 → 1.01, 약 12% 상향)
     animDur: 1.72,
     windup: 0.60,
     impact: 0.80,

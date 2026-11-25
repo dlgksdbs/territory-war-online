@@ -242,6 +242,9 @@ export class FX {
     this.dust = new Particles(scene, 900, smokeTexture(), false, 900);
     this.mist = new Particles(scene, 500, glowTexture('rgba(255,255,255,1)', 'rgba(200,235,255,0.3)'), true, 620);
     this.petals = new Particles(scene, 700, petalTexture(), false, 520);
+    /* 🩸 피 방울 — 온몸에서 튀는 진한 붉은 물방울 (일반 합성) */
+    this.bloodTex = glowTexture('rgba(190,10,14,1)', 'rgba(96,3,5,0.0)');
+    this.blood = new Particles(scene, 900, this.bloodTex, false, 560);
     this.time = 0;
     this.shake = 0;
     this.flashT = 0;
@@ -547,7 +550,6 @@ export class FX {
         case 'playerDown': this.hitFlash = 1; break;
         case 'levelUp': this.onLevelUp(e, battle); break;
         case 'petalDash': this.onPetalDash(e, battle); break;
-        case 'sever': this.onSever(e, battle); break;
         default: break;
       }
     }
@@ -596,16 +598,10 @@ export class FX {
         gravity: -12, drag: 2.2, fade: 1.4
       });
     }
-    // 피 (어두운 붉은 mist)
-    for (let i = 0; i < (near ? 7 : 3); i++) {
-      const a = rng() * TAU;
-      this.dust.spawn({
-        x: px, y: py, z: pz,
-        vx: Math.cos(a) * (0.5 + rng() * 2.2), vy: 0.3 + rng() * 1.7, vz: Math.sin(a) * (0.5 + rng() * 2.2),
-        life: 0.28 + rng() * 0.35, size: 0.14 + rng() * 0.3,
-        r: 0.34, g: 0.03, b: 0.03, alpha: 0.6, gravity: -5, drag: 2.6, grow: 0.6, fade: 1.5
-      });
-    }
+    // 🩸 피가 세차게 튄다 — 맞은 방향으로 물방울 + 번지는 피안개
+    this.bloodBurst(px, py, pz, dirx, dirz, near ? (heavy ? 54 : 34) : (heavy ? 20 : 12), heavy ? 1.8 : 1.25);
+    // 가끔 발밑에도 붉은 자국이 남는다
+    if (near && rng() < 0.30) this.bloodPool(px + (rng() - 0.5) * 0.8, pz + (rng() - 0.5) * 0.8, 0.32 + rng() * 0.28);
     // 타격 섬광
     this.flash(px, py, pz, heavy ? 1.55 : 0.9, heavy ? 0xffcf80 : 0xffffff, 0.10);
     // 참격선: 칼날이 지나간 방향으로 잠깐 남는 빛가닥
@@ -647,8 +643,18 @@ export class FX {
       }
     }
     if (u.isPlayer) this.addShake(0.5);
-    // 🩸 쓰러진 자리에 피가 흥건하게 고인다 (베임이면 더 크게)
-    if (dist < 90) this.bloodPool(px, pz, (e.behead ? 1.35 : 0.95) + (u.radius || 0.4) * 0.8);
+    // 🩸 피가 크게 터지고, 쓰러진 자리에 흥건하게 고인다
+    if (dist < 90) {
+      this.bloodBurst(px, 1.05, pz, 0, 0, 72, 2.1);
+      const r = 1.15 + (u.radius || 0.4) * 0.9;
+      this.bloodPool(px, pz, r);
+      // 주변에 튄 자국 두어 개
+      for (let i = 0; i < 2; i++) {
+        const a = this.rng() * TAU;
+        const dd = 0.5 + this.rng() * 1.1;
+        this.bloodPool(px + Math.cos(a) * dd, pz + Math.sin(a) * dd, r * (0.38 + this.rng() * 0.24));
+      }
+    }
   }
 
   onSlam(e, battle) {
@@ -966,64 +972,45 @@ export class FX {
     }
   }
 
-  /* 🩸 부위 절단 — 잘린 파츠가 피를 뿌리며 떨어지고, 바닥에 고인다 */
-  onSever(e, battle) {
-    const part = e.part;
-    const kind = part === 'head' ? 'head' : (part === 'armL' || part === 'armR') ? 'arm' : 'leg';
-    const yaw = e.yaw || 0;
-    const side = e.side || 1;
-    const px = e.x, py = e.y, pz = e.z;
-    const dist = this.camera.position.distanceTo(_v1.set(px, py, pz));
-    const near = dist < 40;
-    // 베인 쪽 바깥으로 튀어나간다
-    const ox = Math.cos(yaw) * side, oz = -Math.sin(yaw) * side;
-    const out = (kind === 'head' ? 1.6 : 2.2) + this.rng() * 2.4;
-    this.spawnLimb(kind, px + ox * 0.18, py, pz + oz * 0.18,
-      ox * out + Math.sin(yaw) * 0.8, kind === 'head' ? 1.6 + this.rng() * 1.6 : 2.2 + this.rng() * 2.0,
-      oz * out + Math.cos(yaw) * 0.8, yaw, kind === 'head' ? 1 : 1);
-    // 피 — 베인 자리에서
-    const n = kind === 'head' ? 46 : 28;
-    for (let i = 0; i < n; i++) {
-      const a = this.rng() * TAU;
-      const sp = kind === 'head' ? 1.6 + this.rng() * 5.2 : 0.8 + this.rng() * 3.4;
-      this.sparks.spawn({
-        x: px + (this.rng() - 0.5) * 0.2, y: py + (this.rng() - 0.5) * 0.2, z: pz + (this.rng() - 0.5) * 0.2,
-        vx: Math.cos(a) * sp + ox * 1.6, vy: 0.6 + this.rng() * (kind === 'head' ? 4.6 : 2.8), vz: Math.sin(a) * sp + oz * 1.6,
-        life: 0.25 + this.rng() * 0.5, size: 0.045 + this.rng() * 0.075,
-        r: 0.62, g: 0.03, b: 0.04, gravity: -11, drag: 1.9, fade: 1.4
+  /* 🩸 피 분사 — 맞은 방향으로 진한 물방울이 세차게 튀고, 안개처럼 번진다.
+     · power: 1 = 일반 타격, 2 = 처치·강타 (양·속도·크기 모두 커진다)
+     · dirX/dirZ: 타격이 향한 수평 방향 (없으면 사방으로) */
+  bloodBurst(x, y, z, dirX, dirZ, n, power) {
+    const rng = this.rng;
+    const pw = power === undefined ? 1 : power;
+    const dl = Math.hypot(dirX || 0, dirZ || 0) || 1;
+    const dx = (dirX || 0) / dl, dz = (dirZ || 0) / dl;
+    const count = Math.max(3, Math.round(n * (0.75 + pw * 0.25)));
+    for (let i = 0; i < count; i++) {
+      const a = rng() * TAU;
+      const spread = 0.75 + rng() * (1.5 * pw);
+      const fwd = (0.55 + rng() * 1.5) * pw;
+      const sp = (1.1 + rng() * 3.4) * pw;
+      const hot = 0.55 + rng() * 0.30;
+      this.blood.spawn({
+        x: x + (rng() - 0.5) * 0.22, y: y + (rng() - 0.5) * 0.34, z: z + (rng() - 0.5) * 0.22,
+        vx: dx * fwd * sp + Math.cos(a) * spread * 2.1 * pw,
+        vy: (0.9 + rng() * 3.2) * pw,
+        vz: dz * fwd * sp + Math.sin(a) * spread * 2.1 * pw,
+        life: 0.28 + rng() * 0.5,
+        size: (0.055 + rng() * 0.115) * (0.85 + pw * 0.25),
+        r: hot + 0.16, g: 0.02 + rng() * 0.03, b: 0.03 + rng() * 0.03,
+        gravity: -15, drag: 1.15, fade: 1.25
       });
     }
-    for (let i = 0; i < (near ? 10 : 4); i++) {
-      const a = this.rng() * TAU;
+    /* 옅게 번지는 피안개 */
+    const mists = Math.max(2, Math.round(count * 0.42));
+    for (let i = 0; i < mists; i++) {
+      const a = rng() * TAU;
       this.dust.spawn({
-        x: px, y: py, z: pz,
-        vx: Math.cos(a) * (0.4 + this.rng() * 1.6), vy: 0.1 + this.rng() * 1.2, vz: Math.sin(a) * (0.4 + this.rng() * 1.6),
-        life: 0.4 + this.rng() * 0.5, size: 0.18 + this.rng() * 0.34,
-        r: 0.30, g: 0.02, b: 0.02, alpha: 0.55, gravity: -5, drag: 2.0, grow: 0.6, fade: 1.3
+        x, y, z,
+        vx: dx * (0.5 + rng() * 1.6) * pw + Math.cos(a) * (0.4 + rng() * 1.5) * pw,
+        vy: 0.25 + rng() * 1.6 * pw,
+        vz: dz * (0.5 + rng() * 1.6) * pw + Math.sin(a) * (0.4 + rng() * 1.5) * pw,
+        life: 0.32 + rng() * 0.42, size: (0.16 + rng() * 0.3) * (0.8 + pw * 0.3),
+        r: 0.38, g: 0.02, b: 0.03, alpha: 0.62, gravity: -4.5, drag: 2.3, grow: 0.75, fade: 1.5
       });
     }
-    this.bloodPool(px, pz, kind === 'head' ? 1.15 : 0.8);
-    if (this.stumps.length < 18) this.stumps.push({ unit: e.unit, part, t: 0, life: 2.6, acc: 0, x: px, y: py, z: pz });
-    this.flash(px, py, pz, kind === 'head' ? 1.2 : 0.8, 0xff5a5a, 0.10);
-    if (kind === 'head') {
-      // 목에서 뿜어지는 피 — 몸이 서 있는 동안 계속
-      this.jets.push({ x: px, y: py, z: pz, t: 0, life: 0.95, acc: 0 });
-      this.addShake(0.14);
-    }
-  }
-
-  spawnLimb(kind, x, y, z, vx, vy, vz, yaw, scale) {
-    const pool = this.limbPool[kind];
-    if (!pool) return;
-    const i = pool.idx % pool.cap;
-    pool.idx++;
-    let d = pool.data[i];
-    if (!d) { d = pool.data[i] = {}; }
-    d.x = x; d.y = y; d.z = z;
-    d.vx = vx; d.vy = vy; d.vz = vz;
-    d.rx = this.rng() * TAU; d.ry = yaw + this.rng() * TAU; d.rz = this.rng() * TAU;
-    d.sx = (this.rng() - 0.5) * 14; d.sy = (this.rng() - 0.5) * 14; d.sz = (this.rng() - 0.5) * 14;
-    d.life = 0; d.max = 6.5; d.s = scale || 1; d.bounced = 0;
   }
 
   bloodPool(x, z, r) {
@@ -1295,6 +1282,7 @@ export class FX {
     this.dust.update(dt);
     this.mist.update(dt);
     this.petals.update(dt);
+    this.blood.update(dt);
 
     /* 상흔 — 유닛 관절을 따라간다 */
     for (const w of this.wounds) {

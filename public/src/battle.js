@@ -256,19 +256,11 @@ export class Battle {
     this.arenaR = clamp(42 + Math.sqrt(Math.max(0, this.total)) * 1.05, 46, 100);
     this.crowd = this.total > 900;
     this.grid = new Grid(this.crowd ? 4.2 : 3.6);
-    // 아군: 플레이어가 선택 클래스 1자리를 대신한다 (양 팀 인원 완전 동일)
-    let playerSlot = null;
-    for (let i = 0; i < form.length; i++) {
-      if (form[i].cls === this.playerClass) { playerSlot = i; break; }
-    }
-    if (!playerSlot && form.length) playerSlot = 0;
-    const playerCarve = playerSlot !== null && form[playerSlot] ? form[playerSlot] : null;
-
+    /* 아군 AI — 설정한 병력 수만큼 그대로 스폰한다. 플레이어는 이 수에 포함되지 않는다.
+       (예전엔 플레이어가 아군 1자리를 대신해서, 아군 1명으로 맞추면 AI 아군이 0명이 됐다) */
     for (let i = 0; i < form.length; i++) {
       const f = form[i];
-      const seed = this.unitSeed(i);
-      if (f === playerCarve) continue;   // 플레이어 자리
-      const u = this.newUnit(f.cls, 'ally', f.x, -f.z, false, seed);
+      const u = this.newUnit(f.cls, 'ally', f.x, -f.z, false, this.unitSeed(i));
       u.mirror = i;
     }
     for (let i = 0; i < formE.length; i++) {
@@ -279,22 +271,20 @@ export class Battle {
       u.yaw = Math.PI;
     }
 
-    // 플레이어 — 대형의 한 자리를 그대로 이어받는다 (인원 대칭 유지)
-    //  · 직접 참전이면 아군 대열의 맨 앞(적 쪽)에 선다 — 시작부터 등짝이 시야를 가리지 않게
+    // 플레이어 — 아군 수와 별도로 한 명 더. 아군 대열의 맨 앞(적 쪽)에 선다
     let frontZ = -Infinity;
     for (const u of this.units) if (u.team === 'ally' && u.z > frontZ) frontZ = u.z;
     this.spawnPoint = { x: 0, z: (isFinite(frontZ) ? frontZ + 1.5 : -9.0) };
-    const px = this.autoPlayer && playerCarve ? playerCarve.x : this.spawnPoint.x;
-    const pz = this.autoPlayer && playerCarve ? -playerCarve.z : this.spawnPoint.z;
-    const pseed = playerCarve ? this.unitSeed(form.indexOf(playerCarve)) : this.unitSeed(0);
-    const pu = this.newUnit(this.playerClass, 'ally', px, pz, true, pseed);
+    const px = this.spawnPoint.x;
+    const pz = this.spawnPoint.z;
+    const pu = this.newUnit(this.playerClass, 'ally', px, pz, true, this.unitSeed(0));
     const mult = 1 + this.playerKills * GROWTH_PER_KILL;
     pu.hp = CLASSES[this.playerClass].hp * mult;
     pu.maxHp = pu.hp;
     pu.damage = CLASSES[this.playerClass].damage * mult;
     pu.growl = mult;
     pu.yaw = 0;
-    pu.mirror = playerCarve ? form.indexOf(playerCarve) : 0;
+    pu.mirror = 0;
     this.player = pu;
 
     /* 스폰 직후 코앞에 아군이 겹쳐 시야를 가리지 않도록 플레이어 주변을 살짝 비운다 */
@@ -319,7 +309,7 @@ export class Battle {
        적군이 0명인 편성은 '연습 모드'로 두고 승리로 끝내지 않는다. */
     this.initialAlly = this.countAlive('ally');
     this.initialEnemy = this.countAlive('enemy');
-    this.initialTotalAlly = this.totalRoster.ally === 0 ? 1 : this.totalRoster.ally;   // 플레이어가 한 자리를 차지
+    this.initialTotalAlly = this.totalRoster.ally + 1;   // 설정한 아군 수 + 플레이어 본인(별도)
     this.initialTotalEnemy = this.totalRoster.enemy;
     this.practice = this.totalRoster.enemy === 0;
     this.endGraceT = 0.75;   // 스폰 직후 첫 프레임에 판정하지 않는다
@@ -406,7 +396,9 @@ export class Battle {
         if (this.reinT[team][cls] < interval) continue;
         this.reinT[team][cls] = 0;
         const cap = this.fieldCap[team][cls] || 0;
-        const slots = cap - (alive[cls] || 0);
+        // 플레이어는 설정 병력 수와 별도 — 클래스 상한 계산에서 뺀다
+        const pIn = this.player && !this.player.dead && !this.player.removed && this.player.team === team && this.player.cls === cls ? 1 : 0;
+        const slots = cap - Math.max(0, (alive[cls] || 0) - pIn);
         if (slots <= 0) continue;
         const n = Math.min(slots, rem[cls], this.crowd ? 3 : 2);
         if (n <= 0) continue;
@@ -484,7 +476,7 @@ export class Battle {
     p.deathKind = null;
     p.guard = false; p.guardT = 0; p.guardCd = 0; p._guardK = 0;
     p.staggerT = 0; p.staggerMax = 0.28; p._atkFreeze = -1; p.moveAmt = 0;
-    p._tier = -1; p._hidByCam = false; p.hideModel = false;
+    p._tier = -1; p.hideModel = false;
     this.emit({ type: 'respawn', unit: p });
   }
 
@@ -568,65 +560,15 @@ export class Battle {
     return null;
   }
 
-  /* ---------------------------------------------------------------- 🩸 부위 */
-  /* 이 유닛이 다음 일격에 노릴 부위 (AI). 플레이어는 조준점이 정한다.
-     이미 잘려 나간 팔·다리는 노리지 않는다 (히트박스가 없다). */
-  rollPart(u, target) {
-    const sev = target && target.severed;
-    for (let tries = 0; tries < 3; tries++) {
-      const r = u.rng();
-      let p = 'body';
-      for (let i = 0; i < PART_TABLE.length; i++) if (r < PART_TABLE[i][0]) { p = PART_TABLE[i][1]; break; }
-      if (!sev || p === 'body' || p === 'head' || !sev[p]) return p;
-    }
-    return 'body';
-  }
-
-  /* 팔·다리를 잃었을 때의 능력치 갱신 — 공속/이속 30% 감소 */
-  refreshLimbs(u) {
-    const spec = CLASSES[u.cls] || CLASSES.soldier;
-    u.armsLost = (u.severed.armL ? 1 : 0) + (u.severed.armR ? 1 : 0);
-    u.legsLost = (u.severed.legL ? 1 : 0) + (u.severed.legR ? 1 : 0);
-    const armMul = Math.max(0.01, 1 - LIMB_LOSS * u.armsLost);
-    const legMul = Math.max(0.01, 1 - LIMB_LOSS * u.legsLost);
-    u.cycle = spec.cycle / armMul;          // 공속 30%↓ = 주기 ÷0.7
-    u.speed = spec.speed * legMul;          // 이속 30%↓
-    u.sevMask = (u.severed.armL ? 1 : 0) | (u.severed.armR ? 2 : 0) |
-                (u.severed.legL ? 4 : 0) | (u.severed.legR ? 8 : 0) |
-                (u.severed.head ? 16 : 0);
-  }
-
-  /* 부위 하나를 잃는다 — 잘린 파츠는 FX로 떨어지고, 양쪽 다 잃으면 죽는다 */
-  severLimb(target, part, source, kind) {
-    const key = part === 'head' ? 'head' : part;
-    if (target.severed[key]) return false;
-    target.severed[key] = 1;
-    if (part === 'head') target.behead = true;
-    this.refreshLimbs(target);
-    const side = part === 'armL' || part === 'legL' ? -1 : 1;
-    const h = part === 'head' ? 1.62 : (part === 'armL' || part === 'armR') ? 1.25 : 0.62;
-    this.emit({
-      type: 'sever', unit: target, part, side, kind,
-      x: target.x, y: h * (target.scale || 1), z: target.z, yaw: target.yaw
-    });
-    const pairGone = (target.armsLost >= 2) || (target.legsLost >= 2);
-    if (pairGone && !target.dead) {
-      // 양팔 또는 양다리를 모두 잃으면 무릎을 꿇고 발악하다 과다출혈로 쓰러진다
-      target.hp = 0;
-      target.deathKind = 'bleed';
-      this.kill(target, source, kind, { part: 'bleed', kind: 'bleed' });
-    }
-    return true;
-  }
-
   damage(target, amount, source, kind, part) {
     if (target.dead) return 0;
     // 🎬 관전 중인 플레이어는 맞지 않는다 (관전하다 죽어서 리스폰되는 일 방지)
     if (target.isPlayer && (this.playerSafe || this.playerInvuln > 0)) return 0;
 
     /* 🛡️ 검 막기 — 바라보는 정면(±77°)에서 날아온 공격은 마법·망치·일섬·평타 구분 없이
-       피해 0으로 완전히 막아낸다. 뒤에서 맞으면 그대로 들어간다. (가드 브레이크 없음) */
-    const canGuard = target.guard && (target.cls === 'soldier' || target.cls === 'elite');
+       피해 0으로 완전히 막아낸다. 뒤에서 맞으면 그대로 들어간다. (가드 브레이크 없음)
+       · 플레이어는 마법사만 빼고 모든 병종(병사·고급 병사·기사·검객)이 막을 수 있다 */
+    const canGuard = target.guard && target.cls !== 'wizard';
     if (canGuard) {
       let frontal = true;
       if (source && source.x !== undefined) {
@@ -645,31 +587,14 @@ export class Battle {
       }
     }
 
-    // 🩸 이미 잘려 나간 팔·다리에는 히트박스가 없다 — 그 자리를 베면 허공을 가른다
-    const p = part || 'body';
-    if (p !== 'body' && p !== 'head' && target.severed[p]) {
-      this.emit({ type: 'miss', target, source, hx: target.x, hy: 1.0, hz: target.z, part: p });
-      return 0;
-    }
-    const partMul = (p === 'armL' || p === 'armR' || p === 'legL' || p === 'legR') ? 0.8 : 1;
-    const dmg = amount * partMul * (1 - target.armor);
+    // 🩸 어느 부위를 베든 몸통 피해 — 부위 절단 없음
+    const dmg = amount * (1 - target.armor);
     target.hp -= dmg;
     target.lastHitBy = source ? source.id : 0;
     const lethal = target.hp <= 0;
 
-    // 부위 절단 판정 — 이미 잘린 부위를 또 맞으면 몸통 피해
-    const limbKey = (p === 'armL' || p === 'armR' || p === 'legL' || p === 'legR') ? p : null;
-    if (limbKey && !target.severed[limbKey]) {
-      const ratio = clamp(dmg / Math.max(1, target.maxHp), 0, 1);
-      let chance = ratio * 0.55 + 0.06;
-      if (kind === 'petal') chance += 0.18;
-      if (kind === 'hammer') chance += 0.22;
-      if (lethal) chance = 1;
-      if (target.rng() < chance) this.severLimb(target, limbKey, source, kind);
-    }
-
     if (lethal) {
-      this.kill(target, source, kind, { part: p });
+      this.kill(target, source, kind);
     } else {
       const st = kind === 'hammer' || kind === 'ice' ? 0.40 : 0.22;
       target.staggerT = Math.max(target.staggerT, st);
@@ -686,16 +611,7 @@ export class Battle {
       target.hitDone = true;
       this.resolveMelee(target);
     }
-    const part = info && info.part;
     if (info && info.kind) target.deathKind = info.kind;
-    if (part === 'head') target.deathKind = 'behead';
-    target.behead = part === 'head' || (target.severed.head === 1 && part !== 'bleed');
-    if (target.behead && !target.severed.head) {
-      target.severed.head = 1;
-      this.refreshLimbs(target);
-      this.emit({ type: 'sever', unit: target, part: 'head', side: 1, kind: kind || 'blade',
-        x: target.x, y: 1.62 * (target.scale || 1), z: target.z, yaw: target.yaw });
-    }
     this.lastDeathAt = this.time;
     // 죽는 순간 휘두르던 동작(접촉 프레임 전이면 그 자세)을 기억 — pose 가 0.2초 동안 겹쳐 준다
     target._atkFreeze = target.attackT >= 0 ? target.attackT : -1;
@@ -708,7 +624,7 @@ export class Battle {
     target.moveAmt = 0;
     target.guard = false; target.guardT = 0;
     target.vx = target.vz = 0;
-    this.emit({ type: 'death', unit: target, by: source || null, kind, behead: target.behead });
+    this.emit({ type: 'death', unit: target, by: source || null, kind, behead: false });
     if (source) {
       source.kills = (source.kills || 0) + 1;
       if (source.isPlayer) {
@@ -771,10 +687,8 @@ export class Battle {
     for (let i = 0; i < hits.length && i < max; i++) {
       const o = hits[i].o;
       const hx = (u.x + o.x) / 2, hz = (u.z + o.z) / 2;
-      // 부위: 플레이어는 조준점, AI는 근접 난전에서 자연스럽게 섞인다
-      const part = u.isPlayer
-        ? (o.id === u.aimId ? (u.aimPart || 'body') : 'body')
-        : this.rollPart(u, o);
+      // 부위 절단은 없다 — 어디를 베든 몸통 피해로 들어간다 (피 이펙트만 강화)
+      const part = 'body';
       const dmg = this.damage(o, u.damage, u, u.cls === 'knight' ? 'hammer' : 'blade', part);
       this.emit({
         type: 'hit', source: u, target: o, dmg, kind: u.cls === 'knight' ? 'hammer' : 'blade', part,
@@ -1000,8 +914,8 @@ export class Battle {
     if (p && !p.dead && input && !this.autoPlayer) {
       const mx = input.mx || 0, mz = input.mz || 0;
       const len = Math.hypot(mx, mz);
-      // 🛡️ 검·방패 막기 — 누르고 있는 동안 계속 (고급 병사도 횟수 제한 없음)
-      const canGuardCls = p.cls === 'soldier' || p.cls === 'elite';
+      // 🛡️ 검·방패 막기 — 누르고 있는 동안 계속 (마법사만 빼고 모든 병종 가능)
+      const canGuardCls = p.cls !== 'wizard';
       p.guard = canGuardCls ? !!input.guard : false;
       p.aimPart = input.aimPart || 'body';
       p.aimId = input.aimId || 0;
@@ -1381,9 +1295,8 @@ export class Battle {
         const dx = u.x - o.x, dz = u.z - o.z;
         let d = Math.hypot(dx, dz);
         const om = o.mass || 1;
-        /* 아군은 플레이어의 개인 공간을 비켜 간다 — 코앞에 겹쳐 시야를 가리지 않게 */
-        const personal = (u.isPlayer !== o.isPlayer) && u.team === o.team ? 2.3 : 0;
-        const minD = (u.radius + o.radius) * 0.96 + personal;
+        /* 유닛끼리는 몸 반경만큼만 벌어진다 — 1인칭에서 아군이 코앞에 붙어도 비켜 가지 않는다 */
+        const minD = (u.radius + o.radius) * 0.96;
         if (d >= minD) continue;
         let nx, nz;
         if (d < 0.0001) { const a = (u.id * 2.399) % TAU; nx = Math.cos(a); nz = Math.sin(a); d = 0.0001; }

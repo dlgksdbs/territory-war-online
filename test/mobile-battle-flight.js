@@ -6,8 +6,10 @@
    · ☀️ 밝기·광택: 노출/조명/안개가 어둡지 않고, 갑옷이 번쩍이지 않는 범위인지
    · 🛡️ 새 막기 판정: 정면(±77°)은 마법·망치·일섬·평타 모두 0 피해, 뒤는 그대로
    · 🛡️ 고급 병사: 5회 충전 · 19초 재충전 (HUD 표시 포함)
-   · 🩸 부위 절단: 조준 높이로 머리/팔/다리 판정 · 잘린 파츠가 실제로 떨어짐 ·
-        머리 베임은 서 있다가 쓰러지는 전용 모션
+   · 🩸 피 이펙트: 맞으면 물방울·피안개가 세차게 튐 · 처치 시 큰 분사 + 바닥 웅덩이 ·
+        부위 절단은 없다(어디를 베든 몸통 피해, 몸은 온전)
+   · 🛡️ 막기: 실터치 홀드/탭으로 모든 병종(병사·고급·기사·검객)이 정면 공격을 0 피해로 막음
+   · 👥 아군 수는 플레이어와 별도 (아군 1 = AI 1 + 플레이어) · 기사 공속 살짝 상향
    · 🧠 전술 AI: 매화 검객이 플레이어에게 매화 일섬을 쓴다 · 측면 기동으로 붙는다
    · ⚔️ HUD 아군 수에서 플레이어 제외
    · 🏆 마지막 적의 사망 모션이 끝난 뒤에 승리 배너 (deadT 를 끊지 않는다)
@@ -308,90 +310,55 @@ function ok(name, cond, extra) {
     Math.abs(landed.player.x - beforeExit.x) < 2.5 && Math.abs(landed.player.z - beforeExit.z) < 2.5,
     { x: landed.player.x, z: landed.player.z });
 
-  /* ===== 8. 🩸 부위 절단 · 조준 판정 ===== */
+  /* ===== 8. 🩸 부위 절단 없음 · 피 이펙트 ===== */
   await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 6, enemy: 6, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
   await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
-  await sleep(700);
-  const aim = await page.evaluate(() => {
-    const app = window.BA.app, b = window.BA.battle, p = b.player;
-    app.paused = true;
-    p.x = 0; p.z = 0; p.yaw = 0;
-    // 정면 4m 에 적 하나 — 머리 높이를 조준
-    const foe = b.units.find((u) => u.team === 'enemy' && !u.dead);
-    for (const u of b.units) if (u !== foe && !u.isPlayer) { u.x = 200 + Math.random() * 20; u.z = 200; u.hideModel = true; }
-    foe.x = 0; foe.z = 4; foe.yaw = Math.PI; foe.hideModel = false; foe.dead = false; foe.hp = 500; foe.maxHp = 500;
-    app.camMode = 'fp';
-    app.camYaw = Math.PI; p.yaw = 0;
-    const eye = 1.66;
-    const head = 1.72 * (foe.scale || 1);
-    // 머리를 겨냥: 카메라(눈높이 1.66) → 머리(1.62) 는 거의 수평
-    app.camPitch = Math.atan2(head - 0.10 - eye, 4);
-    app.updateCamera(1 / 60);
-    app._updateAimInfo();
-    const headPart = app.input.aimPart;
-    const headId = app.input.aimId;
-    // 다리를 겨냥
-    app.camPitch = Math.atan2(0.45 - eye, 4);
-    app.updateCamera(1 / 60);
-    app._updateAimInfo();
-    const legPart = app.input.aimPart;
-    // 팔(어깨 높이·옆)
-    foe.yaw = Math.PI; // 정면
-    return { headPart, headId, legPart, foeId: foe.id };
-  });
-  ok('🎯 조준 높이로 부위가 갈린다 (머리 / 다리)', aim.headPart === 'head' && (aim.legPart === 'legL' || aim.legPart === 'legR'),
-    aim);
-
-  const sever = await page.evaluate(() => {
-    const b = window.BA.battle, app = window.BA.app;
-    const foe = b.units.find((u) => u.id === window.BA.state().player ? false : u.team === 'enemy' && !u.dead && !u.removed);
-    const u = b.units.find((x) => x.team === 'enemy' && !x.dead && x.x === 0 && x.z === 4) || foe;
-    u.hp = 5000; u.maxHp = 5000; u.armor = 0; u.rng = () => 0;
-    const src = { x: 0, z: 6, team: 'ally', id: 900 };
-    b.damage(u, 300, src, 'blade', 'armL');
-    const armCut = { sev: u.severed.armL, cycle: u.cycle, mask: u.sevMask };
-    b.damage(u, 300, src, 'blade', 'legR');
-    const legCut = { sev: u.severed.legR, speed: u.speed };
-    // 머리 베임 → 전용 사망 모션 + 떨어지는 머리 파츠
-    b.damage(u, 99999, src, 'blade', 'head');
-    const fx = app.fx;
-    fx.handle(b.drain(), b);            // 실제 루프처럼 이벤트를 FX 로 넘긴다
-    const limbs = Object.keys(fx.limbPool).map((k) => ({ k, live: fx.limbPool[k].data.filter((d) => d && d.life <= d.max).length }));
-    const jets = fx.jets.length;
-    return { armCut, legCut, dead: u.dead, behead: u.behead, mask: u.sevMask, limbs, jets };
-  });
-  ok('🩸 팔을 잃으면 공속 30%↓ · 다리를 잃으면 이속 30%↓',
-    sever.armCut.sev === 1 && sever.armCut.cycle > specs.classes[sever.armCut.cls || 'soldier'].cycle &&
-    sever.legCut.sev === 1 && sever.legCut.speed < 4.15,
-    sever.armCut);
-  ok('🩸 머리 베임 — behead 표시 + 머리 파츠 숨김(mask 16)', sever.dead && sever.behead && (sever.mask & 16) !== 0, sever);
-  ok('🩸 잘린 파츠가 실제로 떨어진다 (팔·다리·머리 풀에 살아 있는 인스턴스)', sever.limbs.some((l) => l.live > 0), sever.limbs);
-  ok('🩸 목에서 피가 뿜는 제트가 생긴다', sever.jets >= 1, { jets: sever.jets });
-
-  /* ===== 8b. 🩸 잘린 파츠 유닛 충돌 · 바닥 혈흔 ===== */
+  await sleep(600);
   const gore = await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle;
-    app.paused = false;
-    const u = b.units.find((x) => x.team === 'ally' && !x.isPlayer && !x.dead) || b.units.find((x) => !x.dead);
-    u.x = 5; u.z = 5; u.hideModel = false;
-    // 잘린 팔을 유닛 몸통 안에서 던진다 → 밀려나야 한다
-    app.fx.spawnLimb('arm', u.x, u.y + 0.9, u.z, 0, 0, 0, 0, 1);
-    for (let i = 0; i < 10; i++) { b.update(1 / 60, null); app.fx.update(1 / 60, b, app.cam); }
-    const pool = app.fx.limbPool.arm;
-    const live = pool.data.filter((d) => d && d.life <= d.max);
-    const d0 = live.length ? Math.hypot(live[0].x - u.x, live[0].z - u.z) : 0;
-    // 피 웅덩이 — 지금까지 쓰러진 자리에 흥건하게 고여 있다
-    const pools = app.fx.bloodPools.filter((p) => p.life <= p.max && p.m.visible);
-    return {
-      limbs: live.length,
-      dist: +d0.toFixed(2),
-      minD: +((u.radius || 0.38) + 0.10).toFixed(2),
-      pools: pools.length,
-      nan: !!(live.length && (!isFinite(live[0].x) || !isFinite(live[0].y)))
-    };
+    app.paused = true;
+    const p = b.player;
+    p.x = 0; p.z = 0; p.yaw = 0; p.dead = false;
+    const foe = b.units.find((u) => u.team === 'enemy' && !u.dead);
+    const ally = b.units.find((u) => u.team === 'ally' && !u.isPlayer && !u.dead);
+    const src = { x: 0, z: 2, team: 'ally', id: 801 };
+    // 머리·팔·다리 어디를 노려도 몸통 피해만 들어가고 절단은 없다
+    foe.hp = 5000; foe.maxHp = 5000; foe.armor = 0;
+    const hp0 = foe.hp;
+    const dHead = b.damage(foe, 100, src, 'blade', 'head');
+    const dArm = b.damage(foe, 100, src, 'blade', 'armL');
+    const dLeg = b.damage(foe, 100, src, 'blade', 'legR');
+    const sevAfter = { ...foe.severed };
+    const maskAfter = foe.sevMask;
+    const evs = b.drain().filter((e) => e.type === 'sever').length;
+    // 피 분사 — 때리면 물방울·피안개가 실제로 생긴다
+    const before = { blood: app.fx.blood.n, dust: app.fx.dust.n, pools: app.fx.bloodPools.filter((x) => x.m.visible).length };
+    b.damage(foe, 60, src, 'blade', 'body');
+    const hitEv = { type: 'hit', source: src, target: foe, dmg: 60, kind: 'blade', part: 'body', lethal: false,
+      hx: 0, hz: 1.8, hy: 1.15, angle: 0 };
+    app.fx.handle([hitEv], b);
+    const after = { blood: app.fx.blood.n, dust: app.fx.dust.n, pools: app.fx.bloodPools.filter((x) => x.m.visible).length };
+    // 처치 — 큰 피 분사 + 웅덩이
+    app.fx.blood.n = 0;                 // 이미 쌓인 물방울은 비우고 이번 분사만 잰다
+    const kill0 = { blood: app.fx.blood.n, pools: app.fx.bloodPools.filter((x) => x.m.visible).length };
+    foe.hp = 1;
+    b.damage(foe, 999, src, 'blade', 'body');
+    app.fx.handle(b.drain(), b);
+    const kill1 = { blood: app.fx.blood.n, pools: app.fx.bloodPools.filter((x) => x.m.visible).length, dead: foe.dead };
+    // 잘린 파츠(limb)는 더 이상 생기지 않는다
+    const limbs = Object.keys(app.fx.limbPool).map((k) => app.fx.limbPool[k].data.filter((d) => d && d.life <= d.max).length);
+    return { hp0, dHead, dArm, dLeg, sev: sevAfter, mask: maskAfter, sevEvents: evs,
+      before, after, kill0, kill1, limbs, allyOk: !!ally, getHp: foe.hp };
   });
-  ok('🩸 잘린 파츠는 유닛을 통과하지 않고 밀려난다', gore.limbs >= 1 && !gore.nan && gore.dist >= gore.minD, gore);
-  ok('🩸 피 웅덩이가 바닥에 흥건하게 고인다 (풀 상한 안)', gore.pools >= 1 && gore.pools <= 18, gore);
+  ok('🩸 부위 절단이 없다 — 머리·팔·다리를 노려도 몸통 피해만 들어간다',
+    gore.dHead === 100 && gore.dArm === 100 && gore.dLeg === 100 && gore.sev.head === 0 && gore.sev.armL === 0 &&
+    gore.sev.legR === 0 && gore.mask === 0 && gore.sevEvents === 0, gore);
+  ok('🩸 맞으면 공중으로 피가 세차게 튄다 (물방울 + 피안개)',
+    gore.after.blood > gore.before.blood + 15 && gore.after.dust > gore.before.dust + 6,
+    { blood: gore.after.blood - gore.before.blood, mist: gore.after.dust - gore.before.dust });
+  ok('🩸 쓰러지면 큰 피 분사와 바닥 웅덩이가 남는다',
+    gore.kill1.dead && gore.kill1.blood > gore.kill0.blood + 40 && gore.kill1.pools > gore.kill0.pools, gore.kill1);
+  ok('🩸 잘린 파츠(팔·다리·머리)는 더 이상 생기지 않는다', gore.limbs.every((n) => n === 0), gore.limbs);
 
   /* ===== 9. 🏆 마지막 적 사망 모션 뒤에 승리 배너 ===== */
   const ending = await page.evaluate(() => {
@@ -480,37 +447,40 @@ function ok(name, cond, extra) {
     revive.dead0 && revive.revived && revive.inList && revive.cdDrops, revive);
   ok('🐞 부활 직후 공격이 다시 가능하다', revive.canAttack, revive);
 
-  /* ===== 12. 🩸 단면(스텀프) 파츠가 실제로 그려진다 ===== */
-  const stump = await page.evaluate(() => {
+  /* ===== 12. 🩸 온전한 몸으로 그려진다 (절단 단면·파츠 없음) ===== */
+  const whole = await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle;
     const THREE = window.__THREE;
     app.paused = true; app.camMode = 'fp';
     const u = b.units.find((x) => !x.isPlayer && !x.dead) || b.units.find((x) => !x.dead);
-    // 카메라 3m 앞에 세운다 (상세 슬롯을 받는 거리)
     const cp = app.cam.position;
     u.x = cp.x; u.z = cp.z + 3; u.y = 0; u.yaw = Math.PI; u.hideModel = false;
-    u._hidByCam = false;
-    u.severed.armR = 1; u.armsLost = 1; u.sevMask = 2;
+    // 팔·다리를 여러 번 노려 때려도 절단되지 않는다
+    const src = { x: cp.x, z: cp.z + 4, team: 'ally', id: 811 };
+    u.hp = 5000; u.maxHp = 5000; u.armor = 0;
+    for (let i = 0; i < 8; i++) b.damage(u, 10, src, 'blade', i % 2 ? 'armR' : 'legL');
     for (let i = 0; i < 3; i++) app.unitRenderer.update(b.units, cp, app.time + i * 0.016, 1 / 60);
     const c = app.unitRenderer.classes[u.cls];
-    const armStem = c.parts.filter((p) => p.userData.sevOnly === 2);
-    const legStem = c.parts.filter((p) => p.userData.sevOnly === 8);
     const m = new THREE.Matrix4();
-    const scaleOf = (p) => {
-      if (!p || u.dslot < 0) return -1;
-      p.getMatrixAt(u.dslot, m);
+    const scaleOf = (pv) => {
+      if (!pv || u.dslot < 0) return -1;
+      pv.getMatrixAt(u.dslot, m);
       const e = m.elements;
       return Math.hypot(e[0], e[1], e[2]);
     };
-    const armScale = armStem.length ? Math.max(...armStem.map(scaleOf)) : -1;
-    const legScale = legStem.length ? Math.max(...legStem.map(scaleOf)) : -1;
-    // 잘린 팔(마스크 2) 파츠의 인스턴스는 숨김(스케일 0)이어야 한다
-    const armPart = c.parts.find((p) => p.userData.sev === 2 && !p.userData.sevOnly);
-    const armPartScale = armPart ? scaleOf(armPart) : -1;
-    return { dslot: u.dslot, stems: armStem.length, armScale: +armScale.toFixed(3), legScale: +legScale.toFixed(3), armPartScale: +armPartScale.toFixed(3) };
+    const armPart = c.parts.find((pv) => pv.userData.sev === 2 && !pv.userData.sevOnly);
+    const legPart = c.parts.find((pv) => pv.userData.sev === 8 && !pv.userData.sevOnly);
+    const stems = c.parts.filter((pv) => pv.userData.sevOnly);
+    const stemMax = stems.length ? Math.max(...stems.map(scaleOf)) : 0;
+    return {
+      dslot: u.dslot, mask: u.sevMask, dead: u.dead,
+      arm: +scaleOf(armPart).toFixed(3), leg: +scaleOf(legPart).toFixed(3),
+      stemMax: +stemMax.toFixed(3), severed: Object.keys(u.severed).filter((k) => u.severed[k]).length
+    };
   });
-  ok('🩸 절단 부위에 단면 파츠(살점·뼈)가 그려지고, 잘린 팔 파츠는 숨겨진다',
-    stump.dslot >= 0 && stump.stems > 0 && stump.armScale > 0.5 && stump.legScale < 0.01 && stump.armPartScale < 0.01, stump);
+  ok('🩸 부위를 계속 맞아도 몸은 온전하다 (절단 단면 없음 · 팔·다리 파츠 그대로)',
+    whole.dslot >= 0 && whole.mask === 0 && whole.severed === 0 && !whole.dead &&
+    whole.arm > 0.5 && whole.leg > 0.5 && whole.stemMax < 0.01, whole);
 
   /* ===== 13. ❄️ 얼음 부채꼴 이펙트를 반복해도 풀이 늘지 않는다 (GPU 누수 회귀 방지) ===== */
   const iceLeak = await page.evaluate(() => {
@@ -588,17 +558,21 @@ function ok(name, cond, extra) {
   ok('🔁 3회 재시작해도 매번 시작·공격이 되고 GPU 리소스가 폭증하지 않는다',
     restarts.runs.every((r) => r.okStart && r.attack) && restarts.after.geos <= restarts.before.geos + 40, restarts);
 
-  /* ===== 17. 🩸 절단 직후 사망 — 예외 없이 파츠·스텀프 처리 ===== */
-  const severDeath = await page.evaluate(() => {
+  /* ===== 17. 🩸 피 파티클이 풀 상한 안에서 정리된다 (누수 없음) ===== */
+  const bloodPool = await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle;
-    const u = b.units.find((x) => !x.isPlayer && !x.dead);
-    u.hp = 10; u.maxHp = 200; u.severed.armL = 1; u.armsLost = 1;
-    b.damage(u, 999, b.player, 'blade', 'legR');
-    for (let k = 0; k < 40; k++) { b.update(1 / 60, null); app.fx.update(1 / 60, b, app.cam); }
-    return { dead: u.dead, mask: u.sevMask, beheaded: !!u.behead, stumps: app.fx.stumps.length, pools: app.fx.bloodPools.filter((p) => p.visible).length };
+    for (let i = 0; i < 40; i++) {
+      const u = b.units[(i * 7) % b.units.length];
+      if (u && !u.dead) b.damage(u, 5, b.player, 'blade', 'body');
+      app.fx.update(1 / 60, b, app.cam);
+    }
+    const n = app.fx.blood.n;
+    let nan = false;
+    for (let i = 0; i < n * 3; i++) if (!isFinite(app.fx.blood.pos[i])) { nan = true; break; }
+    return { n, cap: app.fx.blood.cap, nan, pools: app.fx.bloodPools.filter((p) => p.m.visible).length };
   });
-  ok('🩸 절단된 유닛이 곧바로 죽어도 사망 모션·단면·피 웅덩이가 정상 처리된다',
-    severDeath.dead && (severDeath.mask & 1) !== 0, severDeath);
+  ok('🩸 피 파티클·핏자국이 상한 안에서 돌고 좌표가 깨지지 않는다',
+    bloodPool.n <= bloodPool.cap && !bloodPool.nan && bloodPool.pools <= 18, bloodPool);
 
   /* ===== 18. 🎞️ 모션 연속성 — 프레임 사이 관절 회전이 튀지 않는다 ===== */
   const motion = await page.evaluate(() => {
@@ -621,22 +595,160 @@ function ok(name, cond, extra) {
   ok('🎞️ 사망 모션 프레임당 회전·루트 이동이 작다 (끊김 없이 쓰러진다)',
     badDeath.length === 0, badDeath.map((k) => ({ k, max: motion[k].death.max, root: motion[k].death.rootJump })));
 
-  /* ===== 19. 🩸 플레이어 팔 절단이 1인칭 무기에 반영 ===== */
+  /* ===== 19. 🩸 부위 절단 없음 — 1인칭 무기·눈높이는 그대로 ===== */
   const vmSev = await page.evaluate(() => {
     const app = window.BA.app, b = window.BA.battle, p = b.player;
-    p.severed.armR = 1; p.armsLost = 1; p.sevMask = 2;
-    p.severed.legR = 1; p.legsLost = 1; p.sevMask = 2 | 8;
+    // 예전 절단 상태 값을 강제로 넣어도 동작이 흔들리지 않는다 (시스템이 없다)
+    p.dead = false; p.hp = Math.max(1, p.maxHp);
+    p.severed = { armL: 0, armR: 1, legL: 0, legR: 1, head: 0 };
+    p.armsLost = 1; p.legsLost = 1; p.sevMask = 2 | 8;
     app.camMode = 'fp';
     for (let i = 0; i < 20; i++) app.vm.update(1 / 60, p, app.input, app.time + i / 60, app.camYaw + Math.PI, app.camPitch);
     const model = app.vm.models[p.cls] || app.vm.models.soldier;
-    const armHidden = !!(model.userData.armGroup && model.userData.armGroup.visible === false);
+    const armVisible = !!(model.userData.armGroup && model.userData.armGroup.visible !== false);
     app.updateCamera(1 / 60);
-    const eye = app.cam.position.y;
-    const swapped = (app.vm.handSwap || 0) > 0.5;
-    return { armHidden, swapped, eye: +eye.toFixed(2) };
+    const eye = +app.cam.position.y.toFixed(2);
+    const spec = window.BA.specs().classes[p.cls];
+    return { armVisible, eye, viewEye: spec.viewEye, handSwap: app.vm.handSwap || 0, limp: app.vm.limp || 0 };
   });
-  ok('🩸 오른팔을 잃으면 1인칭 무기 팔을 감추고 반대손으로 옮겨 든다', vmSev.armHidden && vmSev.swapped, vmSev);
-  ok('🩸 다리를 잃으면 1인칭 눈높이가 낮아진다', vmSev.eye < 1.55, vmSev);
+  ok('🩸 1인칭 무기는 언제나 오른손 — 손바꿈·절뚝임 없음', vmSev.armVisible && vmSev.handSwap === 0 && vmSev.limp === 0, vmSev);
+  ok('🩸 눈높이가 병종 고정값 그대로 (다리 상태와 무관)', Math.abs(vmSev.eye - vmSev.viewEye) < 0.02, vmSev);
+
+  /* ===== 20. 👥 1인칭 아군 — 코앞에 붙어도 숨기지 않고 시야를 가린다 ===== */
+  await page.evaluate(() => {
+    window.BA.start({ cls: 'soldier', ally: 1, enemy: 0, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 });
+  });
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  const nearAlly = await page.evaluate(async () => {
+    const app = window.BA.app, b = window.BA.battle;
+    app.paused = true;
+    app.camMode = 'fp';
+    const p = b.player;
+    p.x = 0; p.z = 0; p.yaw = 0; p.pitch = 0; p.dead = false;
+    app.camYaw = Math.PI; app.camPitch = 0;
+    const al = b.units.find((u) => u.team === 'ally' && !u.isPlayer && !u.dead);
+    if (!al) return { missing: true };
+    al.speed = 0;                 // AI 이동 없이 배치만 본다
+    al.dead = false; al.hideModel = false;
+    al.x = 0; al.z = 1.1; al.y = 0;
+    app.updateCamera(1 / 60);
+    // 실제 렌더 루프가 두 프레임 돌 때까지 기다린다 (예전에는 여기서 2.5m 안쪽 아군을 숨겼다)
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const near = { hidden: al.hideModel === true, tier: al._tier, dslot: al.dslot };
+    // 개인 공간(2.3m) 비켜감 제거 — 거의 겹친 아군은 몸 반경만큼만 밀려난다
+    al.x = 0; al.z = 0.25; al.y = 0;
+    for (let i = 0; i < 30; i++) b.update(1 / 60, null);
+    const gap = +Math.hypot(al.x - p.x, al.z - p.z).toFixed(2);
+    return { near, gap, radiusSum: +((al.radius + p.radius) * 0.96).toFixed(2) };
+  });
+  ok('👥 1인칭 코앞(1.1m) 아군을 숨기지 않는다 — 시야를 그대로 가린다',
+    !nearAlly.missing && nearAlly.near.hidden === false && nearAlly.near.tier !== -2, nearAlly);
+  ok('👥 1인칭 아군은 플레이어의 2.3m 개인 공간을 비켜 가지 않는다 (몸 반경만큼만 벌어짐)',
+    nearAlly.gap > 0.5 && nearAlly.gap < 1.5, nearAlly);
+
+  /* ===== 21. 🛡️ 막기 버튼 — 실터치(홀드·탭)로 모든 병종이 막는다 ===== */
+  const guardRuns = [];
+  for (const cls of ['soldier', 'elite', 'knight', 'blademaster']) {
+    await page.evaluate((c) => window.BA.start({ cls: c, ally: 6, enemy: 2, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }), cls);
+    await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+    await sleep(300);
+    const rect = await page.evaluate(() => {
+      const b = document.getElementById('guardBtn');
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, on: b.classList.contains('is-on'),
+        hit: (document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) || {}).id || '' };
+    });
+    // 실제 손가락으로 누른다 (버튼 위 히트테스트 포함)
+    await page.touchscreen.touchStart(rect.x, rect.y);
+    await sleep(120);
+    const held = await page.evaluate(() => {
+      const app = window.BA.app, b = window.BA.battle, p = b.player;
+      if (app.paused) app.paused = false;
+      const touchGuard = !!app.input.guard;      // 터치가 실제로 막기 입력을 켰는가
+      // 루프와 같은 cmd 경로로 한 프레임 (guard = 입력 || 탭 유지 시간)
+      const guardCmd = !!(app.input.guard || (app.guardMinT || 0) > 0);
+      b.update(1 / 60, { mx: 0, mz: 0, yaw: p.yaw, guard: guardCmd, attack: false, aimPart: 'body', aimId: 0 });
+      const pGuardNow = !!p.guard;
+      const blocks = [];
+      const orig = b.emit.bind(b);
+      b.emit = (e) => { if (e.type === 'block') blocks.push(e); return orig(e); };
+      p.maxHp = 5000; p.hp = 5000;      // 뒤에서 맞아도 죽지 않게 (막기 자세 확인을 이어서 한다)
+      const front = { x: p.x, z: p.z + 3, team: 'enemy', id: 9001, yaw: Math.PI };
+      b.damage(p, 500, front, 'blade', 'body');
+      const frontHp = p.hp;
+      const blockEv = blocks.length;
+      const rear = { x: p.x, z: p.z - 3, team: 'enemy', id: 9002, yaw: 0 };
+      b.damage(p, 500, rear, 'blade', 'body');
+      const rearHp = p.hp;
+      // 1인칭 무기가 막기 자세로 올라온다
+      for (let i = 0; i < 24; i++) app.vm.update(1 / 60, p, app.input, app.time + i / 60, app.camYaw + Math.PI, app.camPitch);
+      const guardK = +(app.vm.guardK || 0).toFixed(2);
+      b.emit = orig;
+      return { cls: p.cls, touchGuard, inputGuard: !!app.input.guard, pGuard: pGuardNow, frontHp, rearHp,
+        maxHp: p.maxHp, blockEv, guardK, isHeld: document.getElementById('guardBtn').classList.contains('is-held') };
+    });
+    // 손을 뗀 뒤 탭 막기(0.4초)가 유지되는지 — 다시 톡 눌렀다 뗀다
+    await page.touchscreen.touchEnd();
+    await page.evaluate(() => { window.BA.app.guardMinT = 0; window.BA.app.input.guard = false; });
+    await page.touchscreen.touchStart(rect.x, rect.y);
+    await page.touchscreen.touchEnd();
+    const tapped = await page.evaluate(() => {
+      const app = window.BA.app, b = window.BA.battle, p = b.player;
+      if (app.paused) app.paused = false;
+      // 손을 뗀 직후 프레임에서도 탭 유지 시간 때문에 막기가 켜져 있다
+      const guardCmd = !!(app.input.guard || (app.guardMinT || 0) > 0);
+      b.update(1 / 60, { mx: 0, mz: 0, yaw: p.yaw, guard: guardCmd, attack: false, aimPart: 'body', aimId: 0 });
+      return { minT: +(app.guardMinT || 0).toFixed(2), inputGuard: !!app.input.guard, pGuard: !!p.guard };
+    });
+    guardRuns.push({ rect, held, tapped });
+  }
+  ok('🛡️ 막기 버튼이 모든 병종에 보이고 실제 터치로 눌린다',
+    guardRuns.every((g) => g.rect.on && g.held.touchGuard && g.held.inputGuard && g.held.isHeld), guardRuns.map((g) => ({ cls: g.held.cls, on: g.rect.on, hit: g.rect.hit })));
+  ok('🛡️ 막는 동안 정면 공격은 0 피해 + 막힘 이벤트(스파크/소리), 뒤는 그대로',
+    guardRuns.every((g) => g.held.pGuard && Math.abs(g.held.frontHp - g.held.maxHp) < 0.5 && g.held.blockEv >= 1 && g.held.rearHp < g.held.maxHp - 1),
+    guardRuns.map((g) => ({ cls: g.held.cls, front: g.held.frontHp, rear: g.held.rearHp, blocks: g.held.blockEv })));
+  ok('🛡️ 막기 중 1인칭 무기가 막기 자세로 올라온다', guardRuns.every((g) => g.held.guardK > 0.6),
+    guardRuns.map((g) => ({ cls: g.held.cls, guardK: g.held.guardK })));
+  ok('🛡️ 톡 눌렀다 떼도 잠깐은 막힌다 (탭 막기)',
+    guardRuns.every((g) => g.tapped.inputGuard === false && g.tapped.pGuard && g.tapped.minT > 0.05),
+    guardRuns.map((g) => ({ cls: g.held.cls, minT: g.tapped.minT, pGuard: g.tapped.pGuard })));
+
+  await shot('54-guard.png');
+  /* ===== 22. 👥 아군 수는 플레이어와 별도 (아군 1 = AI 1 + 플레이어) ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 1, enemy: 1, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(400);
+  const ally1 = await page.evaluate(() => {
+    const b = window.BA.battle;
+    return {
+      aiAlly: b.units.filter((u) => u.team === 'ally' && !u.isPlayer && !u.dead).length,
+      allyAll: b.units.filter((u) => u.team === 'ally').length,
+      player: !!b.player, initialTotalAlly: b.initialTotalAlly, totalRoster: b.totalRoster.ally,
+      hud: document.getElementById('allyCount').textContent, reserve: b.reserveTotal('ally'),
+      enemy: b.units.filter((u) => u.team === 'enemy').length
+    };
+  });
+  ok('👥 아군 1명 설정 → AI 아군 1명 + 플레이어(별도)가 실제로 스폰된다',
+    ally1.aiAlly === 1 && ally1.allyAll === 2 && ally1.player && ally1.enemy === 1, ally1);
+  ok('👥 상단 아군 수·총원 표시도 플레이어를 빼고 일관된다',
+    ally1.hud === '1' && ally1.initialTotalAlly === 2 && ally1.totalRoster === 1, ally1);
+  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 4, enemy: 2, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(400);
+  const ally4 = await page.evaluate(() => {
+    const b = window.BA.battle;
+    return { aiAlly: b.units.filter((u) => u.team === 'ally' && !u.isPlayer && !u.dead).length,
+      initialTotalAlly: b.initialTotalAlly, hud: document.getElementById('allyCount').textContent };
+  });
+  ok('👥 아군 4명 설정 → AI 4명 + 플레이어 (총 5명)', ally4.aiAlly === 4 && ally4.initialTotalAlly === 5 && ally4.hud === '4', ally4);
+
+  /* ===== 23. 🔨 기사 공속 살짝 상향 ===== */
+  const knightSpd = await page.evaluate(() => {
+    const c = window.BA.specs().classes.knight;
+    return { cycle: c.cycle, animDur: c.animDur, impact: c.impact };
+  });
+  ok('🔨 기사 공속이 살짝 빨라졌다 (주기 1.15 → 1.01, 약 12%)',
+    knightSpd.cycle <= 1.02 && knightSpd.cycle >= 0.98, knightSpd);
 
   ok('콘솔/페이지 오류 0 (헤드리스 SwiftShader)', errors.length === 0, errors.slice(0, 5));
   console.log(`\n모든 테스트 통과 (${passed}개) · 스크린샷 ${SHOTS}`);

@@ -350,10 +350,10 @@ CURVES.elite = (() => {
 
 /* 막기 자세 — 무기를 화면 대각선으로 세워 상체 앞을 가린다 (병사·검객은 검날이 얼굴을 가로지름) */
 const GUARD = {
-  soldier: { p: [0.27, -0.42, -0.60], r: [-0.26, 0.58, 0.34] },
-  elite: { p: [0.24, -0.38, -0.58], r: [-0.22, 0.52, 0.30] },
-  blademaster: { p: [0.30, -0.40, -0.58], r: [-0.18, 0.64, 0.46] },
-  knight: { p: [0.16, -0.44, -0.62], r: [-0.10, 0.44, -0.42] },
+  soldier: { p: [0.34, -0.52, -0.92], r: [-0.55, 0.55, 0.45] },
+  elite: { p: [0.32, -0.50, -0.90], r: [-0.50, 0.52, 0.42] },
+  blademaster: { p: [0.36, -0.52, -0.90], r: [-0.45, 0.60, 0.55] },
+  knight: { p: [0.26, -0.58, -0.96], r: [-0.70, 0.30, -0.30] },
   wizard: { p: [-0.06, -0.46, -0.56], r: [0.10, -0.20, -0.14] }
 };
 
@@ -483,19 +483,12 @@ export class ViewModel {
     this._lagPitch = (this._lagPitch || 0) * Math.max(0, 1 - dt * 9) - dPitch * lagScale;
     this._lagYaw = clamp(this._lagYaw, -0.05, 0.05);
     this._lagPitch = clamp(this._lagPitch, -0.05, 0.05);
-    /* 🩸 플레이어의 절단 상태를 1인칭 무기에도 반영한다 */
-    const sev = (player && player.severed) || {};
+    /* 무기는 언제나 오른손에 그대로 — 부위 절단에 따른 자세 변화는 없다 */
     const model = this.models[this.className];
     if (model) {
-      if (model.userData.armGroup) model.userData.armGroup.visible = !sev.armR;
-      if (model.userData.shield) model.userData.shield.visible = !sev.armL;
+      if (model.userData.armGroup) model.userData.armGroup.visible = true;
+      if (model.userData.shield) model.userData.shield.visible = true;
     }
-    /* 오른팔을 잃으면 검을 왼손으로 쥔 것처럼 반대쪽으로 옮긴다 */
-    const handSwap = sev.armR ? 1 : 0;
-    this.handSwap = this.handSwap === undefined ? 0 : this.handSwap + (handSwap - this.handSwap) * Math.min(1, dt * 8);
-    /* 한쪽 다리를 잃으면 걸을 때마다 몸이 그쪽으로 쏠린다 */
-    const limp = sev.legL || sev.legR ? 1 : 0;
-    this.limp = this.limp === undefined ? 0 : this.limp + (limp - this.limp) * Math.min(1, dt * 6);
 
     const cur = CURVES[this.className] || CURVES.soldier;
     this.swapT = Math.min(1, this.swapT + dt * 3.4);
@@ -520,19 +513,15 @@ export class ViewModel {
     const walkY = Math.abs(Math.cos(ph)) * 0.018 * mv;
     this.bob = lerp(this.bob, walkY, Math.min(1, dt * 8));
 
-    const sw = this.handSwap || 0;
-    const limpAmt = this.limp || 0;
-    const limpY = limpAmt * (mv > 0.1 ? Math.abs(Math.sin(ph * 0.5)) * 0.045 : 0.02);
-    const limpRoll = limpAmt * (sev.legR ? -0.06 : 0.06);
     this.root.position.set(
-      p[0] * FRAMING_X * (1 - sw * 2) + sway + walkX,
-      p[1] * FRAMING_Y - this.bob + breatheY - limpY,
+      p[0] * FRAMING_X + sway + walkX,
+      p[1] * FRAMING_Y - this.bob + breatheY,
       p[2] - 0.30
     );
     this.root.rotation.set(
       r[0] + Math.sin(this.time * 1.1) * 0.006 + walkY * 0.6,
       r[1] + sway * 1.4,
-      r[2] + Math.sin(this.time * 0.7) * 0.008 + limpRoll + this._lagYaw * 0.9
+      r[2] + Math.sin(this.time * 0.7) * 0.008 + this._lagYaw * 0.9
     );
     this.root.position.x += this._lagYaw * 0.22;
     this.root.rotation.x += this._lagPitch * 0.7;

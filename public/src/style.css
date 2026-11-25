@@ -247,6 +247,14 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 .reticle { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; opacity: .55; }
 .reticle span { position: absolute; inset: 8px; border: 1px solid rgba(255,255,255,.85); border-radius: 50%; }
 .reticle i { position: absolute; left: 50%; top: 50%; width: 2px; height: 2px; margin: -1px; background: #fff; border-radius: 50%; }
+/* 🎯 지금 공격하면 맞는다 — 사거리·각도 안에 적이 들어오면 조준점이 붉게 물든다 */
+.reticle.is-hit { opacity: 1; }
+.reticle.is-hit span {
+  border-color: #ff3b24; transform: scale(1.12);
+  box-shadow: 0 0 10px rgba(255,64,36,.85), inset 0 0 7px rgba(255,80,40,.55);
+  background: radial-gradient(circle, rgba(255,80,40,.16), rgba(255,80,40,0) 70%);
+}
+.reticle.is-hit i { width: 6px; height: 6px; margin: -3px; background: #ff4a2a; box-shadow: 0 0 9px rgba(255,90,50,1); }
 
 /* 에임 위 적 체력 — 크로스헤어가 적에 올라갔을 때만 */
 .aim-info {

@@ -4,8 +4,8 @@
    · 아군/적군 동일 스펙, 병사·고급 병사·중갑 기사·대마법사·매화 검객 AI
    · 무기 접촉 판정: 공격 모션의 '접촉 프레임'에 실제 사거리·부채꼴 안의 적을 타격
    · 🛡️ 막기: 바라보는 정면(±77°)에서 날아온 공격은 마법·망치·일섬·평타 구분 없이
-         피해 0으로 완전 방어. 뒤에서 맞으면 그대로 들어간다.
-         고급 병사는 5회 막고 19초 재충전(게이지 관리).
+         피해 0으로 완전 방어. 뒤에서 맞으면 그대로 들어간다. 병사·고급 병사·기사·검객은
+         막을 수 있고 마법사는 막을 수 없다 (AI 는 아주 가끔만 막는다).
    · 🩸 부위 절단: 머리(베임 사망 모션)·양팔(공속 -30%)·양다리(이속 -30%)
          AI 유닛끼리도 부위를 노리고, 양팔/양다리를 모두 잃으면 사망.
    · 🧠 전술 AI: 측면 포위(flank)·협공(집중)·라인 유지·마법사 거리 유지 — 후퇴 없음.
@@ -208,12 +208,16 @@ export class Battle {
       }
       return o.z + rows * o.zGap;
     };
+    /* 각 병종은 앞 병종 대열이 끝난 뒤에 선다 — 겹쳐 서면 키 큰 기사·마법사의
+       머리만 병사 줄 위로 떠 보여 '이상한 병사가 떠 있는' 것처럼 보인다 */
     let z = 10.5;
-    z = block('elite', c.elite || 0, { perRow: 34, factor: 2.6, xGap: 1.35, offset: 0.5, zGap: 1.25, jitter: 0.6, salt: 11, z });
-    block('soldier', c.soldier, { perRow: 120, factor: 2.2, xGap: 1.05, offset: 0.5, zGap: 0.92, jitter: 0.55, salt: 1, z: Math.max(z, 13.5) });
-    block('knight', c.knight, { perRow: 16, factor: 3.4, xGap: 2.5, offset: 0.8, zGap: 2.1, jitter: 0.9, salt: 3, z: 16 });
-    block('blademaster', c.blademaster || 0, { perRow: 20, factor: 3.2, xGap: 2.3, offset: 0.7, zGap: 1.9, jitter: 0.9, salt: 7, z: 20 });
-    block('wizard', c.wizard, { perRow: 20, factor: 3.2, xGap: 2.6, offset: 0.7, zGap: 2.1, jitter: 1.0, salt: 5, z: 26 });
+    /* 중갑 기사가 맨 앞줄에 선다 — 병사 줄 뒤에 세우면 키 큰 기사의 머리·망치만
+       병사들 머리 위로 떠 보여 '이상한 병사가 떠 있는' 것처럼 보인다 */
+    z = block('knight', c.knight, { perRow: 16, factor: 3.4, xGap: 2.5, offset: 0.8, zGap: 2.1, jitter: 0.9, salt: 3, z });
+    z = block('elite', c.elite || 0, { perRow: 34, factor: 2.6, xGap: 1.35, offset: 0.5, zGap: 1.25, jitter: 0.6, salt: 11, z: z + 0.4 });
+    z = block('soldier', c.soldier, { perRow: 120, factor: 2.2, xGap: 1.05, offset: 0.5, zGap: 0.92, jitter: 0.55, salt: 1, z: Math.max(z, 13.5) });
+    z = block('blademaster', c.blademaster || 0, { perRow: 20, factor: 3.2, xGap: 2.3, offset: 0.7, zGap: 1.9, jitter: 0.9, salt: 7, z: z + 0.5 });
+    block('wizard', c.wizard, { perRow: 20, factor: 3.2, xGap: 2.6, offset: 0.7, zGap: 2.1, jitter: 1.0, salt: 5, z: z + 0.6 });
     return out;
   }
 
@@ -560,19 +564,22 @@ export class Battle {
     return null;
   }
 
-  damage(target, amount, source, kind, part) {
+  damage(target, amount, source, kind, part, from) {
     if (target.dead) return 0;
     // 🎬 관전 중인 플레이어는 맞지 않는다 (관전하다 죽어서 리스폰되는 일 방지)
     if (target.isPlayer && (this.playerSafe || this.playerInvuln > 0)) return 0;
 
     /* 🛡️ 검 막기 — 바라보는 정면(±77°)에서 날아온 공격은 마법·망치·일섬·평타 구분 없이
        피해 0으로 완전히 막아낸다. 뒤에서 맞으면 그대로 들어간다. (가드 브레이크 없음)
-       · 플레이어는 마법사만 빼고 모든 병종(병사·고급 병사·기사·검객)이 막을 수 있다 */
-    const canGuard = target.guard && target.cls !== 'wizard';
+       · 병사·고급 병사·기사·검객만 막는다. 마법사는 막을 수 없다
+       · from 이 주어지면 그 지점을 '날아온 곳'으로 본다 — 화염구처럼 투사체가 터진 자리에서
+         퍼지는 광역 피해도 맞는 쪽이 그 방향을 바라보고 있으면 막힌다 */
+    const canGuard = !!target.guard && target.cls !== 'wizard';
     if (canGuard) {
       let frontal = true;
-      if (source && source.x !== undefined) {
-        const a = Math.abs(angDiff(Math.atan2(source.x - target.x, source.z - target.z), target.yaw));
+      const src = from || source;
+      if (src && src.x !== undefined) {
+        const a = Math.abs(angDiff(Math.atan2(src.x - target.x, src.z - target.z), target.yaw));
         frontal = a < GUARD_FRONT_HALF;
       }
       if (frontal) {
@@ -766,7 +773,7 @@ export class Battle {
         const dmg = this.damage(o, sp.damage * mul, u, 'lightning');
         hitList.push({ o, dmg, lethal: o.dead });
         mul *= sp.falloff;
-        if (o.freezeT > 0) o.freezeT = 0;
+        if (dmg > 0 && o.freezeT > 0) o.freezeT = 0;
       }
       this.emit({ type: 'lightning', unit: u, targets: hitList });
     } else if (key === 'ice') {
@@ -781,13 +788,35 @@ export class Battle {
         const a = Math.abs(angDiff(Math.atan2(dx, dz), u.yaw));
         if (a > sp.halfAngle) continue;
         const dmg = this.damage(o, sp.damage, u, 'ice');
-        o.freezeT = Math.max(o.freezeT, sp.freeze);
+        if (dmg > 0) o.freezeT = Math.max(o.freezeT, sp.freeze);   // 막아낸 빙결은 얼리지 않는다
         hitList.push({ o, dmg, lethal: o.dead, d });
       }
       this.emit({ type: 'ice', unit: u, targets: hitList, radius: sp.radius, halfAngle: sp.halfAngle });
     }
     this.emit({ type: 'cast', unit: u, spell: key });
     return true;
+  }
+
+  /* 🎯 지금 공격하면 맞는 적 — resolveMelee 와 완전히 같은 사거리·각도 판정을 쓴다.
+     (조준점 색을 바꿀 때 '보이는 칼끝'이 아니라 실제 타격 판정을 그대로 따른다) */
+  aimTarget() {
+    const p = this.player;
+    if (!p || p.dead || p.removed) return null;
+    if (p.isPlayer && this.playerSafe) return null;
+    if (p.cls === 'wizard') return null;      // 마법사는 휘두르는 공격이 없다 (마법 버튼으로만)
+    const spec = CLASSES[p.cls] || CLASSES.soldier;
+    const reach = spec.reach + 0.45;
+    const arc = spec.arc + 0.3;
+    const list = this.grid.query(p.x, p.z, reach + 1.2, this._aimTmp || (this._aimTmp = []));
+    for (const o of list) {
+      if (o.team === p.team || o.dead || this.isGhost(o)) continue;
+      const dx = o.x - p.x, dz = o.z - p.z;
+      const d = Math.hypot(dx, dz);
+      if (d > reach + o.radius) continue;
+      if (Math.abs(angDiff(Math.atan2(dx, dz), p.yaw)) > arc) continue;
+      return o;
+    }
+    return null;
   }
 
   dist(a, b) { return Math.hypot(a.x - b.x, a.z - b.z); }
@@ -864,7 +893,7 @@ export class Battle {
       const d = Math.hypot(o.x - x, o.z - z);
       if (d > radius + o.radius) continue;
       const falloff = opts && opts.falloff ? clamp(1 - (d / radius) * 0.55, 0.4, 1) : 1;
-      const dmg = this.damage(o, damage * falloff, source, kind);
+      const dmg = this.damage(o, damage * falloff, source, kind, 'body', opts && opts.from);
       hitList.push({ o, dmg, lethal: o.dead });
       n++;
     }
@@ -1221,7 +1250,10 @@ export class Battle {
         if (Math.hypot(o.x - s.x, o.z - s.z) < 1.3 + o.radius) { hit = true; break; }
       }
       if (hit || s.life <= 0) {
-        const res = this.areaDamage(s.x, s.z, SPELLS.fire.radius, SPELLS.fire.damage, s.src, 'fire', { falloff: true });
+        /* 막기 판정은 '공구가 날아온 방향'을 쓴다 — 폭발 중심에서 뒤로 살짝 물린 지점을
+           날아온 곳으로 넘기면, 폭발점에 서 있는 유닛도 공을 바라보고 있으면 막힌다 */
+        const from = { x: s.x - s.vx * 0.15, z: s.z - s.vz * 0.15 };
+        const res = this.areaDamage(s.x, s.z, SPELLS.fire.radius, SPELLS.fire.damage, s.src, 'fire', { falloff: true, from });
         this.emit({ type: 'explode', x: s.x, z: s.z, radius: SPELLS.fire.radius, dmg: res.n, src: s.src, targets: res.hitList });
         if (s.src && s.src.isPlayer) this.hitStop = Math.max(this.hitStop, 0.07);
         this.spells.splice(i, 1);

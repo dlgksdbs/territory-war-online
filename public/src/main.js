@@ -1189,6 +1189,12 @@ class App {
       gauge.classList.toggle('is-wizard', p.cls === 'wizard');
       gauge.style.display = p.dead ? 'none' : '';
     }
+    // 🎯 조준점 — 지금 공격하면 맞는 적이 있으면 색이 바뀐다 (판정은 실제 베기와 동일)
+    const ret = document.getElementById('reticle');
+    if (ret) {
+      const hit = !p.dead && this.camMode !== 'spectate' && !this.paused && !!b.aimTarget();
+      if (this._retHit !== hit) { this._retHit = hit; ret.classList.toggle('is-hit', hit); }
+    }
     // 쿨타임
     $$('.spell-btn').forEach((btn) => {
       const key = btn.dataset.spell;

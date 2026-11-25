@@ -8,8 +8,9 @@
    · 🛡️ 고급 병사: 5회 충전 · 19초 재충전 (HUD 표시 포함)
    · 🩸 피 이펙트: 맞으면 물방울·피안개가 세차게 튐 · 처치 시 큰 분사 + 바닥 웅덩이 ·
         부위 절단은 없다(어디를 베든 몸통 피해, 몸은 온전)
-   · 🛡️ 막기: 실터치 홀드/탭으로 모든 병종(병사·고급·기사·검객)이 정면 공격을 0 피해로 막음
-   · 👥 아군 수는 플레이어와 별도 (아군 1 = AI 1 + 플레이어) · 기사 공속 살짝 상향
+   · 🛡️ 막기: 실터치 홀드/탭으로 병사·고급·기사·검객이 정면 공격을 0 피해로 막음 (마법사 불가)
+        (마법사는 막기 불가) · 적 마법사의 화염구·번개·빙결도 정면에서 막힌다
+   · 👥 아군 수는 플레이어와 별도 (아군 1 = AI 1 + 플레이어) · 기사 공속 2% 너프
    · 🧠 전술 AI: 매화 검객이 플레이어에게 매화 일섬을 쓴다 · 측면 기동으로 붙는다
    · ⚔️ HUD 아군 수에서 플레이어 제외
    · 🏆 마지막 적의 사망 모션이 끝난 뒤에 승리 배너 (deadT 를 끊지 않는다)
@@ -210,6 +211,27 @@ function ok(name, cond, extra) {
     ['blade', 'hammer', 'petal', 'fire', 'ice', 'lightning'].every((k) => block[k] === 900), block);
   ok('뒤에서 온 공격은 그대로 들어간다', block.rear < 900, { hp: block.rear });
 
+  /* ===== 4b. 🔮 마법사는 막기를 쓸 수 없다 ===== */
+  const wizNoGuard = await page.evaluate(() => {
+    const b = window.BA.battle;
+    const mk = () => {
+      const u = window.BA.debug.spawn('wizard', 'enemy', 320, 320);
+      u.x = 0; u.z = 0; u.yaw = 0; u.hp = 900; u.maxHp = 900; u.armor = 0;
+      u.guard = true; u.guardT = 9;          // 강제로 켜 둬도 마법사는 못 막는다
+      return u;
+    };
+    const front = { x: 0, z: 2, team: 'ally', id: 711 };
+    const out = {};
+    for (const k of ['blade', 'fire', 'ice', 'lightning']) {
+      const u = mk();
+      b.damage(u, 500, front, k);
+      out[k] = u.hp;
+    }
+    return out;
+  });
+  ok('🔮 마법사는 정면에서도 막지 못한다 (가드가 켜져 있어도 피해가 들어간다)',
+    ['blade', 'fire', 'ice', 'lightning'].every((k) => wizNoGuard[k] < 900), wizNoGuard);
+
   /* ===== 5. 🛡️ 고급 병사 5회 · 재충전 ===== */
   const eliteGuard = await page.evaluate(() => {
     const b = window.BA.battle;
@@ -223,8 +245,8 @@ function ok(name, cond, extra) {
     return { hp: u.hp, react: units.guardReaction, hold: units.guardHold, cdMax: units.guardCdMax };
   });
   ok('🛡️ 고급 병사는 횟수 제한 없이 12번 연속 완전 방어', eliteGuard.hp === 900, eliteGuard);
-  ok('🛡️ 막기 빈도 — 고급 0.68/0.385 · 재사용 대기 짧음', Math.abs(eliteGuard.react - 0.68) < 0.01 &&
-    Math.abs(eliteGuard.hold - 0.385) < 0.01 && eliteGuard.cdMax < 1.0, eliteGuard);
+  ok('🛡️ AI 막기 빈도는 아주 가끔 (고급 0.14/0.06 · 재사용 대기 2.4초 이상)', Math.abs(eliteGuard.react - 0.14) < 0.01 &&
+    Math.abs(eliteGuard.hold - 0.06) < 0.01 && eliteGuard.cdMax >= 2.0, eliteGuard);
 
   /* ===== 6. 🔌 장기전에도 입력·게이지가 살아 있다 ===== */
   await page.evaluate(() => window.BA.start({
@@ -655,8 +677,20 @@ function ok(name, cond, extra) {
     const rect = await page.evaluate(() => {
       const b = document.getElementById('guardBtn');
       const r = b.getBoundingClientRect();
+      const lbl = b.querySelector('.sk-label');
+      // 마법사는 마법 3버튼이 같이 떠 있다 — 막기 버튼과 겹치지 않는지 본다
+      const spells = Array.from(document.querySelectorAll('.spell-btn'))
+        .filter((s) => getComputedStyle(s).display !== 'none')
+        .map((s) => { const q = s.getBoundingClientRect(); return { l: q.left, t: q.top, r: q.right, b: q.bottom }; });
+      const overlaps = spells.filter((q) => !(q.r < r.left || q.l > r.right || q.b < r.top || q.t > r.bottom));
+      const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
       return { x: r.left + r.width / 2, y: r.top + r.height / 2, on: b.classList.contains('is-on'),
-        hit: (document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) || {}).id || '' };
+        label: lbl ? lbl.textContent : '',
+        w: +r.width.toFixed(1), h: +r.height.toFixed(1),
+        inside: r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5,
+        spellBtns: spells.length, overlaps: overlaps.length,
+        hitOk: !!(el && el.closest && el.closest('#guardBtn')),
+        hit: (el || {}).id || '' };
     });
     // 실제 손가락으로 누른다 (버튼 위 히트테스트 포함)
     await page.touchscreen.touchStart(rect.x, rect.y);
@@ -709,11 +743,159 @@ function ok(name, cond, extra) {
     guardRuns.map((g) => ({ cls: g.held.cls, front: g.held.frontHp, rear: g.held.rearHp, blocks: g.held.blockEv })));
   ok('🛡️ 막기 중 1인칭 무기가 막기 자세로 올라온다', guardRuns.every((g) => g.held.guardK > 0.6),
     guardRuns.map((g) => ({ cls: g.held.cls, guardK: g.held.guardK })));
+  ok('🛡️ 병종별 막기 라벨 — 방패/검', guardRuns.every((g) => {
+    const want = g.held.cls === 'elite' ? '방패 막기' : '검 막기';
+    return g.rect.label === want;
+  }), guardRuns.map((g) => ({ cls: g.held.cls, label: g.rect.label })));
+  /* 🔮 마법사는 막기 버튼이 없고, 마법 3버튼만 뜬다 */
+  await page.evaluate(() => window.BA.start({ cls: 'wizard', ally: 4, enemy: 2, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(400);
+  const wizUI = await page.evaluate(() => {
+    const g = document.getElementById('guardBtn');
+    const gr = g.getBoundingClientRect();
+    const gOn = g.classList.contains('is-on') && getComputedStyle(g).display !== 'none';
+    const spells = Array.from(document.querySelectorAll('.spell-btn'))
+      .filter((s) => getComputedStyle(s).display !== 'none')
+      .map((s) => { const q = s.getBoundingClientRect(); return { l: q.left, t: q.top, r: q.right, b: q.bottom, inside: q.left >= 0 && q.right <= innerWidth + 0.5 && q.bottom <= innerHeight + 0.5 }; });
+    const b = window.BA.battle, p = b.player;
+    p.guard = false;
+    if (window.BA.app.paused) window.BA.app.paused = false;
+    b.update(1 / 60, { mx: 0, mz: 0, yaw: p.yaw, guard: true, attack: false, aimPart: 'body', aimId: 0 });
+    return { cls: p.cls, guardOn: gOn, guardVisible: getComputedStyle(g).display !== 'none', spells: spells.length,
+      spellsInside: spells.every((q) => q.inside), pGuard: !!p.guard, gr: { w: gr.width, h: gr.height } };
+  });
+  ok('🔮 마법사 — 막기 버튼 숨김·입력 무시 · 마법 3버튼은 화면 안에', wizUI.cls === 'wizard' &&
+    wizUI.guardOn === false && wizUI.guardVisible === false && wizUI.pGuard === false &&
+    wizUI.spells === 3 && wizUI.spellsInside, wizUI);
   ok('🛡️ 톡 눌렀다 떼도 잠깐은 막힌다 (탭 막기)',
     guardRuns.every((g) => g.tapped.inputGuard === false && g.tapped.pGuard && g.tapped.minT > 0.05),
     guardRuns.map((g) => ({ cls: g.held.cls, minT: g.tapped.minT, pGuard: g.tapped.pGuard })));
 
   await shot('54-guard.png');
+
+  /* ===== 21b. 🔮 적 마법사의 화염구·번개·빙결도 정면 막기로 0 피해 ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 0, enemy: 0, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 1, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(400);
+  const magicBlock = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    if (app.paused) app.paused = false;
+    b.playerInvuln = 0; b.playerSafe = false;
+    const wiz = b.units.find((u) => u.cls === 'wizard' && u.team === 'enemy' && !u.isPlayer);
+    if (!wiz) return { err: 'no enemy wizard' };
+    // 적 마법사를 플레이어 정면(+z) 8m 에 고정하고, 양쪽 체력을 크게 둔다
+    wiz.x = p.x; wiz.z = p.z + 8; wiz.yaw = Math.PI;
+    wiz.hp = 1e6; wiz.maxHp = 1e6; wiz.cooldown = 0;
+    p.maxHp = 1e6; p.hp = 1e6; p.yaw = 0;
+    const blocks = [];
+    const orig = b.emit.bind(b);
+    b.emit = (e) => { if (e.type === 'block') blocks.push({ heavy: !!e.heavy, cls: e.unit && e.unit.cls }); return orig(e); };
+    // 적 AI 를 얼려 두고(제자리) 마법만 직접 쏘게 한다 — 한 evaluate 안에서 동기로 돌려 결정적으로 만든다
+    const step = (n) => {
+      for (let i = 0; i < n; i++) {
+        wiz.freezeT = 1; wiz.dead = false;
+        b.update(1 / 60, { mx: 0, mz: 0, yaw: p.yaw, guard: true, attack: false, aimPart: 'body', aimId: 0 });
+      }
+    };
+    const out = {};
+    // 1) 화염구 — 폭발점이 내 앞이어도 마법사 쪽을 바라보면 막힌다
+    wiz.cd.fire = 0; blocks.length = 0;
+    b.castSpell(wiz, 'fire', { x: p.x, z: p.z });
+    step(70);
+    out.fire = { hp: p.hp, blocks: blocks.length, heavy: blocks.some((x) => x.heavy) };
+    // 2) 연쇄 번개
+    wiz.cd.lightning = 0; blocks.length = 0;
+    b.castSpell(wiz, 'lightning', { yaw: Math.PI });
+    step(40);
+    out.lightning = { hp: p.hp, blocks: blocks.length, heavy: blocks.some((x) => x.heavy) };
+    // 3) 빙결 파동 (전방 부채꼴 7.4m) — 막아내면 얼지도 않는다
+    wiz.z = p.z + 5; wiz.cd.ice = 0; blocks.length = 0;
+    b.castSpell(wiz, 'ice', { yaw: Math.PI });
+    step(20);
+    out.ice = { hp: p.hp, blocks: blocks.length, frozen: p.freezeT > 0, heavy: blocks.some((x) => x.heavy) };
+    // 4) 뒤를 돌면 그대로 맞는다
+    p.yaw = Math.PI; blocks.length = 0;
+    wiz.cd.fire = 0;
+    const before = p.hp;
+    b.castSpell(wiz, 'fire', { x: p.x, z: p.z });
+    step(70);
+    out.rear = { dealt: before - p.hp, blocks: blocks.length };
+    b.emit = orig;
+    p.guard = false;
+    return out;
+  });
+  ok('🛡️ 적 마법사의 화염구·번개·빙결도 정면에서 막으면 0 피해 (막힘 이벤트·강타)', magicBlock.err == null &&
+    magicBlock.fire.hp >= 1e6 - 0.5 && magicBlock.fire.blocks >= 1 && magicBlock.fire.heavy &&
+    magicBlock.lightning.hp >= 1e6 - 0.5 && magicBlock.lightning.blocks >= 1 && magicBlock.lightning.heavy &&
+    magicBlock.ice.hp >= 1e6 - 0.5 && magicBlock.ice.blocks >= 1 && magicBlock.ice.heavy, magicBlock);
+  ok('❄️ 막아낸 빙결은 얼리지 않는다', magicBlock.ice && magicBlock.ice.frozen === false, magicBlock.ice);
+  ok('뒤를 돌면 마법이 그대로 들어간다', !!magicBlock.rear && magicBlock.rear.dealt > 1, magicBlock.rear);
+
+  /* ===== 21c. 🎯 조준점 색 — 지금 공격하면 맞는 적이 있으면 붉게 ===== */
+  const aimProbe = () => page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    if (app.paused) app.paused = false;
+    // 한 프레임 강제로 돌려 그리드·판정·HUD 를 확정한다 (결정적)
+    b.update(1 / 60, { mx: 0, mz: 0, yaw: p.yaw, guard: false, attack: false, aimPart: 'body', aimId: 0 });
+    app._syncHUD(true);
+    const el = document.getElementById('reticle');
+    return { on: el.classList.contains('is-hit'), target: !!b.aimTarget(),
+      border: getComputedStyle(el.querySelector('span')).borderTopColor,
+      bg: getComputedStyle(el.querySelector('i')).backgroundColor,
+      yaw: +p.yaw.toFixed(2), cls: p.cls };
+  });
+  await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    b.playerInvuln = 0; b.playerSafe = false;
+    p.hp = 5000; p.maxHp = 5000;
+    p.yaw = 0; app.camYaw = Math.PI;             // 정면 = +z 로 고정
+    // 적을 정면 1.7m 에 세우고 묶어 둔다
+    const foe = window.BA.debug.spawn('soldier', 'enemy', p.x, p.z);
+    foe.x = p.x; foe.z = p.z + 1.7; foe.yaw = Math.PI; foe.hp = 5000; foe.maxHp = 5000;
+    foe.freezeT = 999; foe.removed = false; foe.dead = false;
+    window.BA._foeId = foe.id;
+  });
+  const nearAim = await aimProbe();
+  ok('🎯 적이 사거리·각도 안에 있으면 조준점이 붉게 바뀐다 (실제 베기 판정과 동일)',
+    nearAim.on === true && nearAim.target === true && /255, 59, 36|rgb\(255, 59, 36\)/.test(nearAim.border), nearAim);
+  await shot('54c-aim-hit.png');
+  await page.evaluate(() => {
+    const b = window.BA.battle, p = b.player;
+    const f = b.units.find((u) => u.id === window.BA._foeId);
+    if (f) { f.x = p.x; f.z = p.z + 24; }       // 사거리 밖으로 멀리
+  });
+  const farAim = await aimProbe();
+  ok('🎯 사거리 밖이면 조준점은 기본 색으로 돌아온다', farAim.on === false && farAim.target === false && !/255, 59, 36/.test(farAim.border), farAim);
+  await page.evaluate(() => {
+    const b = window.BA.battle, p = b.player;
+    const f = b.units.find((u) => u.id === window.BA._foeId);
+    if (f) { f.x = p.x; f.z = p.z - 1.7; }      // 등 뒤
+  });
+  const backAim = await aimProbe();
+  ok('🎯 등 뒤의 적에게는 조준점이 붉어지지 않는다 (정면 각도 판정)', backAim.on === false && backAim.target === false, backAim);
+
+  /* ===== 21d. 🧍 시작 대형 — 병사 줄에 가려진 특수 병종이 없고 가운데에 뜬 병사가 없다 ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 40, enemy: 40, ae: 0, ee: 0, ak: 2, ek: 2, aw: 1, ew: 1, ab: 1, eb: 1 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(300);
+  const form = await page.evaluate(() => {
+    const b = window.BA.battle;
+    const zs = (team, cls) => b.units.filter((u) => u.team === team && u.cls === cls && !u.isPlayer).map((u) => u.z);
+    const mid = b.units.filter((u) => !u.isPlayer && Math.abs(u.z) < 6).length;
+    const side = (team) => {
+      const s = zs(team, 'soldier'), k = zs(team, 'knight');
+      if (!s.length || !k.length) return null;
+      // 그 팀 기준 '앞' = 적 쪽. 아군은 z 클수록(0에 가까울수록) 앞, 적군은 z 작을수록 앞
+      const front = (a) => team === 'ally' ? Math.max(...a) : Math.min(...a);
+      return { knightFront: +front(k).toFixed(2), soldierFront: +front(s).toFixed(2), ok: team === 'ally' ? front(k) >= front(s) - 0.01 : front(k) <= front(s) + 0.01 };
+    };
+    return { mid, ally: side('ally'), enemy: side('enemy'), n: b.units.length };
+  });
+  ok('🧍 시작 대형 — 기사가 병사 줄 뒤에 숨지 않고 앞줄에 선다 (머리만 떠 보이지 않음)',
+    !!form.ally && !!form.enemy && form.ally.ok && form.enemy.ok, form);
+  ok('🧍 시작 대형 — 두 진영 사이 가운데에 홀로 선 병사가 없다', form.mid === 0, { mid: form.mid, n: form.n });
+  await shot('54d-start-formation.png');
   /* ===== 22. 👥 아군 수는 플레이어와 별도 (아군 1 = AI 1 + 플레이어) ===== */
   await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 1, enemy: 1, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
   await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
@@ -747,8 +929,8 @@ function ok(name, cond, extra) {
     const c = window.BA.specs().classes.knight;
     return { cycle: c.cycle, animDur: c.animDur, impact: c.impact };
   });
-  ok('🔨 기사 공속이 살짝 빨라졌다 (주기 1.15 → 1.01, 약 12%)',
-    knightSpd.cycle <= 1.02 && knightSpd.cycle >= 0.98, knightSpd);
+  ok('🔨 기사 공속 2% 너프 (주기 1.01 → 1.03)',
+    knightSpd.cycle > 1.02 && knightSpd.cycle < 1.04, knightSpd);
 
   ok('콘솔/페이지 오류 0 (헤드리스 SwiftShader)', errors.length === 0, errors.slice(0, 5));
   console.log(`\n모든 테스트 통과 (${passed}개) · 스크린샷 ${SHOTS}`);

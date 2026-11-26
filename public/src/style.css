@@ -822,6 +822,16 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 }
 #battle.is-pvp .pvp-top { display: flex; }
 #battle.is-pvp .strength, #battle.is-pvp .kill-chip, #battle.is-pvp .practice-tag { display: none; }
+/* 병력 표시가 숨겨져도 시점·전체화면·메뉴 버튼은 오른쪽 위에 그대로 */
+#battle.is-pvp .hud-top { justify-content: flex-end; }
+/* PVP 는 영구 성장(처치 누적)을 올리지 않으므로 그 줄은 숨긴다 */
+#battle.is-pvp .player-status .ps-grow { display: none; }
+/* 점수판은 위쪽 왼쪽(비어 있는 자리)에 — 내 체력 패널(가운데 58px)과 겹치지 않는다 */
+#battle.is-pvp .pvp-top {
+  top: calc(9px + env(safe-area-inset-top)); left: 9px; transform: none;
+  max-width: calc(100% - 118px); padding: 4px 8px; gap: 4px; font-size: 9px;
+}
+#battle.is-pvp .pvp-top .pt-score { font-size: 13px; }
 .pvp-top .pt-team { color: #9fd8ff; }
 .pvp-top .pt-team.enemy { color: #ffb0a0; }
 .pvp-top .pt-score { font-family: var(--serif); font-size: 15px; color: #ffe9bb; font-variant-numeric: tabular-nums; }

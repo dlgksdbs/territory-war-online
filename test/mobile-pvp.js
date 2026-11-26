@@ -71,7 +71,7 @@ function ok(name, cond, extra) {
     /* q=low — 소프트웨어 GL 에서 두 화면을 함께 돌리기 위해 그림자를 끈다 (렌더 경로·전투 로직 동일) */
     await page.goto('http://127.0.0.1:' + PORT + '/?q=low', { waitUntil: 'domcontentloaded', timeout: 30000 });
     try {
-      await page.waitForFunction(() => window.BA && window.BA.pvp && window.BA.pvp.client, { timeout: 90000 });
+      await page.waitForFunction(() => window.BA && window.BA.pvp && window.BA.pvp.client, { timeout: 90000, polling: 150 });
     } catch (e) {
       console.error('   [페이지 로드 실패]', errors.slice(0, 4));
       throw e;
@@ -114,7 +114,7 @@ function ok(name, cond, extra) {
   await A.waitForFunction(() => {
     const l = document.getElementById('pvpLobby');
     return l && l.classList.contains('is-on') && window.BA.pvp.lobby();
-  }, { timeout: 15000 });
+  }, { timeout: 15000, polling: 150 });
   const code = await A.evaluate(() => window.BA.pvp.lobby().code);
   ok('방 만들기 → 대기실이 열리고 방 코드가 나온다', /^[A-Z0-9]{4}$/.test(code), { code });
   await shot(A, '02-lobby-host.png');
@@ -123,8 +123,8 @@ function ok(name, cond, extra) {
   await B.waitForFunction(() => {
     const l = document.getElementById('pvpLobby');
     return l && l.classList.contains('is-on') && window.BA.pvp.lobby() && window.BA.pvp.lobby().players.length === 2;
-  }, { timeout: 15000 });
-  await A.waitForFunction(() => window.BA.pvp.lobby() && window.BA.pvp.lobby().players.length === 2, { timeout: 12000 });
+  }, { timeout: 15000, polling: 150 });
+  await A.waitForFunction(() => window.BA.pvp.lobby() && window.BA.pvp.lobby().players.length === 2, { timeout: 12000, polling: 150 });
   ok('방 코드로 친구가 입장하면 두 사람이 대기실에 보인다',
     await A.evaluate(() => window.BA.pvp.lobby().players.map((p) => p.name).sort().join(',') === '친구,한윤'));
 
@@ -154,7 +154,7 @@ function ok(name, cond, extra) {
   const waitBattle = (page) => page.waitForFunction(() => {
     const st = window.BA.pvp.state();
     return st && st.inBattle && st.server && st.phase === 'battle';
-  }, { timeout: 90000 }).catch(async (e) => {
+  }, { timeout: 90000, polling: 150 }).catch(async (e) => {
     console.error('   [전장 진입 실패]', JSON.stringify(await page.evaluate(() => window.BA.pvp.state())).slice(0, 300));
     throw e;
   });

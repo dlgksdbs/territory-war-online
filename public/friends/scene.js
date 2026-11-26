@@ -49,6 +49,8 @@ export class WarScene {
     this.lastState = null;
     this.focusSlot = -1;
     this.autoSpin = 0;
+    this.camTouched = false;
+    this.viewRadius = 64;
     this._buildWorld();
     this._bindSize();
   }
@@ -558,11 +560,13 @@ export class WarScene {
 
   /* ------------------------------------------------------------ 카메라 */
   setJoy(x, z) {
+    if (Math.abs(x) > 0.05 || Math.abs(z) > 0.05) this.camTouched = true;
     this.joy.x = clamp(x, -1, 1);
     this.joy.z = clamp(z, -1, 1);
   }
 
   look(dx, dy) {
+    this.camTouched = true;
     const sens = 0.0055;
     this.cam.yaw -= dx * sens;
     this.cam.pitch = clamp(this.cam.pitch - dy * sens, -1.5, 0.72);
@@ -570,10 +574,12 @@ export class WarScene {
   }
 
   raise(d) {
+    this.camTouched = true;
     this.cam.y = clamp(this.cam.y + d, 3, 400);
   }
 
   focus(slot) {
+    this.camTouched = true;
     const entry = this.nations.get(slot);
     if (!entry) return;
     const p = entry.group.position;
@@ -588,12 +594,14 @@ export class WarScene {
   }
 
   overview() {
+    const R = this.viewRadius || 64;
     this.cam.x = 0;
-    this.cam.z = 132;
-    this.cam.y = 160;
+    this.cam.z = R * 2.1;
+    this.cam.y = R * 2.5;
     this.cam.yaw = Math.PI;
     this.cam.pitch = -0.90;
     this.focusSlot = -1;
+    this.camTouched = false;
   }
 
   _updateCamera(dt) {
@@ -626,6 +634,17 @@ export class WarScene {
     const now = performance.now() / 1000;
     this.lastState = state;
     this.syncNations(state.nations);
+    let maxR = 0;
+    for (const n of state.nations) maxR = Math.max(maxR, Math.hypot(n.pos.x, n.pos.z));
+    if (maxR > 0) this.viewRadius = maxR;
+    if (!this.camTouched && maxR > 0) {
+      const R = this.viewRadius;
+      this.cam.x = 0;
+      this.cam.z = R * 2.1;
+      this.cam.y = R * 2.5;
+      this.cam.yaw = Math.PI;
+      this.cam.pitch = -0.90;
+    }
     for (const n of state.nations) {
       const entry = this.nations.get(n.slot);
       if (!entry) continue;

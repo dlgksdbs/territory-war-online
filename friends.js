@@ -68,7 +68,7 @@ const CFG = {
   castleCost: 55,
   castleMaxBonus: 8000,
   setupSec: 60,             // 편성 제한 시간
-  mapRadius: 64,            // 성이 놓이는 원 반지름
+  mapRadius: 64,            // 성이 놓이는 원 반지름 (2~5인에 따라 40~64)
   stepMs: 100,
   stateMs: 200,             // 상태 전송 주기
   dps: 6,                   // 병력 1 power 당 초당 피해
@@ -197,10 +197,18 @@ function presetSetup(name) {
   return out || normalizeSetup({ units: PRESETS.balanced.units, wallBonus: 4000, castleBonus: 6000, preset: 'balanced' });
 }
 
+/* 인원이 적으면 성을 더 가깝게 — 2인전이 텅 빈 전장처럼 보이지 않게 */
+const MAP_RADIUS = { 2: 40, 3: 50, 4: 58, 5: 64 };
+function mapRadiusFor(count) {
+  const n = Math.max(2, Math.min(5, Math.floor(count) || 2));
+  return MAP_RADIUS[n] || CFG.mapRadius;
+}
+
 function castlePos(slot, count) {
   const n = Math.max(2, count);
   const a = -Math.PI / 2 + (slot % n) * (Math.PI * 2 / n);
-  return { x: Math.cos(a) * CFG.mapRadius, z: Math.sin(a) * CFG.mapRadius, angle: a };
+  const r = mapRadiusFor(n);
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r, angle: a };
 }
 
 function dist(a, b) {
@@ -407,6 +415,7 @@ function startGame(room, bySlot) {
   const hostPlayer = room.players.find((p) => p.slot === room.hostSlot) || room.players[0];
   room.players.sort((a, b) => a.slot - b.slot);
   const count = room.players.length;
+  st.mapRadius = mapRadiusFor(count);
   st.rel = makeRelations(count);
   let aiPick = 0;
   const presetNames = ['balanced', 'attack', 'defense'];
@@ -1020,7 +1029,7 @@ function stateView(room, slot) {
     aiFill: st.aiFill,
     budget: CFG.budget,
     setupLeft: st.phase === 'setup' ? Math.max(0, Math.ceil(st.setupEnds - st.time)) : 0,
-    map: { radius: CFG.mapRadius },
+    map: { radius: st.mapRadius || CFG.mapRadius },
     nations,
     marches: st.marches.map((m) => ({
       id: m.id, from: m.from, to: m.to, phase: m.phase,
@@ -1171,6 +1180,7 @@ module.exports = {
   canAttack,
   relOf,
   castlePos,
+  mapRadiusFor,
   destroyNation,
   aliveNations
 };

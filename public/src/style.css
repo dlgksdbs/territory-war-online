@@ -716,3 +716,175 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   .he-btns button { padding: 7px 8px; }
   .he-all { margin-top: 4px; }
 }
+
+/* =============================================================================
+   ⚔️ 플레이어 PVP — 홈 입구 · 대기실 · 전장 점수판 · 이름표 · 결과
+   ============================================================================= */
+/* ---------------------------------------------------------------- 홈 패널 */
+.pvp-panel { border-color: rgba(120, 170, 255, .18); background: linear-gradient(165deg, rgba(20, 28, 42, .9), rgba(11, 15, 22, .9)); }
+.pvp-panel .panel-title span { color: #cfe4ff; }
+.pvp-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.pvp-input {
+  flex: 1 1 auto; min-width: 0; height: 34px; padding: 0 10px;
+  font-size: 12px; font-weight: 600; color: #eaf3ff;
+  background: rgba(10, 14, 20, .75); border: 1px solid rgba(150, 190, 255, .24); border-radius: 9px;
+  outline: none;
+}
+.pvp-input::placeholder { color: #74839a; font-weight: 600; }
+.pvp-input:focus { border-color: rgba(150, 200, 255, .7); box-shadow: 0 0 0 2px rgba(60, 130, 220, .22); }
+.pvp-input.code { letter-spacing: .28em; text-transform: uppercase; font-weight: 800; }
+.pvp-btn {
+  flex: 0 0 auto; height: 34px; padding: 0 12px; border-radius: 9px;
+  font-size: 11.5px; font-weight: 800; letter-spacing: .02em;
+  border: 1px solid rgba(150, 200, 255, .3); background: rgba(70, 130, 210, .16); color: #d6e9ff;
+  transition: background .15s, border-color .15s, transform .1s;
+}
+.pvp-btn:active { transform: translateY(1px); background: rgba(90, 160, 255, .26); }
+.pvp-btn.make { border-color: rgba(232, 194, 122, .45); background: linear-gradient(100deg, rgba(184, 134, 47, .35), rgba(232, 194, 122, .5)); color: #221806; }
+.pvp-note { margin: 2px 2px 0; font-size: 9.5px; line-height: 1.5; color: #8b97a8; }
+.pvp-note b { color: #ffdca0; }
+
+/* ---------------------------------------------------------------- 대기실 */
+.pvp-lobby {
+  position: absolute; inset: 0; z-index: 70; display: none;
+  align-items: flex-start; justify-content: center;
+  padding: 12px 10px calc(12px + env(safe-area-inset-bottom));
+  background: radial-gradient(120% 90% at 50% 0%, rgba(18, 30, 48, .92), rgba(4, 6, 10, .96));
+  backdrop-filter: blur(3px);
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+}
+.pvp-lobby.is-on { display: flex; }
+.pl-card {
+  width: 100%; max-width: 430px; margin: auto; padding: 12px 12px 14px;
+  border-radius: 16px; border: 1px solid rgba(150, 190, 255, .22);
+  background: linear-gradient(165deg, rgba(22, 30, 44, .97), rgba(10, 14, 20, .97));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+.pl-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.pl-head b { display: block; font-family: var(--serif); font-size: 15px; letter-spacing: .06em; color: #f2e7cf; }
+.pl-head span { display: block; margin-top: 3px; font-size: 11px; font-weight: 800; letter-spacing: .18em; color: #8fd0ff; }
+.pl-head button { font-size: 10.5px; font-weight: 700; color: #9fb0c6; padding: 5px 8px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, .12); }
+.pl-teams { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
+.pl-team { border-radius: 12px; padding: 7px 8px 8px; border: 1px solid rgba(255, 255, 255, .07); background: rgba(255, 255, 255, .025); }
+.pl-team.ally { box-shadow: inset 0 0 0 1px rgba(100, 184, 255, .14); }
+.pl-team.enemy { box-shadow: inset 0 0 0 1px rgba(255, 111, 87, .14); }
+.pl-team h4 { margin: 0 0 5px; font-size: 10.5px; letter-spacing: .08em; font-weight: 800; color: #9fc7ea; display: flex; align-items: center; gap: 4px; }
+.pl-team.enemy h4 { color: #ffa896; }
+.pl-team h4 i { font-style: normal; font-size: 8px; }
+.pl-team h4 em { margin-left: auto; font-style: normal; font-size: 10px; color: #dbe7f5; font-variant-numeric: tabular-nums; }
+.pl-list { display: flex; flex-direction: column; gap: 4px; min-height: 22px; }
+.pl-chip {
+  display: flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 7px;
+  font-size: 10.5px; font-weight: 700; color: #e6eefb; background: rgba(255, 255, 255, .05);
+  border: 1px solid transparent;
+}
+.pl-chip.me { border-color: rgba(232, 194, 122, .55); background: rgba(232, 194, 122, .12); }
+.pl-chip.off { opacity: .45; }
+.pl-chip .crown { font-size: 9px; color: #fbbf24; }
+.pl-chip .ci { font-size: 11px; }
+.pl-chip .nm { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-chip .dot { width: 5px; height: 5px; border-radius: 50%; background: #34d399; box-shadow: 0 0 5px #34d399; }
+.pl-chip .dot.off { background: #64748b; box-shadow: none; }
+.pl-empty { font-size: 10px; color: #6b7789; padding: 5px 2px; }
+.pl-auto { margin-top: 7px; }
+.pl-auto > span { font-size: 9px; letter-spacing: .1em; color: #78869a; }
+.pl-auto .pl-list { flex-direction: row; flex-wrap: wrap; }
+.pl-sec { margin-top: 10px; padding-top: 9px; border-top: 1px solid rgba(255, 255, 255, .07); }
+.pl-row { display: flex; align-items: center; gap: 7px; margin: 6px 0; }
+.pl-row > span { flex: 0 0 52px; font-size: 10px; color: #93a2b7; font-weight: 700; }
+.pl-chips { display: flex; flex-wrap: wrap; gap: 4px; flex: 1 1 auto; }
+.pl-chips button {
+  font-size: 10px; font-weight: 800; padding: 5px 8px; border-radius: 8px; color: #cdd9e8;
+  border: 1px solid rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .04);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.pl-chips button.is-on { border-color: rgba(232, 194, 122, .7); background: linear-gradient(100deg, rgba(232, 194, 122, .28), rgba(232, 194, 122, .1)); color: #ffeccb; }
+.pl-chips.classes button { padding: 5px 6px; }
+.pl-chips button:disabled { opacity: .4; }
+.pl-conf-disabled { opacity: .45; pointer-events: none; }
+.pl-start {
+  width: 100%; margin-top: 12px; padding: 12px; border-radius: 12px;
+  font-size: 14px; font-weight: 900; letter-spacing: .06em; color: #211707;
+  background: linear-gradient(100deg, #b8862f, #e8c27a 40%, #f6dea9 55%, #c99a45 82%, #8a6320);
+  box-shadow: 0 10px 24px rgba(232, 194, 122, .22), inset 0 1px 0 rgba(255, 255, 255, .5);
+}
+.pl-start:disabled { filter: grayscale(.6) brightness(.7); box-shadow: none; }
+.pl-note { margin: 8px 2px 0; font-size: 9.5px; line-height: 1.5; color: #8b97a8; text-align: center; }
+
+/* ---------------------------------------------------------------- 전장 점수판 */
+.pvp-top {
+  position: absolute; top: calc(58px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+  z-index: 6; display: none; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 20px;
+  background: rgba(6, 10, 16, .72); border: 1px solid rgba(255, 255, 255, .1);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .4);
+  font-size: 10px; font-weight: 800; letter-spacing: .02em; white-space: nowrap;
+}
+#battle.is-pvp .pvp-top { display: flex; }
+#battle.is-pvp .strength, #battle.is-pvp .kill-chip, #battle.is-pvp .practice-tag { display: none; }
+.pvp-top .pt-team { color: #9fd8ff; }
+.pvp-top .pt-team.enemy { color: #ffb0a0; }
+.pvp-top .pt-score { font-family: var(--serif); font-size: 15px; color: #ffe9bb; font-variant-numeric: tabular-nums; }
+.pvp-top .pt-goal { font-style: normal; font-size: 9px; color: #8f9db0; }
+.pvp-top .pt-time { font-style: normal; font-size: 9.5px; color: #cfd9e6; font-variant-numeric: tabular-nums; }
+.pvp-top .pt-time.is-low { color: #ffb08a; }
+
+/* ---------------------------------------------------------------- 이름표 */
+.pvp-names { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 5; }
+.pn-plate {
+  position: absolute; transform: translate(-50%, -100%);
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 2px 6px 3px; border-radius: 6px;
+  background: rgba(4, 8, 14, .55); border: 1px solid rgba(255, 255, 255, .12);
+  font-size: 9.5px; font-weight: 800; letter-spacing: .02em; color: #eaf3ff;
+  white-space: nowrap; opacity: 0; transition: opacity .12s linear;
+  will-change: transform;
+}
+.pn-plate.is-on { opacity: 1; }
+.pn-plate.ally { border-color: rgba(95, 184, 255, .6); color: #cfeaff; box-shadow: 0 0 10px rgba(60, 140, 230, .18); }
+.pn-plate.enemy { border-color: rgba(255, 107, 90, .6); color: #ffd9d2; box-shadow: 0 0 10px rgba(220, 70, 50, .18); }
+.pn-plate.me { border-color: rgba(232, 194, 122, .7); color: #ffeccb; }
+.pn-plate .pn-name { display: flex; align-items: center; gap: 3px; line-height: 1.2; }
+.pn-plate .pn-name i { font-style: normal; font-size: 8px; opacity: .9; }
+.pn-plate .pn-hp { width: 54px; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .2); overflow: hidden; }
+.pn-plate .pn-hp i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #48c97a, #9ff0b6); }
+.pn-plate.enemy .pn-hp i { background: linear-gradient(90deg, #c8482f, #ff8a6c); }
+.pn-plate.dead { opacity: 0 !important; }
+
+/* ---------------------------------------------------------------- 결과 */
+.pvp-result {
+  position: absolute; inset: 0; z-index: 40; display: none;
+  align-items: center; justify-content: center; padding: 18px;
+  background: radial-gradient(90% 70% at 50% 45%, rgba(10, 16, 26, .55), rgba(3, 5, 8, .78));
+}
+.pvp-result.is-on { display: flex; }
+.pr-card {
+  width: 100%; max-width: 330px; text-align: center; padding: 18px 16px 16px;
+  border-radius: 18px; border: 1px solid rgba(232, 194, 122, .32);
+  background: linear-gradient(165deg, rgba(26, 30, 40, .97), rgba(9, 12, 18, .98));
+  box-shadow: 0 26px 60px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.pr-emblem { font-size: 34px; filter: drop-shadow(0 0 18px rgba(232, 194, 122, .5)); }
+.pr-card h2 { margin: 2px 0 0; font-family: var(--serif); font-size: 26px; letter-spacing: .1em; color: #ffe9bb; }
+.pvp-result.lose .pr-card h2 { color: #ffb4a2; }
+.pr-card p { margin: 4px 0 10px; font-size: 11px; color: #a9b6c8; }
+.pr-score { display: flex; align-items: center; justify-content: center; gap: 12px; font-variant-numeric: tabular-nums; }
+.pr-score span { font-family: var(--serif); font-size: 30px; font-weight: 800; }
+.pr-score span.ally { color: #8fd0ff; }
+.pr-score span.enemy { color: #ff9d8c; }
+.pr-score em { font-style: normal; font-size: 18px; color: #6f7d90; }
+.pr-stats { display: flex; justify-content: center; gap: 8px; margin: 10px 0 12px; }
+.pr-stats div { flex: 1 1 0; padding: 6px 4px; border-radius: 9px; background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .07); }
+.pr-stats span { display: block; font-size: 8.5px; letter-spacing: .08em; color: #8f9db0; }
+.pr-stats b { font-size: 14px; color: #ffe6b8; }
+.pr-btns { display: flex; gap: 7px; }
+.pr-btns button { flex: 1 1 0; padding: 11px 6px; border-radius: 11px; font-size: 12px; font-weight: 800; border: 1px solid rgba(255, 255, 255, .14); color: #dbe6f4; background: rgba(255, 255, 255, .05); }
+.pr-btns button.primary { border-color: rgba(232, 194, 122, .5); background: linear-gradient(100deg, #b8862f, #e8c27a 45%, #c9902f); color: #231806; }
+.pr-note { margin: 9px 0 0; font-size: 9px; color: #7d8a9d; }
+
+@media (max-width: 420px) {
+  .pl-card { padding: 10px 10px 12px; }
+  .pl-teams { gap: 6px; }
+  .pl-chips.classes button { font-size: 9.5px; padding: 5px 5px; }
+  .pvp-top { top: calc(52px + env(safe-area-inset-top)); font-size: 9.5px; gap: 5px; padding: 4px 8px; }
+}

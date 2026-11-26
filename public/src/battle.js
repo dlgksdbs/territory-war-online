@@ -152,7 +152,7 @@ export class Battle {
     const sd = seed || this.unitSeed((this.nextId * 13) | 0);
     const elite = cls === 'elite';
     const u = {
-      id, cls, team, isPlayer: !!isPlayer,
+      id, cls, team, isPlayer: !!isPlayer, net: false, netId: null, pname: null,
       x, y: 0, z, vx: 0, vz: 0, yaw: team === 'ally' ? 0 : Math.PI,
       hp: spec.hp, maxHp: spec.hp,
       speed: spec.speed, radius: spec.radius, reach: spec.reach, arc: spec.arc,
@@ -607,6 +607,7 @@ export class Battle {
 
   damage(target, amount, source, kind, part, from) {
     if (target.dead) return 0;
+    if (target.net) return 0;                  // PVP 상대의 체력은 서버만 바꾼다
     // 🎬 관전 중인 플레이어는 맞지 않는다 (관전하다 죽어서 리스폰되는 일 방지)
     if (target.isPlayer && (this.playerSafe || this.playerInvuln > 0)) return 0;
 
@@ -931,6 +932,7 @@ export class Battle {
     const list = this.grid.query(u.x, u.z, SKILL.radius, this._dashTmp || (this._dashTmp = []));
     for (const o of list) {
       if (o.dead || o.team === u.team || this.isGhost(o)) continue;
+      if (this.pvp && u.isPlayer) continue;    // PVP — 일섬 피해는 서버가 판정
       if (u.dashHit.includes(o.id)) continue;
       if (Math.hypot(o.x - u.x, o.z - u.z) > SKILL.radius + o.radius) continue;
       u.dashHit.push(o.id);
@@ -1080,13 +1082,13 @@ export class Battle {
         /* 🐞 플레이어는 부활 대기 중에도 목록에 남긴다.
            (예전에는 3.14초 뒤 시체로 제거되고 부활은 3.6초라, 부활한 플레이어가 목록에 없어
             쿨타임이 영원히 돌지 않아 '공격 버튼이 먹통'이 됐다) */
-        if (u.deadT > DEATH_REMOVE && !(u.isPlayer && !this.autoPlayer)) u.removed = true;
+        if (u.deadT > DEATH_REMOVE && !u.net && !(u.isPlayer && !this.autoPlayer)) u.removed = true;
         continue;
       }
       if (u.removed) continue;
       /* 💚 자연 회복 — 살아 있는 모든 유닛(아군 AI·적군 AI·플레이어)이
          자기 최대 체력에 비례해 매 프레임 조금씩 회복한다 (사망·쓰러지는 중 제외) */
-      if (u.hp < u.maxHp) {
+      if (!u.net && !this.pvp && u.hp < u.maxHp) {
         u.hp = Math.min(u.maxHp, u.hp + u.maxHp * REGEN_FRAC * dt);
       }
       if (u.freezeT > 0) continue;
@@ -1103,7 +1105,11 @@ export class Battle {
         const cyc = u.cycle || CLASSES[u.cls].cycle;
         if (!u.hitDone && u.attackT >= this.impactT(u)) {
           u.hitDone = true;
-          if (!u._impactQueued) { u._impactQueued = true; this.impacts.push(u); }
+          if (!u._impactQueued) {
+            u._impactQueued = true;
+            if (u.net) { /* 네트워크 유닛의 타격은 서버가 판정한다 */ }
+            else this.impacts.push(u);
+          }
         }
         if (u.attackT > cyc) u.attackT = -1;
       }
@@ -1111,6 +1117,8 @@ export class Battle {
         u.moveAmt += (0 - u.moveAmt) * Math.min(1, dt * 8);
         continue;
       }
+      /* 🌐 PVP 네트워크 유닛 — 위치·체력·행동은 서버 상태가 정한다 (AI 를 돌리지 않는다) */
+      if (u.net) continue;
 
       // 대규모 전투: 유닛별 AI 판단을 2프레임에 한 번 (타이머·공격 진행은 매 프레임)
       if (this.crowd && !u.isPlayer && ((oi + this.frameNo) & 1) === 1) continue;
@@ -1307,6 +1315,11 @@ export class Battle {
       for (const u of list) {
         u._impactQueued = false;
         if (u.dead) continue;
+        if (this.pvp && u.isPlayer) {
+          /* PVP — 내 휘두름은 서버에 알리고, 실제 피해·막기 판정은 서버가 돌려준다 */
+          if (this.onPvpImpact) this.onPvpImpact(u);
+          continue;
+        }
         this.resolveMelee(u);
       }
     }
@@ -1325,6 +1338,11 @@ export class Battle {
         if (o.dead || o.team === s.team || this.isGhost(o)) continue;
         if (Math.hypot(o.x - s.x, o.z - s.z) < 1.3 + o.radius) { hit = true; break; }
       }
+      if (this.pvp) {
+        /* PVP — 화염구는 연출만. 폭발·피해는 서버가 판정해 알려준다 */
+        if (s.life <= 0) this.spells.splice(i, 1);
+        continue;
+      }
       if (hit || s.life <= 0) {
         /* 막기 판정은 '공구가 날아온 방향'을 쓴다 — 폭발 중심에서 뒤로 살짝 물린 지점을
            날아온 곳으로 넘기면, 폭발점에 서 있는 유닛도 공을 바라보고 있으면 막힌다 */
@@ -1336,8 +1354,8 @@ export class Battle {
       }
     }
 
-    // 플레이어 부활
-    if (p && p.dead && !this.autoPlayer) {
+    // 플레이어 부활 (PVP 는 서버가 부활을 알려준다)
+    if (p && p.dead && !this.autoPlayer && !this.pvp) {
       this.playerDeadT += dt;
       if (this.playerDeadT > 3.6) this.respawnPlayer();
     }
@@ -1351,7 +1369,7 @@ export class Battle {
     this._pruneT = (this._pruneT || 0) + dt;
     if (this._pruneT > 4) { this._pruneT = 0; this.prune(); }
     const graceDone = this.spawned && (this.time || 0) >= (this.endGraceT || 0.75);
-    if (!this.over && graceDone && !this.practice) {
+    if (!this.over && graceDone && !this.practice && !this.pvp) {
       let allyAlive = 0, enemyAlive = 0;
       for (const c of CLASS_LIST) { allyAlive += this.tally.ally[c] || 0; enemyAlive += this.tally.enemy[c] || 0; }
       /* 🎬 관전 중인 플레이어(무적 유령)는 아군 전멸 판정에서 뺀다.
@@ -1388,6 +1406,7 @@ export class Battle {
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
       if (u.dead || u.removed || u.freezeT > 0) continue;
+      if (u.net) continue;                        // 네트워크 유닛 위치는 서버가 정한다
       if (this.isGhost(u)) continue;              // 관전 중 내 몸은 아무에게도 밀리지 않는다
       if (stride === 2 && (i & 1) !== par) continue;
       if (this.crowd) {

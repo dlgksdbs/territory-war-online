@@ -15,6 +15,7 @@ import { Sfx } from './sfx.js';
 import { createFullscreenToggle, isFullscreen, fullscreenSupported } from './fullscreen.js';
 import { initHudLayout } from './hud-custom.js';
 import { loadProgress, saveProgress, rosterOf, rosterTotal, growthMult, growthLabel, playerSpec, powerIndex } from './config.js';
+import { PvpClient } from './pvp.js';
 import { clamp, lerp, damp, angLerp, angDiff, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -78,6 +79,8 @@ class App {
     this._bindUI();
     /* 🎮 전투 HUD 버튼 크기·위치 커스텀 — 저장된 배치를 지금 바로 적용한다 */
     this.hudLayout = initHudLayout(this);
+    /* ⚔️ 플레이어 PVP — 홈 패널·대기실·전장 동기화 */
+    this.pvp = new PvpClient(this);
     this._readUrl();
     this._showHome();
   }
@@ -605,7 +608,89 @@ class App {
     if (!this._raf) this.loop();
   }
 
+  /* ------------------------------------------------------------------ ⚔️ PVP */
+  /* 서버가 시작을 알리면(pstart) 호출된다 — 배틀 아레나와 같은 1인칭 무대에
+     다른 플레이어들을 네트워크 유닛으로 세운다. 전투 판정은 서버가 한다. */
+  enterPvpBattle(init) {
+    this.sfx.resume();
+    this.initGL();
+    $('#home').classList.remove('is-active');
+    $('#pvpLobby').classList.remove('is-on');
+    $('#battle').classList.add('is-active');
+    $('#battle').classList.add('is-pvp');
+    $('#battle').classList.remove('is-spectate');
+    if (this.hudLayout) this.hudLayout.apply();
+    $('#result').classList.remove('is-on');
+    $('#menuSheet').classList.remove('is-on');
+    $('#pvpResult').classList.remove('is-on');
+    this.state = 'battle';
+    this.paused = false;
+    this.debugLock = null;
+    this.debugCam = false;
+    this._pendingResult = null;
+    this._pendingT = 0;
+    this._resultShown = true;         // 로컬 승패 배너는 쓰지 않는다 (서버가 결과를 보낸다)
+    this._aimOn = false; this._aimKey = '';
+    this.input.aimId = 0; this.input.aimPart = 'body';
+    this.input.guard = false; this.input.attack = false; this.input.mx = 0; this.input.mz = 0;
+    this.attackHeld = false;
+
+    if (this.unitRenderer) { this.unitRenderer.dispose(); this.unitRenderer = null; }
+    this.fx.clear();
+
+    const zero = {
+      playerClass: init.cls,
+      allySoldiers: 0, allyElites: 0, allyKnights: 0, allyWizards: 0, allyBlademasters: 0, allyBerserkers: 0,
+      enemySoldiers: 0, enemyElites: 0, enemyKnights: 0, enemyWizards: 0, enemyBlademasters: 0, enemyBerserkers: 0,
+      seed: (Date.now() % 100000)
+    };
+    this.battle = new Battle({ config: zero, playerKills: 0 }).start();
+    this.battle.pvp = true;
+    this.battle.practice = false;
+    this.battle.arenaR = Math.max(28, (init.arenaR || 26) + 3);
+    this.battle.onPvpImpact = (u) => { if (this.pvp) this.pvp.sendAttack(u); };
+
+    /* 유닛 렌더러 — 병종별로 상세 슬롯을 넉넉히 잡아 PVP 인원 전원을 풀 디테일로 그린다 */
+    const empty = {};
+    const caps = {};
+    for (const k of BUCKET_KEYS) { empty[k] = []; caps[k] = 18; }
+    this.unitRenderer = new UnitRenderer(this.scene, { shadowUnits: true, detailCap: 18 });
+    this.unitRenderer.build(empty, caps);
+    this.fx.buildShadows(null);
+
+    const p = this.battle.player;
+    p.x = init.spawn ? init.spawn.x : 0;
+    p.z = init.spawn ? init.spawn.z : -9;
+    p.yaw = init.spawn ? init.spawn.yaw : 0;
+    p.hideModel = true;
+    this.camYaw = p.yaw + Math.PI;
+    this.camPitch = -0.04;
+    this.cam.fov = 62;
+    this.cam.updateProjectionMatrix();
+
+    /* 다른 플레이어·AI 병력 */
+    for (const r of init.roster || []) {
+      if (r.s === init.you) continue;
+      this.pvp.addUnit(r);
+    }
+    this.pvp.buildPlates();
+
+    this.vm.setClass(init.cls);
+    this.camMode = 'fp';
+    $('#deadVeil').classList.remove('is-on');
+    $('#hitVignette').style.opacity = 0;
+    $('#hitVignette').classList.remove('is-strong');
+    const ai = document.getElementById('aimInfo'); if (ai) ai.classList.remove('is-on');
+    const hm = document.getElementById('hitMark'); if (hm) hm.classList.remove('is-on', 'is-kill');
+    this._hudCache = {};
+    this._syncHUD(true);
+    this.pvp.updateScore(true);
+    if (!this._raf) this.loop();
+  }
+
   toHome() {
+    /* PVP 전투 중이면 방에서 나간 뒤 홈으로 (exitToHome 이 다시 toHome 을 부른다) */
+    if (this.pvp && this.pvp.inBattle) { this.pvp.exitToHome(); return; }
     this.state = 'home';
     this.paused = true;
     this.camMode = 'fp';
@@ -614,6 +699,7 @@ class App {
     if (this.unitRenderer) { this.unitRenderer.dispose(); this.unitRenderer = null; }
     if (this.fx) this.fx.clear();
     $('#battle').classList.remove('is-active');
+    $('#battle').classList.remove('is-pvp');
     $('#result').classList.remove('is-on');
     $('#menuSheet').classList.remove('is-on');
     $('#home').classList.add('is-active');
@@ -627,6 +713,8 @@ class App {
 
   cycleCamera() {
     if (!this.battle) return;
+    /* ⚔️ PVP 는 1인칭 대전 — 관전(무적) 시점으로 바꾸면 상대에게 일방적으로 유리해진다 */
+    if (this.battle.pvp) { this._toast('PVP는 1인칭으로만 싸운다'); return; }
     // 👁️ 1인칭 ↔ 🎬 관전 — 두 가지 시점만 쓴다 (3인칭은 없다)
     this.camMode = this.camMode === 'spectate' ? 'fp' : 'spectate';
     if (this.camMode === 'spectate') this._enterSpectate(); else this._exitSpectate();
@@ -768,7 +856,10 @@ class App {
       const nEl = document.getElementById('aiName');
       const hEl = document.getElementById('aiHp');
       const bar = document.getElementById('aiBar');
-      if (nEl) nEl.textContent = '적 ' + (UNIT_KR[best.cls] || '병사');
+      if (nEl) {
+        if (best.pname) nEl.textContent = (best.team === p.team ? '아군 ' : '적 ') + best.pname;
+        else nEl.textContent = '적 ' + (UNIT_KR[best.cls] || '병사');
+      }
       if (hEl) hEl.textContent = hp + ' / ' + mx;
       if (bar) {
         bar.style.width = clamp((hp / mx) * 100, 0, 100) + '%';
@@ -845,6 +936,7 @@ class App {
   castSpell(key) {
     const b = this.battle;
     if (!b || !b.player || b.player.dead) return;
+    if (b.pvp && this.pvp) { this.pvp.castSpell(key); return; }
     const p = b.player;
     if (p.cls !== 'wizard') { this._toast('마법사 클래스에서만 사용할 수 있다'); return; }
     if (p.cd[key] > 0) return;
@@ -892,6 +984,7 @@ class App {
   useSkill() {
     const b = this.battle;
     if (!b || !b.player || b.player.dead) return;
+    if (b.pvp && this.pvp) { this.pvp.useSkill(); return; }
     const p = b.player;
     if (p.cls !== 'blademaster') return;
     if (b.useSkill(p)) {
@@ -1049,6 +1142,7 @@ class App {
     }
 
     this.updateCamera(dt);
+    if (this.battle.pvp && this.pvp) this.pvp.tick(dt);
     const camPos = this.cam.position;
 
     /* 1인칭 — 코앞에 붙은 아군도 숨기지 않는다. 아군이 시야를 가리는 것은 그대로 둔다 */
@@ -1260,7 +1354,8 @@ class App {
       $('#psGrow').textContent = growthLabel(this.progress.kills);
       cache.grow = this.progress.kills;
     }
-    if (this._savedKills !== b.playerKills) {
+    /* PVP 는 영구 성장(처치 누적)을 건드리지 않는다 — 배틀 아레나 기록을 그대로 둔다 */
+    if (!b.pvp && this._savedKills !== b.playerKills) {
       this._savedKills = b.playerKills;
       this.progress.kills = b.playerKills;
       saveProgress(this.progress);
@@ -1352,7 +1447,8 @@ class App {
     const veil = $('#deadVeil');
     if (p.dead) {
       veil.classList.add('is-on');
-      $('#respawnT').textContent = Math.max(0, Math.ceil(3.6 - b.playerDeadT));
+      if (!b.pvp) $('#respawnT').textContent = Math.max(0, Math.ceil(3.6 - b.playerDeadT));
+      else if (this.pvp && this.pvp.me) $('#respawnT').textContent = Math.max(0, Math.ceil(this.pvp.me.r || 0));
     } else veil.classList.remove('is-on');
     // 피격 비네트 — 맞으면 가장자리가 확 붉게 번지고 빠르게 깜빡인다
     const hv = $('#hitVignette');
@@ -1473,6 +1569,30 @@ window.BA = {
   attack() { app.input.attack = true; },
   setPlayerClass(cls) { app.cfg.playerClass = cls; app.vm.setClass(cls); app._syncHome(); },
   get hudLayout() { return app.hudLayout; },
+  /* ⚔️ 플레이어 PVP (테스트·디버그) */
+  pvp: {
+    get client() { return app.pvp; },
+    state: () => (app.pvp ? app.pvp.debugState() : null),
+    lobby: () => (app.pvp ? app.pvp.lobby : null),
+    create: (name) => { if (name) { const el = document.getElementById('pvpName'); if (el) el.value = name; } return app.pvp.create(); },
+    join: (code, name) => {
+      if (name) { const el = document.getElementById('pvpName'); if (el) el.value = name; }
+      const c = document.getElementById('pvpCode'); if (c) c.value = String(code || '').toUpperCase();
+      return app.pvp.join();
+    },
+    leave: () => app.pvp.exitToHome(),
+    lookAt: (id) => app.pvp.lookAt(id),
+    swing: () => app.pvp.swing(),
+    guard: (on) => app.pvp.guard(on),
+    cast: (k) => app.pvp.castSpell(k),
+    skill: () => app.pvp.useSkill(),
+    send: (o) => app.pvp.send(o),
+    team: (t) => app.pvp.send({ type: 'pteam', team: t }),
+    cls: (c) => app.pvp.send({ type: 'pclass', cls: c }),
+    start: () => app.pvp.send({ type: 'pstart' }),
+    conf: (o) => app.pvp.send(Object.assign({ type: 'pconf' }, o || {})),
+    rematch: () => app.pvp.rematch()
+  },
   fullscreen: {
     toggle: () => (app.fs ? app.fs.toggle() : Promise.resolve(false)),
     sync: () => (app.fs ? app.fs.sync() : false),

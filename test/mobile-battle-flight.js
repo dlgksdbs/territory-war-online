@@ -125,8 +125,8 @@ function ok(name, cond, extra) {
     Object.keys(defaults.cfg).filter((k) => /^(ally|enemy)/.test(k)).every((k) => defaults.cfg[k] === 0) &&
     /총 0명/.test(defaults.total),
     { cfg: defaults.cfg, total: defaults.total, rows: defaults.rows });
-  ok('🧮 일반 병사 증원은 0.12초(초당 약 8명) · 고급·특수 유닛은 0.38~0.46초',
-    defaults.spawn.soldier === 0.12 &&
+  ok('🧮 일반 병사 증원은 0.40초 · 고급·특수 유닛은 0.38~0.46초',
+    defaults.spawn.soldier === 0.40 &&
     ['elite', 'blademaster', 'berserker', 'knight', 'wizard'].every((k) => defaults.spawn[k] >= 0.35 && defaults.spawn[k] <= 0.55),
     defaults.spawn);
 
@@ -198,14 +198,14 @@ function ok(name, cond, extra) {
     { fire: specs.spells.fire.damage, lightning: specs.spells.lightning.damage, ice: specs.spells.ice.damage });
   ok('이속: 병사·기사 상향', C.soldier.speed > 3.9 && C.knight.speed > 3.1);
 
-  /* ===== 0a. 일반 병사 동시 96명(비율 0.6) + 빠른 증원(0.12초) ===== */
+  /* ===== 0a. 일반 병사 동시 96명(비율 0.6) + 증원 0.40초 ===== */
   const fieldRatio = await page.evaluate(async () => {
     const { FIELD_RATIO, FIELD_MAX, SPAWN_INTERVAL } = await import('/src/config.js');
     // start() 는 동기 — 전투가 막 만들어진 순간의 상한·예비를 그대로 읽는다
     window.BA.start({ cls: 'soldier', ally: 160, enemy: 0, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0, az: 0, ez: 0 });
     const b = window.BA.battle;
     const full = { cap: b.fieldCap.ally.soldier, reserve: b.remain.ally.soldier, alive: b.countAlive('ally') };
-    // 24명이 쓰러지면 0.7초 동안 예비에서 몇 명이 밀려 들어오는지 (병사 증원 0.12초 × 2명)
+    // 24명이 쓰러지면 0.7초 동안 예비에서 몇 명이 밀려 들어오는지 (병사 증원 0.40초 × 2명)
     let killed = 0;
     for (const u of b.units) {
       if (killed >= 24) break;
@@ -223,10 +223,10 @@ function ok(name, cond, extra) {
   ok('⚔️ 일반 병사는 전장 96명(비율 0.6)이 서고 나머지 64명은 예비',
     fieldRatio.ratio === 0.6 && fieldRatio.max === 160 && fieldRatio.full.cap === 96 && fieldRatio.full.reserve === 64,
     fieldRatio.full);
-  ok('⚔️ 병사 증원 간격 0.12초 — 24명이 쓰러지면 0.7초에 8명 이상이 다시 들어온다',
-    fieldRatio.interval === 0.12 && fieldRatio.killed === 24 &&
-    fieldRatio.refill.alive > fieldRatio.full.alive - 24 && fieldRatio.full.alive - fieldRatio.refill.alive >= 8 &&
-    fieldRatio.refill.reserve < 64,
+  ok('⚔️ 병사 증원 간격 0.40초 — 24명이 쓰러지면 0.7초에 2명이 다시 들어온다',
+    fieldRatio.interval === 0.40 && fieldRatio.killed === 24 &&
+    fieldRatio.refill.alive === fieldRatio.full.alive - 24 + 2 &&
+    fieldRatio.refill.reserve === 64 - 2,
     { interval: fieldRatio.interval, killed: fieldRatio.killed, refill: fieldRatio.refill });
   ok('⚔️ 상한(160)을 넘겨 넣으면 전장 160 + 나머지는 예비',
     fieldRatio.over.cap === 160 && fieldRatio.over.reserve === 140, fieldRatio.over);

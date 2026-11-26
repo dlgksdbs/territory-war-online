@@ -14,6 +14,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const Friends = require('./friends');
+const PvP = require('./pvp');
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -1995,13 +1996,18 @@ function newPlayer(slot, name, ws, isAI, controlSlot) {
 
 function createRoom(ws, name, aiFill, sim, opts) {
   const code = makeRoomCode();
-  const mode = opts && opts.mode === 'castle' ? 'castle' : 'classic';
-  const capacity = mode === 'castle' ? clampNum(Math.floor(Number(opts.capacity) || 5), Friends.CFG.minPlayers, Friends.CFG.maxPlayers) : 0;
+  const mode = opts && opts.mode === 'castle' ? 'castle' : (opts && opts.mode === 'pvp' ? 'pvp' : 'classic');
+  const capacity = mode === 'castle'
+    ? clampNum(Math.floor(Number(opts.capacity) || 5), Friends.CFG.minPlayers, Friends.CFG.maxPlayers)
+    : mode === 'pvp'
+      ? clampNum(Math.floor(Number(opts.capacity) || PvP.CFG.maxPlayers), 2, PvP.CFG.maxPlayers)
+      : 0;
   const room = {
     code,
     mode,
     capacity,
     friends: mode === 'castle' ? Friends.createState({ capacity, aiFill }) : null,
+    pvp: mode === 'pvp' ? PvP.createState({ capacity }) : null,
     hostSlot: 0,
     players: [newPlayer(0, name, ws, false, sim ? -1 : 0)],
     started: false,
@@ -2031,7 +2037,11 @@ function joinRoom(ws, codeRaw, name) {
   if (!room) return { error: ['NO_ROOM', '그런 방이 없어요. 코드를 확인해 주세요.'] };
   if (room.sim) return { error: ['SIM_ROOM', 'AI 시뮬레이션 방에는 난입할 수 없어요.'] };
   if (room.started) return { error: ['ROOM_STARTED', '이미 시작된 방이에요.'] };
-  const roomMax = room.mode === 'castle' ? (room.friends ? room.friends.capacity : 5) : MAX_PLAYERS;
+  const roomMax = room.mode === 'castle'
+    ? (room.friends ? room.friends.capacity : 5)
+    : room.mode === 'pvp'
+      ? (room.pvp ? room.pvp.capacity : PvP.CFG.maxPlayers)
+      : MAX_PLAYERS;
   if (room.players.filter((p) => !p.isAI).length >= roomMax) {
     return { error: ['ROOM_FULL', '방이 가득 찼어요 (' + roomMax + '명).'] };
   }
@@ -2775,6 +2785,7 @@ function leaveRoom(ws, explicit) {
   const player = ws.player;
   if (!room || !player) return;
   if (room.mode === 'castle') return leaveCastleRoom(ws, room, player);
+  if (room.mode === 'pvp') return leavePvpRoom(ws, room, player);
   if (skirmishActive(player)) endSkirmish(room, player, 'leave');
   const wasHost = player.slot === room.hostSlot;
 
@@ -2819,6 +2830,35 @@ function leaveRoom(ws, explicit) {
     room.closed = true;
     rooms.delete(room.code);
   }
+}
+
+/* 플레이어 PVP 방 나가기 — 대기실이면 자리를 비우고, 전투 중이면 그 자리는 빈 채로 둔다 */
+function leavePvpRoom(ws, room, player) {
+  const wasHost = player.slot === room.hostSlot;
+  const st = room.pvp;
+  if (ws.room === room) {
+    ws.room = null;
+    ws.player = null;
+  }
+  if (st && st.phase === 'lobby') {
+    room.players = room.players.filter((p) => p !== player);
+    st.ents.delete(player.slot);
+  } else {
+    player.abandoned = true;
+    player.connected = false;
+    player.ws = null;
+    const e = st && st.ents.get(player.slot);
+    if (e) { e.connected = false; e.guard = false; }
+  }
+  const humans = room.players.filter((p) => !p.isAI && !p.abandoned);
+  if (!humans.length) {
+    room.closed = true;
+    rooms.delete(room.code);
+    return;
+  }
+  if (wasHost) room.hostSlot = humans[0].slot;
+  if (st && st.phase !== 'lobby') PvP.broadcastState(room);
+  PvP.broadcastLobby(room);
 }
 
 /* 2~5인 친구 방 나가기 — 시작 전이면 자리를 비우고, 시작 후에는 AI가 이어받는다 */
@@ -3192,7 +3232,7 @@ function handleMessage(ws, msg) {
       return;
     }
     const sim = !!msg.sim;
-    const mode = msg.mode === 'castle' ? 'castle' : 'classic';
+    const mode = msg.mode === 'castle' ? 'castle' : msg.mode === 'pvp' ? 'pvp' : 'classic';
     const { room, player } = createRoom(ws, name, sim ? true : !!msg.aiFill, sim, { mode, capacity: msg.capacity });
     send(ws, {
       type: 'joined',
@@ -3206,6 +3246,8 @@ function handleMessage(ws, msg) {
     });
     if (sim) {
       startSim(room);
+    } else if (room.mode === 'pvp') {
+      PvP.broadcastLobby(room);
     } else {
       broadcastLobby(room);
       if (room.mode === 'castle') Friends.broadcastState(room);
@@ -3231,6 +3273,10 @@ function handleMessage(ws, msg) {
       name: out.player.name,
       capacity: out.room.capacity
     });
+    if (out.room.mode === 'pvp') {
+      PvP.broadcastLobby(out.room);
+      return;
+    }
     broadcastLobby(out.room);
     if (out.room.mode === 'castle') Friends.broadcastState(out.room);
     return;
@@ -3259,6 +3305,11 @@ function handleMessage(ws, msg) {
     if (room.mode === 'castle') {
       Friends.broadcastLobby(room);
       Friends.sendState(room, player);
+      return;
+    }
+    if (room.mode === 'pvp') {
+      PvP.broadcastLobby(room);
+      PvP.sendState(room, player);
       return;
     }
     addLog(room, player.name + ' 님이 다시 접속했습니다', 'info');
@@ -3290,6 +3341,23 @@ function handleMessage(ws, msg) {
       return;
     }
     const out = Friends.handleMessage(room, player, type, msg);
+    if (out && out.error) {
+      send(ws, { type: 'error', code: out.error[0], message: out.error[1] });
+    }
+    return;
+  }
+
+  if (room.mode === 'pvp') {
+    if (type === 'leave') {
+      leaveRoom(ws, true);
+      send(ws, { type: 'left' });
+      return;
+    }
+    if (type === 'ping') {
+      send(ws, { type: 'pong', at: Date.now() });
+      return;
+    }
+    const out = PvP.handleMessage(room, player, type, msg);
     if (out && out.error) {
       send(ws, { type: 'error', code: out.error[0], message: out.error[1] });
     }
@@ -3382,6 +3450,35 @@ function handleDisconnect(ws) {
   const player = ws.player;
   if (!room || !player) return;
   if (player.ws && player.ws !== ws) return;
+  if (room.mode === 'pvp') {
+    player.connected = false;
+    player.ws = null;
+    player.disconnectedAt = Date.now();
+    PvP.handleDisconnect(room, player);
+    if (room.pvp && room.pvp.phase === 'lobby') {
+      if (player.dropTimer) clearTimeout(player.dropTimer);
+      player.dropTimer = setTimeout(() => {
+        player.dropTimer = null;
+        if (player.connected || player.ws) return;
+        if (!room.pvp || room.pvp.phase !== 'lobby') return;
+        room.players = room.players.filter((p) => p !== player);
+        room.pvp.ents.delete(player.slot);
+        if (!room.players.filter((p) => !p.isAI).length) {
+          room.closed = true;
+          rooms.delete(room.code);
+          return;
+        }
+        if (room.hostSlot === player.slot) {
+          const next = room.players.find((p) => !p.isAI);
+          if (next) room.hostSlot = next.slot;
+        }
+        PvP.broadcastLobby(room);
+      }, 45000);
+    }
+    PvP.broadcastLobby(room);
+    PvP.broadcastState(room);
+    return;
+  }
   if (room.mode === 'castle') {
     player.connected = false;
     player.ws = null;
@@ -3464,6 +3561,8 @@ function serveStatic(req, res) {
     for (const room of rooms.values()) {
       if (room.mode === 'castle') {
         if (room.friends && room.friends.phase === 'battle') live++;
+      } else if (room.mode === 'pvp') {
+        if (room.pvp && room.pvp.phase === 'battle') live++;
       } else if (room.game && !room.game.over) live++;
     }
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -3523,7 +3622,9 @@ function createServer() {
         ws.bucket = { count: 0, reset: now + 10000 };
       }
       ws.bucket.count++;
-      if (ws.bucket.count > 80) {
+      /* 실시간 PVP 는 20Hz 입력·행동 메시지를 받는다 — 일반 방보다 여유를 준다 */
+      const bucketMax = ws.room && ws.room.mode === 'pvp' ? 240 : 80;
+      if (ws.bucket.count > bucketMax) {
         try { ws.close(4008, 'too many messages'); } catch (e) { /* noop */ }
         return;
       }
@@ -3557,6 +3658,10 @@ function createServer() {
       if (room.closed) continue;
       if (room.mode === 'castle') {
         Friends.stepRoom(room);
+        continue;
+      }
+      if (room.mode === 'pvp') {
+        try { PvP.stepRoom(room); } catch (err) { console.error('[pvp]', err); }
         continue;
       }
       if (!room.game) continue;
@@ -3632,6 +3737,7 @@ module.exports = {
   SKIRMISH,
   rooms,
   Friends,
+  PvP,
   createServer,
   createRoom,
   joinRoom,

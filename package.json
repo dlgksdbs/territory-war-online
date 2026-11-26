@@ -1,17 +1,19 @@
 {
   "name": "territory-war-online",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
-  "description": "한 손으로 즐기는 1인칭 3D(Three.js) 칼질 액션 · 대규모 난전 · 버튼 크기·위치 커스텀 HUD · Node.js + WebSocket",
+  "description": "한 손으로 즐기는 1인칭 3D(Three.js) 칼질 액션 · 대규모 난전 · 플레이어 PVP 실시간 대전 · 버튼 크기·위치 커스텀 HUD · Node.js + WebSocket",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node test/smoke.js && node test/friends.js",
+    "test": "node test/smoke.js && node test/friends.js && node test/pvp.js",
     "test:friends": "node test/friends.js",
     "test:arena": "node test/mobile-arena.js",
     "test:arena3d": "node test/mobile-arena3d.js",
-    "test:hud": "node test/mobile-hud-custom.js"
+    "test:hud": "node test/mobile-hud-custom.js",
+    "test:pvp": "node test/pvp.js",
+    "test:mobile-pvp": "node test/mobile-pvp.js"
   },
   "engines": {
     "node": ">=18"

@@ -1705,7 +1705,7 @@ export class UnitRenderer {
         // 숨겨졌던 유닛(디버그·관전 전환)이 다시 그려지도록 상세 배정을 되살린다
         if (u._tier === -2) u._tier = -1;
         const lodNear = this.lodNear || 15, lodFar = this.lodFar || 36;
-        u._want = (u.isPlayer || u._d2 < lodNear * lodNear) ? 0 : (u._d2 < lodFar * lodFar ? 1 : 2);
+        u._want = (u.isPlayer || u.forceDetail || u._d2 < lodNear * lodNear) ? 0 : (u._d2 < lodFar * lodFar ? 1 : 2);
       }
 
       /* 2) 상세 모델 슬롯 배정 — 카메라에서 가까운 유닛이 무조건 먼저.

@@ -27,6 +27,14 @@ export const LIMB_LOSS = 0.30;
 /* 💚 자연 회복 — 살아 있는 모든 유닛이 매초 최대 체력의 이 비율만큼 스스로 회복한다.
    (사망·쓰러지는 중 제외. 50:50 교착이 끝나지 않을 만큼 빠르지는 않게 1.5%) */
 export const REGEN_FRAC = 0.015;
+/* 🩸 적중 흡혈 — 공격이 '실제로 피해를 입혔을 때' 공격자가 아주 조금 회복한다.
+   막기(0 피해)·무효 피해에는 회복이 없다. 자연 회복 위에 얹히는 소량 보너스다.
+   · frac        : 실제 입힌 피해의 7%
+   · min         : 한 대라도 들어가면 최소 1
+   · perSwingFrac: 한 번의 공격(같은 프레임의 광역 타격 전부)에서 회복 총량 상한 = 최대 체력의 3%
+   · perSwingMin : 그 상한의 최소값 10 (병사급 체력에서도 '한 대 맞히면 조금 찬다'가 보이게)
+   광역으로 여럿을 때려도 상한 덕분에 기사·마법사가 통째로 회복하는 일은 없다. */
+export const LIFESTEAL = { frac: 0.07, min: 1, perSwingFrac: 0.03, perSwingMin: 10 };
 /* 정면 막기 판정 반각(rad) — 이 각도 안에서 날아온 공격은 종류를 가리지 않고 완전 방어 */
 export const GUARD_FRONT_HALF = 1.35;   // ≈ ±77°
 /* 🛡️ AI 막기 빈도 — 힘이 아니라 '막는 횟수' 기준.
@@ -166,7 +174,7 @@ export const CLASSES = {
     name: '단검 광전사',
     tag: 'RAPID · TANK',
     blurb: '쌍단검을 쥔 광전사. 산처럼 단단하고 손이 미친 듯 빠르지만 한 방은 아주 약하다. 공격 버튼을 꾹 누르면 자동 연타. 막기는 하지 않는다.',
-    hp: 3000,           // 초고체력 탱커 (병사의 20배)
+    hp: 3600,           // 초고체력 탱커 (병사의 24배 · 기존 3000 에서 20% 상향)
     damage: 18,         // 초약딜 — 대신 엄청나게 자주 찌른다
     speed: 4.15,        // 이동속도는 일반 병사와 동일
     radius: 0.44,
@@ -283,7 +291,7 @@ export const SKILL = {
 };
 
 /* 표시용 전투력 지수 (병사 = 1.00 기준) */
-export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 2.8, wizard: 2.4, blademaster: 3.2, berserker: 2.2 };
+export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 2.8, wizard: 2.4, blademaster: 3.2, berserker: 2.4 };
 export function powerIndex(cls) {
   return POWER_INDEX[cls] || 1.0;
 }

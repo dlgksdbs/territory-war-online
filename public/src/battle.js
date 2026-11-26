@@ -7,6 +7,8 @@
          피해 0으로 완전 방어. 뒤에서 맞으면 그대로 들어간다. 병사·고급 병사·검객·광전사는
          막을 수 있고 기사(양손 망치)·마법사는 막을 수 없다 (AI 는 병종별 빈도로 막는다).
    · 💚 자연 회복: 살아 있는 모든 유닛이 자기 최대 체력에 비례해 매 프레임 조금씩 회복
+   · 🩸 적중 흡혈: 실제 피해를 입힌 공격자는 그 피해의 7%(최소 1)만큼 아주 조금 회복
+         (막기·무효 피해는 0 피해라 회복 없음 · 한 번의 광역 공격은 최대 체력의 3%까지만)
    · 🩸 부위 절단: 머리(베임 사망 모션)·양팔(공속 -30%)·양다리(이속 -30%)
          AI 유닛끼리도 부위를 노리고, 양팔/양다리를 모두 잃으면 사망.
    · 🧠 전술 AI: 측면 포위(flank)·협공(집중)·라인 유지·마법사 거리 유지 — 후퇴 없음.
@@ -16,7 +18,7 @@
 import {
   CLASSES, SPELLS, SPELL_ORDER, SKILL, CORPSE_TIME, KNEEL_TIME, FALL_TIME, GROWTH_PER_KILL,
   rosterOf, impactAt, LIMB_LOSS, GUARD_FRONT_HALF, GUARD_CHANCE, SPAWN_INTERVAL, FIELD_RATIO, FIELD_MAX,
-  REGEN_FRAC
+  REGEN_FRAC, LIFESTEAL
 } from './config.js';
 import { clamp, angDiff, angLerp, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 import { makeUnitRig } from './rig.js';
@@ -640,6 +642,10 @@ export class Battle {
     target.lastHitBy = source ? source.id : 0;
     const lethal = target.hp <= 0;
 
+    /* 🩸 적중 흡혈 — 실제로 피해가 들어간 뒤 공격자가 아주 조금 회복한다.
+       막기(위에서 0 을 돌려주고 끝난다)·무효 피해에는 회복이 없다 */
+    this.lifesteal(source, dmg);
+
     if (lethal) {
       this.kill(target, source, kind);
     } else {
@@ -649,6 +655,27 @@ export class Battle {
       target.staggerSide = source && source.x < target.x ? 1 : -1;
     }
     return dmg;
+  }
+
+  /* 🩸 적중 시 소량 흡혈 — 살아 있는 공격자가 '실제로 입힌 피해'에 비례해 조금 회복한다.
+     · dealt <= 0 (막기·무효) 이면 아무것도 하지 않는다 (호출부에서 0 피해는 이미 걸러진다)
+     · 한 번의 공격(같은 프레임에 터지는 광역 타격 전부)에서 회복 총량을
+       max(10, 최대 체력의 3%) 로 묶어, 기사·마법사가 무리에게 통째로 회복하는 일을 막는다
+     · 상한은 최대 체력 (attacker.hp = min(maxHp, hp + heal)) */
+  lifesteal(source, dealt) {
+    if (!source || !(dealt > 0)) return 0;
+    if (source.dead || source.removed) return 0;
+    const maxHp = source.maxHp || 0;
+    if (!(maxHp > 0) || !(source.hp > 0) || source.hp >= maxHp) return 0;
+    /* 공격 한 번 = 같은 this.time 안의 타격 묶음. 새 공격이면 누적 회복을 0 으로 되돌린다 */
+    if (source._lsAt !== this.time) { source._lsAt = this.time; source._lsDone = 0; }
+    const cap = Math.max(LIFESTEAL.perSwingMin, maxHp * LIFESTEAL.perSwingFrac);
+    const want = Math.max(LIFESTEAL.min, dealt * LIFESTEAL.frac);
+    const heal = Math.min(want, cap - source._lsDone, maxHp - source.hp);
+    if (!(heal > 0)) return 0;
+    source.hp = Math.min(maxHp, source.hp + heal);
+    source._lsDone += heal;
+    return heal;
   }
 
   kill(target, source, kind, info) {

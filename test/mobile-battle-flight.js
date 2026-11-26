@@ -4,7 +4,8 @@
    배틀 아레나 3D · 모바일(390×844 세로) 실제 렌더 검증
    -----------------------------------------------------------------------------
    · ⚔️ 병종 밸런스: 병사 150/150 · 기사 체력 2200·막기 불가 · 검객 900/0.30초 · 고급 병사 방패 제거
-   · 🩸 신규 6번째 병종 '단검 광전사' — 3000 체력 · 18 공격력 · 0.18초 연타 · 홀드 자동 연타
+   · 🩸 신규 6번째 병종 '단검 광전사' — 3600 체력(3000 → 20% 상향) · 18 공격력 · 0.18초 연타 · 홀드 자동 연타
+   · 🩸 적중 흡혈: 실제 피해를 입힌 공격자는 그 7%(최소 1)를 회복 — 막기(0 피해)에는 회복 없음
    · 💚 자연 회복: 살아 있는 모든 유닛이 초당 최대 체력의 1.5% 를 스스로 회복
    · ☀️ 밝기·광택: 노출/조명/안개가 어둡지 않고, 갑옷이 번쩍이지 않는 범위인지
    · 🛡️ 새 막기 판정: 정면(±77°)은 마법·망치·일섬·평타 모두 0 피해, 뒤는 그대로
@@ -178,8 +179,8 @@ function ok(name, cond, extra) {
     C.blademaster.hp === 900 && C.blademaster.maxTargets === 10 && C.blademaster.speed > 5.0 &&
     C.blademaster.cycle <= 0.305 && C.blademaster.guard === true,
     { hp: C.blademaster.hp, cycle: C.blademaster.cycle });
-  ok('🩸 단검 광전사 = 3000 체력 · 18 공격력 · 0.18초 연타 · 병사와 같은 이속 · 막기 불가',
-    C.berserker && C.berserker.hp === 3000 && C.berserker.damage === 18 &&
+  ok('🩸 단검 광전사 = 3600 체력(3000 에서 20% 상향) · 18 공격력 · 0.18초 연타 · 병사와 같은 이속 · 막기 불가',
+    C.berserker && C.berserker.hp === 3600 && Math.abs(C.berserker.hp - 3000 * 1.2) < 0.001 && C.berserker.damage === 18 &&
     C.berserker.cycle === 0.18 && C.berserker.speed === C.soldier.speed && C.berserker.guard === false,
     C.berserker && { hp: C.berserker.hp, dmg: C.berserker.damage, cycle: C.berserker.cycle, speed: C.berserker.speed, guard: C.berserker.guard });
   ok('🔮 마법사 이속·마법 쿨타임 조정 · 막기 불가', C.wizard.speed < 3.6 && C.wizard.guard === false &&
@@ -1072,7 +1073,7 @@ function ok(name, cond, extra) {
   });
   ok('🩸 단검 광전사가 양 진영에 스폰되고 1인칭·HUD·3D 모델이 붙는다 (막기 버튼은 숨김)',
     bers.cls === 'berserker' && bers.allyAI === 4 && bers.enemyAI === 4 &&
-    Math.abs(bers.playerHp - 3000) < 120 && bers.cycle === 0.18 && bers.speed === bers.soldierSpeed &&
+    Math.abs(bers.playerHp - 3600) < 120 && bers.cycle === 0.18 && bers.speed === bers.soldierSpeed &&
     bers.buckets.includes('berserker') && bers.parts > 20 && bers.vmModel &&
     bers.hudIcon === '🩸' && bers.atkLabel === '연타' && bers.guardOn === false, bers);
 
@@ -1359,6 +1360,84 @@ function ok(name, cond, extra) {
     regenProbe.frac === 0.015 && regenOk, regenProbe);
   ok('💚 사망 유닛은 회복하지 않고, 회복은 최대 체력에서 멈춘다',
     regenProbe.deadHp === 0 && regenProbe.capped === true, regenProbe);
+
+  /* ===== 29a. 🩸 적중 흡혈 — 실제 피해를 입혔을 때만 아주 조금 회복 (막기는 제외) ===== */
+  const steal = await page.evaluate(async () => {
+    const { Battle } = await import('/src/battle.js');
+    const cfg = {
+      playerClass: 'soldier', seed: 777,
+      allySoldiers: 0, enemySoldiers: 0, allyElites: 0, enemyElites: 0,
+      allyKnights: 0, enemyKnights: 0, allyWizards: 0, enemyWizards: 0,
+      allyBlademasters: 0, enemyBlademasters: 0, allyBerserkers: 0, enemyBerserkers: 0
+    };
+    const b = new Battle({ config: cfg, playerKills: 0, autoPlayer: false }).start();
+    b.playerSafe = true;
+    const spec = window.BA.specs().lifesteal;
+    const a = b.newUnit('soldier', 'ally', 0, 0, false);      // 때리는 쪽
+    const e = b.newUnit('soldier', 'enemy', 0, 2, false);     // 맞는 쪽
+    const out = { frac: spec.frac, min: spec.min, perSwingMin: spec.perSwingMin, perSwingFrac: spec.perSwingFrac };
+
+    // ① 실제 피해를 입히면 그 7% 만큼 회복한다
+    a.hp = a.maxHp * 0.5;
+    const a0 = a.hp, e0 = e.hp;
+    out.dealt = +b.damage(e, 100, a, 'blade', 'body').toFixed(3);
+    out.heal = +(a.hp - a0).toFixed(3);
+    out.targetLost = +(e0 - e.hp).toFixed(3);
+
+    // ② 막기(0 피해)에는 회복이 없다 — 적이 공격자를 정면으로 보며 막는다
+    b.time += 1;
+    e.hp = e.maxHp;
+    e.yaw = Math.atan2(a.x - e.x, a.z - e.z);
+    e.guard = true;
+    a.hp = a.maxHp * 0.5;
+    const a1 = a.hp, e1 = e.hp;
+    out.blockedDealt = +b.damage(e, 100, a, 'blade', 'body').toFixed(3);
+    out.blockedHeal = +(a.hp - a1).toFixed(3);
+    out.blockedLost = +(e1 - e.hp).toFixed(3);
+
+    // ③ 회복은 최대 체력에서 멈춘다
+    b.time += 1;
+    e.guard = false;
+    a.hp = a.maxHp - 0.25;
+    b.damage(e, 100, a, 'blade', 'body');
+    out.capped = a.hp <= a.maxHp + 0.0001;
+
+    // ④ 한 번의 공격으로 여럿을 때려도 총 회복은 max(10, 최대 체력 3%) 까지
+    b.time += 1;
+    a.hp = a.maxHp * 0.4;
+    const a2 = a.hp;
+    for (let i = 0; i < 5; i++) {
+      const t = b.newUnit('soldier', 'enemy', 4 + i * 0.6, 6, false);
+      b.damage(t, 100, a, 'blade', 'body');
+    }
+    out.aoeHeal = +(a.hp - a2).toFixed(3);
+    out.aoeCap = +Math.max(spec.perSwingMin, a.maxHp * spec.perSwingFrac).toFixed(3);
+
+    // ⑤ 아주 약한 피해도 최소 1 은 회복한다
+    b.time += 1;
+    a.hp = a.maxHp * 0.4;
+    const a3 = a.hp;
+    out.tinyDealt = +b.damage(b.newUnit('soldier', 'enemy', 0, 2, false), 2, a, 'blade', 'body').toFixed(3);
+    out.tinyHeal = +(a.hp - a3).toFixed(3);
+
+    // ⑥ 죽은 공격자는 회복하지 않는다
+    b.time += 1;
+    const d = b.newUnit('soldier', 'ally', 0, 0, false);
+    d.dead = true; d.hp = 0;
+    b.damage(b.newUnit('soldier', 'enemy', 0, 2, false), 100, d, 'blade', 'body');
+    out.deadHeal = +d.hp.toFixed(3);
+    return out;
+  });
+  ok('🩸 실제 피해를 입히면 공격자가 그 피해의 7%만큼 회복한다 (100 피해 → +7)',
+    steal.frac === 0.07 && steal.dealt === 100 && Math.abs(steal.heal - 7) < 0.01 &&
+    Math.abs(steal.targetLost - 100) < 0.01, steal);
+  ok('🩸 막기로 피해가 0이면 공격자는 회복하지 않는다 (상대 체력도 그대로)',
+    steal.blockedDealt === 0 && steal.blockedHeal === 0 && steal.blockedLost === 0, steal);
+  ok('🩸 회복은 최대 체력에서 멈춘다', steal.capped === true, steal);
+  ok('🩸 한 번의 공격으로 여러 명을 때려도 총 회복은 max(10, 최대 체력 3%) 이하',
+    steal.aoeHeal > 0 && steal.aoeHeal <= steal.aoeCap + 0.001 && steal.aoeCap === 10, steal);
+  ok('🩸 아주 약한 피해(2)도 최소 1 은 회복하고, 죽은 공격자는 회복하지 않는다',
+    Math.abs(steal.tinyHeal - 1) < 0.01 && steal.deadHeal === 0, steal);
 
   /* ===== 28. 🖥️ 전체화면 토글 — 배치 · 클릭 핸들러 · 아이콘 동기화 · 렌더러 리사이즈 ===== */
   await page.evaluate(() => window.BA.app.toHome());

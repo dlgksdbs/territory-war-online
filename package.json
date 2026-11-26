@@ -1,6 +1,6 @@
 {
   "name": "territory-war-online",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "description": "한 손으로 즐기는 실시간(RTS) 영토 확장 전략 게임 · 1인칭 3D(Three.js) 칼질 액션 · 대규모 난전 · Node.js + WebSocket 멀티플레이",
   "main": "server.js",

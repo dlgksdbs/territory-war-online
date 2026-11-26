@@ -4,7 +4,7 @@
    홈(병력 편성) → 3D 전장(1인칭 참전 / 관전) → 결과 · 다시 싸우기
    ============================================================================= */
 import * as THREE from 'three';
-import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_ELITES, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt, GUARD_CHANCE, REGEN_FRAC } from './config.js';
+import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_ELITES, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt, GUARD_CHANCE, REGEN_FRAC, LIFESTEAL } from './config.js';
 import { buildWorld } from './world.js';
 import { UnitRenderer } from './rig.js';
 import { Battle } from './battle.js';
@@ -1425,7 +1425,7 @@ window.BA = {
   },
   config: () => ({ ...app.cfg }),
   /* 밸런스 스펙 (테스트·디버그) */
-  specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS, guardChance: GUARD_CHANCE, regen: REGEN_FRAC }),
+  specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS, guardChance: GUARD_CHANCE, regen: REGEN_FRAC, lifesteal: LIFESTEAL }),
   /* 시점 감도 (테스트·디버그) — 지금 화면 기준 실제 적용값 */
   look: () => ({
     sens: LOOK_SENS, pitch: LOOK_PITCH_SENS, spec: SPEC_SENS, specPitch: SPEC_PITCH_SENS,

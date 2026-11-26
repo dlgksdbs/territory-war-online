@@ -299,6 +299,27 @@ function frontPair(st, slot) {
 
 const tkey = (a, b) => Math.min(a, b) + '-' + Math.max(a, b);
 
+/* 서빙 파일에 🖥️ 전체화면 토글 기능이 실제로 실려 있는지 (정적 검증) */
+function uiStaticTests() {
+  console.log('UI · 전체화면 토글 정적 검증');
+  const fsmod = require('fs');
+  const pathmod = require('path');
+  const root = pathmod.join(__dirname, '..', 'public');
+  const html = fsmod.readFileSync(pathmod.join(root, 'index.html'), 'utf8');
+  const js = fsmod.readFileSync(pathmod.join(root, 'src', 'fullscreen.js'), 'utf8');
+  const main = fsmod.readFileSync(pathmod.join(root, 'src', 'main.js'), 'utf8');
+  const css = fsmod.readFileSync(pathmod.join(root, 'src', 'style.css'), 'utf8');
+  ok('홈 상단에 전체화면 버튼', /id="fsHomeBtn"[^>]*fs-btn/.test(html) && /id="fsHomeBtn"[^>]*aria-pressed="false"/.test(html));
+  ok('전장 HUD(👁️·☰ 옆)에 전체화면 버튼', /id="camBtn"[\s\S]{0,900}id="fsBtn"[^>]*fs-btn[\s\S]{0,900}id="menuBtn"/.test(html));
+  ok('버튼에 켜기/끄기 아이콘이 모두 있다', (html.match(/fs-enter/g) || []).length >= 2 && (html.match(/fs-exit/g) || []).length >= 2);
+  ok('표준·웹킷 전체화면 API 지원', /requestFullscreen/.test(js) && /webkitRequestFullscreen/.test(js) &&
+    /exitFullscreen/.test(js) && /webkitExitFullscreen/.test(js));
+  ok('fullscreenchange 로 아이콘·aria 동기화', /fullscreenchange/.test(js) && /webkitfullscreenchange/.test(js) && /aria-pressed/.test(js));
+  ok('전체화면 변화 시 렌더러 resize', /_onFullscreenChange/.test(main) && /createFullscreenToggle/.test(main) && /resize\(\)/.test(main));
+  ok('홈·전장 두 버튼이 같은 토글로 묶인다', /\$\('#fsBtn'\), \$\('#fsHomeBtn'\)/.test(main));
+  ok('전체화면 중 축소 아이콘 스타일', /\.fs-btn\[aria-pressed="true"\] \.fs-exit/.test(css));
+}
+
 function skirmishTests() {
   console.log('엔진 · 직접 참전 (칼질 스커미시)');
   const { room, player, st } = fakeRoom(424242);
@@ -723,6 +744,7 @@ async function networkTests() {
 (async function main() {
   try {
     engineTests();
+    uiStaticTests();
     headlessSimTests();
     skirmishTests();
     await networkTests();

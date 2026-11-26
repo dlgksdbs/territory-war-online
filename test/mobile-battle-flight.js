@@ -103,6 +103,35 @@ function ok(name, cond, extra) {
   await page.waitForFunction(() => window.BA && window.BA.app, { timeout: 30000 });
   await sleep(600);
 
+  /* ===== 0-a. 🧮 기본 편성 — 가벼운 기본 인원 · 자연스러운 증원 간격 ===== */
+  const defaults = await page.evaluate(async () => {
+    const CFG = await import('/src/config.js');
+    const cfg = window.BA.config();
+    const rows = Array.from(document.querySelectorAll('.row')).map((r) => ({
+      team: r.dataset.team, unit: r.dataset.unit,
+      v: Number(r.querySelector('input.num').value)
+    }));
+    const val = (team, unit) => (rows.find((r) => r.team === team && r.unit === unit) || {}).v;
+    return {
+      cfg, total: document.getElementById('rosterTotal').textContent,
+      spawn: CFG.SPAWN_INTERVAL,
+      html: { aS: val('ally', 'soldier'), aK: val('ally', 'knight'), aW: val('ally', 'wizard'), aB: val('ally', 'blademaster'),
+        eS: val('enemy', 'soldier'), eK: val('enemy', 'knight'), eW: val('enemy', 'wizard'), eB: val('enemy', 'blademaster') }
+    };
+  });
+  ok('🧮 기본 편성 = 한 진영 병사 20 + 기사·마법사·검객 1 (한쪽 23명 · 양쪽 46명)',
+    defaults.cfg.allySoldiers === 20 && defaults.cfg.enemySoldiers === 20 &&
+    defaults.cfg.allyKnights === 1 && defaults.cfg.enemyKnights === 1 &&
+    defaults.cfg.allyWizards === 1 && defaults.cfg.enemyWizards === 1 &&
+    defaults.cfg.allyBlademasters === 1 && defaults.cfg.enemyBlademasters === 1 &&
+    defaults.cfg.allyElites === 0 && defaults.cfg.allyBerserkers === 0 &&
+    /총 46명/.test(defaults.total) &&
+    defaults.html.aS === 20 && defaults.html.eS === 20 && defaults.html.aK === 1 && defaults.html.eK === 1,
+    { cfg: defaults.cfg, total: defaults.total, html: defaults.html });
+  ok('🧮 증원 간격이 0.35~0.55초로 완화됐다 (예전 0.07~0.14초)',
+    Object.values(defaults.spawn).every((v) => v >= 0.35 && v <= 0.55) && defaults.spawn.soldier >= 0.4,
+    defaults.spawn);
+
   /* ===== 0. 스펙 ===== */
   const specs = await page.evaluate(() => window.BA.specs());
   const C = specs.classes;
@@ -120,10 +149,10 @@ function ok(name, cond, extra) {
     C.blademaster.hp === 900 && C.blademaster.maxTargets === 10 && C.blademaster.speed > 5.0 &&
     C.blademaster.cycle <= 0.305 && C.blademaster.guard === true,
     { hp: C.blademaster.hp, cycle: C.blademaster.cycle });
-  ok('🩸 단검 광전사 = 3000 체력 · 18 공격력 · 0.18초 연타 · 병사와 같은 이속 · 막기 가능',
+  ok('🩸 단검 광전사 = 3000 체력 · 18 공격력 · 0.18초 연타 · 병사와 같은 이속 · 막기 불가',
     C.berserker && C.berserker.hp === 3000 && C.berserker.damage === 18 &&
-    C.berserker.cycle === 0.18 && C.berserker.speed === C.soldier.speed && C.berserker.guard === true,
-    C.berserker && { hp: C.berserker.hp, dmg: C.berserker.damage, cycle: C.berserker.cycle, speed: C.berserker.speed });
+    C.berserker.cycle === 0.18 && C.berserker.speed === C.soldier.speed && C.berserker.guard === false,
+    C.berserker && { hp: C.berserker.hp, dmg: C.berserker.damage, cycle: C.berserker.cycle, speed: C.berserker.speed, guard: C.berserker.guard });
   ok('🔮 마법사 이속·마법 쿨타임 조정 · 막기 불가', C.wizard.speed < 3.6 && C.wizard.guard === false &&
     specs.spells.fire.cooldown === 3.8 && specs.spells.lightning.cooldown === 6.6 && specs.spells.ice.cooldown === 8.6);
   ok('이속: 병사·기사 상향', C.soldier.speed > 3.9 && C.knight.speed > 3.1);
@@ -261,12 +290,12 @@ function ok(name, cond, extra) {
     return { hp: u.hp, react: units.guardReaction, hold: units.guardHold, cdMax: units.guardCdMax };
   });
   ok('🛡️ 고급 병사는 횟수 제한 없이 12번 연속 완전 방어', eliteGuard.hp === 900, eliteGuard);
-  ok('🛡️ AI 막기 빈도 상향 — 고급 병사 0.55/0.26 (병사 0.18/0.08 · 검객 0.30/0.13)',
-    Math.abs(eliteGuard.react - 0.55) < 0.01 && Math.abs(eliteGuard.hold - 0.26) < 0.01 &&
-    eliteGuard.cdMax <= 1.2 && eliteGuard.react > 0.5, eliteGuard);
+  ok('🛡️ AI 막기 빈도 상향 — 고급 병사 0.98/0.70 (병사 0.30/0.14 · 검객 0.52/0.27)',
+    Math.abs(eliteGuard.react - 0.98) < 0.01 && Math.abs(eliteGuard.hold - 0.70) < 0.01 &&
+    eliteGuard.cdMax <= 0.5 && eliteGuard.react > 0.5, eliteGuard);
   const gc = specs.guardChance || {};
-  ok('🛡️ AI 막기 확률표 — 병사·고급·검객·광전사만 (기사·마법사는 막기 없음)',
-    gc.soldier && gc.elite && gc.blademaster && gc.berserker && !gc.knight && !gc.wizard &&
+  ok('🛡️ AI 막기 확률표 — 일반 병사·고급 병사·매화 검객만 (기사·마법사·단검 광전사는 막기 없음)',
+    gc.soldier && gc.elite && gc.blademaster && !gc.berserker && !gc.knight && !gc.wizard &&
     gc.elite.react > gc.soldier.react * 2 && gc.blademaster.react > gc.soldier.react &&
     gc.soldier.reactT <= 0.12 && gc.elite.reactT <= 0.10, gc);
 
@@ -691,9 +720,9 @@ function ok(name, cond, extra) {
   ok('👥 1인칭 아군은 플레이어의 2.3m 개인 공간을 비켜 가지 않는다 (몸 반경만큼만 벌어짐)',
     nearAlly.gap > 0.5 && nearAlly.gap < 1.5, nearAlly);
 
-  /* ===== 21. 🛡️ 막기 버튼 — 실터치(홀드·탭)로 모든 병종이 막는다 ===== */
+  /* ===== 21. 🛡️ 막기 버튼 — 실터치(홀드·탭)로 막기 가능 병종이 막는다 ===== */
   const guardRuns = [];
-  for (const cls of ['soldier', 'elite', 'blademaster', 'berserker']) {
+  for (const cls of ['soldier', 'elite', 'blademaster']) {
     await page.evaluate((c) => window.BA.start({ cls: c, ally: 6, enemy: 2, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }), cls);
     await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
     await sleep(300);
@@ -759,7 +788,7 @@ function ok(name, cond, extra) {
     });
     guardRuns.push({ rect, held, tapped });
   }
-  ok('🛡️ 막기 버튼이 모든 병종에 보이고 실제 터치로 눌린다',
+  ok('🛡️ 막기 버튼이 막기 가능 3병종에 보이고 실제 터치로 눌린다',
     guardRuns.every((g) => g.rect.on && g.held.touchGuard && g.held.inputGuard && g.held.isHeld), guardRuns.map((g) => ({ cls: g.held.cls, on: g.rect.on, hit: g.rect.hit })));
   ok('🛡️ 막는 동안 정면 공격은 0 피해 + 막힘 이벤트(스파크/소리), 뒤는 그대로',
     guardRuns.every((g) => g.held.pGuard && Math.abs(g.held.frontHp - g.held.maxHp) < 0.5 && g.held.blockEv >= 1 && g.held.rearHp < g.held.maxHp - 1),
@@ -980,11 +1009,11 @@ function ok(name, cond, extra) {
       guardOn: document.getElementById('guardBtn').classList.contains('is-on')
     };
   });
-  ok('🩸 단검 광전사가 양 진영에 스폰되고 1인칭·HUD·3D 모델이 붙는다',
+  ok('🩸 단검 광전사가 양 진영에 스폰되고 1인칭·HUD·3D 모델이 붙는다 (막기 버튼은 숨김)',
     bers.cls === 'berserker' && bers.allyAI === 4 && bers.enemyAI === 4 &&
     Math.abs(bers.playerHp - 3000) < 120 && bers.cycle === 0.18 && bers.speed === bers.soldierSpeed &&
     bers.buckets.includes('berserker') && bers.parts > 20 && bers.vmModel &&
-    bers.hudIcon === '🩸' && bers.atkLabel === '연타' && bers.guardOn === true, bers);
+    bers.hudIcon === '🩸' && bers.atkLabel === '연타' && bers.guardOn === false, bers);
 
   const poseBers = await page.evaluate(() => {
     const r = {};
@@ -1062,6 +1091,32 @@ function ok(name, cond, extra) {
     knightGuard.front < 8900, knightGuard);
   ok('🔨 AI 기사도 막지 못한다 (가드를 강제로 켜도 피해 그대로)', knightGuard.aiHp < 8900, { hp: knightGuard.aiHp });
 
+  /* ===== 26b. 🩸 단검 광전사도 이제 막기 불가 (버튼 숨김 · 입력 무시 · AI 무시) ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'berserker', ally: 2, enemy: 2, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(400);
+  const berserkGuard = await page.evaluate(() => {
+    const app = window.BA.app, b = window.BA.battle, p = b.player;
+    app.paused = false;
+    const btn = document.getElementById('guardBtn');
+    const shown = btn.classList.contains('is-on') && getComputedStyle(btn).display !== 'none';
+    p.guard = false; b.playerSafe = false;
+    b.update(1 / 60, { mx: 0, mz: 0, yaw: p.yaw, guard: true, attack: false, aimPart: 'body', aimId: 0 });
+    const pGuard = !!p.guard;
+    p.maxHp = 5000; p.hp = 5000;
+    b.damage(p, 500, { x: p.x, z: p.z + 3, team: 'enemy', id: 9201 }, 'blade');
+    const front = p.hp;
+    // AI 광전사도 가드를 강제로 켜도 막지 못한다
+    const z = window.BA.debug.spawn('berserker', 'enemy', 0, 0);
+    z.x = 0; z.z = 0; z.yaw = 0; z.hp = 5000; z.maxHp = 5000; z.guard = true; z.guardT = 99;
+    b.damage(z, 500, { x: 0, z: 2, team: 'ally', id: 9202 }, 'blade');
+    return { cls: p.cls, shown, pGuard, front, aiHp: z.hp, guardFlag: window.BA.specs().classes.berserker.guard };
+  });
+  ok('🩸 광전사 — 막기 버튼 숨김·입력 무시 · 정면 공격이 그대로 들어간다',
+    berserkGuard.cls === 'berserker' && berserkGuard.guardFlag === false && berserkGuard.shown === false &&
+    berserkGuard.pGuard === false && berserkGuard.front < 4900, berserkGuard);
+  ok('🩸 AI 광전사도 막지 못한다 (가드를 강제로 켜도 피해 그대로)', berserkGuard.aiHp < 4900, { hp: berserkGuard.aiHp });
+
   /* ===== 27. 🛡️ 고급 병사가 실제 난전에서 눈에 띄게 자주 막는다 (렌더러 없는 순수 시뮬레이션) ===== */
   const guardCount = await page.evaluate(async () => {
     const { Battle } = await import('/src/battle.js');
@@ -1088,6 +1143,77 @@ function ok(name, cond, extra) {
   });
   ok('🛡️ 고급 병사 AI가 병사보다 눈에 띄게 자주 막는다 (20초 난전 · 고급 ≥ 병사 ×1.5)',
     guardCount.elite.blocks >= 3 && guardCount.elite.blocks > guardCount.soldier.blocks * 1.5, guardCount);
+
+  /* ===== 27b. 🛡️ 막기 가능 3병종 AI 막기 횟수 2배 상향 (예전 설정과 순수 시뮬레이션 비교) ===== */
+  const guardDoubling = await page.evaluate(async () => {
+    const { Battle } = await import('/src/battle.js');
+    const CFG = await import('/src/config.js');
+    // 2026-11-26 개편 전 설정 (비교 기준)
+    const BASELINE = {
+      soldier: { react: 0.18, hold: 0.08, cd: 2.2, reactT: 0.10, dur: 1 },
+      elite: { react: 0.55, hold: 0.26, cd: 1.1, reactT: 0.09, dur: 1 },
+      blademaster: { react: 0.30, hold: 0.13, cd: 1.7, reactT: 0.08, dur: 1 }
+    };
+    const current = JSON.parse(JSON.stringify(CFG.GUARD_CHANCE));
+    const setTable = (t) => {
+      for (const k of Object.keys(CFG.GUARD_CHANCE)) delete CFG.GUARD_CHANCE[k];
+      for (const k of Object.keys(t)) CFG.GUARD_CHANCE[k] = Object.assign({}, t[k]);
+    };
+    const run = (cls, seed) => {
+      const n = 14;
+      const cfg = {
+        playerClass: 'soldier', seed,
+        allySoldiers: cls === 'soldier' ? n : 0, enemySoldiers: cls === 'soldier' ? n : 0,
+        allyElites: cls === 'elite' ? n : 0, enemyElites: cls === 'elite' ? n : 0,
+        allyKnights: 0, enemyKnights: 0, allyWizards: 0, enemyWizards: 0,
+        allyBlademasters: cls === 'blademaster' ? n : 0, enemyBlademasters: cls === 'blademaster' ? n : 0,
+        allyBerserkers: 0, enemyBerserkers: 0
+      };
+      const b = new Battle({ config: cfg, playerKills: 0, autoPlayer: true }).start();
+      for (const u of b.units) { u.maxHp = 3000; u.hp = 3000; u.damage = 0; }
+      let blocks = 0, acts = 0;
+      const orig = b.emit.bind(b);
+      b.emit = (e) => { if (e.type === 'block') blocks++; return orig(e); };
+      const prev = new Map();
+      for (let i = 0; i < 60 * 20; i++) {
+        b.update(1 / 60, null); b.drain();
+        for (const u of b.units) {
+          if (u.isPlayer) continue;
+          if (u.guard && !prev.get(u)) acts++;
+          prev.set(u, u.guard);
+        }
+      }
+      b.emit = orig;
+      return { blocks, acts };
+    };
+    const measure = (table, cls) => {
+      setTable(table);
+      const runs = [23, 77].map((s) => run(cls, s));
+      return {
+        blocks: runs.reduce((a, r) => a + r.blocks, 0) / runs.length,
+        acts: runs.reduce((a, r) => a + r.acts, 0) / runs.length
+      };
+    };
+    const out = {};
+    for (const cls of ['soldier', 'elite', 'blademaster']) {
+      const before = measure(BASELINE, cls);
+      const after = measure(current, cls);
+      out[cls] = {
+        before: { blocks: +before.blocks.toFixed(1), acts: +before.acts.toFixed(1) },
+        after: { blocks: +after.blocks.toFixed(1), acts: +after.acts.toFixed(1) },
+        blockRatio: +(after.blocks / Math.max(1, before.blocks)).toFixed(2),
+        actRatio: +(after.acts / Math.max(1, before.acts)).toFixed(2)
+      };
+    }
+    setTable(current);
+    return out;
+  });
+  const gdClasses = ['soldier', 'elite', 'blademaster'];
+  ok('🛡️ 막기 가능 3병종 AI가 예전의 약 2배로 자주 막는다 (막아낸 횟수 1.7~2.5배)',
+    gdClasses.every((c) => guardDoubling[c].blockRatio >= 1.7 && guardDoubling[c].blockRatio <= 2.5), guardDoubling);
+  ok('🛡️ 막기를 올리는(발동) 횟수도 2배 수준으로 늘었다',
+    gdClasses.every((c) => guardDoubling[c].actRatio >= 1.8 && guardDoubling[c].actRatio <= 3.2),
+    gdClasses.map((c) => ({ cls: c, actRatio: guardDoubling[c].actRatio })));
 
   /* ===== 28. 🛡️ 고급 병사 방패 제거 — 3D 모델·1인칭 모두 검으로 막는다 ===== */
   await page.evaluate(() => window.BA.start({ cls: 'elite', ally: 4, enemy: 4, ae: 2, ee: 2, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
@@ -1151,6 +1277,284 @@ function ok(name, cond, extra) {
     regenProbe.frac === 0.015 && regenOk, regenProbe);
   ok('💚 사망 유닛은 회복하지 않고, 회복은 최대 체력에서 멈춘다',
     regenProbe.deadHp === 0 && regenProbe.capped === true, regenProbe);
+
+  /* ===== 28. 🖥️ 전체화면 토글 — 배치 · 클릭 핸들러 · 아이콘 동기화 · 렌더러 리사이즈 ===== */
+  await page.evaluate(() => window.BA.app.toHome());
+  await sleep(350);
+  const fsBox = (sel, host) => page.evaluate(({ sel, host }) => {
+    const el = document.querySelector(sel);
+    if (!el) return { exists: false };
+    const q = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    const enter = el.querySelector('.fs-enter'), exit = el.querySelector('.fs-exit');
+    const hit = document.elementFromPoint(q.left + q.width / 2, q.top + q.height / 2);
+    return {
+      exists: true,
+      inHost: host ? !!el.closest(host) : true,
+      visible: cs.display !== 'none' && cs.visibility !== 'hidden' && q.width > 0 && q.height > 0,
+      w: +q.width.toFixed(1), h: +q.height.toFixed(1),
+      l: +q.left.toFixed(1), t: +q.top.toFixed(1), r: +q.right.toFixed(1), b: +q.bottom.toFixed(1),
+      pressed: el.getAttribute('aria-pressed'), title: el.title, aria: el.getAttribute('aria-label'),
+      enterShown: !!enter && getComputedStyle(enter).display !== 'none',
+      exitShown: !!exit && getComputedStyle(exit).display !== 'none',
+      hitOk: !!(hit && hit.closest && hit.closest(sel)),
+      inside: q.left >= 0 && q.top >= 0 && q.right <= innerWidth + 0.5 && q.bottom <= innerHeight + 0.5
+    };
+  }, { sel, host });
+  const gapX = (a, b) => +(b.l - a.r).toFixed(1);
+  const overlaps = (a, b) => !(a.r <= b.l + 0.01 || b.r <= a.l + 0.01 || a.b <= b.t + 0.01 || b.b <= a.t + 0.01);
+
+  const homeFs = await fsBox('#fsHomeBtn', '#home');
+  const homeBrand = await fsBox('.brand', '#home');
+  const homeBadge = await fsBox('#growthBadge', '#home');
+  ok('🖥️ 홈 상단 바에 전체화면 버튼이 보이고 터치 영역이 충분하다 (390×844)',
+    homeFs.exists && homeFs.inHost && homeFs.visible && homeFs.w >= 32 && homeFs.h >= 32 && homeFs.inside && homeFs.hitOk,
+    { w: homeFs.w, h: homeFs.h, inside: homeFs.inside, hitOk: homeFs.hitOk });
+  ok('🖥️ 홈 전체화면 버튼이 브랜드·성장 뱃지와 겹치지 않는다',
+    !overlaps(homeFs, homeBrand) && !overlaps(homeFs, homeBadge) &&
+    gapX(homeBrand, homeFs) >= 4 && gapX(homeFs, homeBadge) >= 4,
+    { brandGap: gapX(homeBrand, homeFs), badgeGap: gapX(homeFs, homeBadge) });
+  await shot('55-home-fullscreen.png');
+
+  // 표준 API 를 가짜로 바꿔 전체화면 상태·이벤트를 재현한다 (헤드리스에서도 핸들러·동기화를 결정적으로 검증)
+  await page.evaluate(() => {
+    const doc = document, el = document.documentElement;
+    window.__fsOrig = { req: el.requestFullscreen, webreq: el.webkitRequestFullscreen, exit: doc.exitFullscreen, webexit: doc.webkitExitFullscreen };
+    window.__fsEl = null;
+    window.__fsMode = 'ok';
+    Object.defineProperty(doc, 'fullscreenElement', { configurable: true, get: () => window.__fsEl });
+    Object.defineProperty(doc, 'fullscreenEnabled', { configurable: true, get: () => true });
+    el.requestFullscreen = function () {
+      if (window.__fsMode === 'reject') return Promise.reject(new Error('blocked by test'));
+      window.__fsEl = el; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve();
+    };
+    doc.exitFullscreen = function () { window.__fsEl = null; doc.dispatchEvent(new Event('fullscreenchange')); return Promise.resolve(); };
+    window.__fsRestore = () => {
+      el.requestFullscreen = window.__fsOrig.req;
+      doc.exitFullscreen = window.__fsOrig.exit;
+      if (window.__fsOrig.webreq === undefined) delete el.webkitRequestFullscreen; else el.webkitRequestFullscreen = window.__fsOrig.webreq;
+      delete doc.fullscreenElement; delete doc.fullscreenEnabled;
+      window.__fsEl = null;
+    };
+  });
+  // 리사이즈 연동 카운트
+  await page.evaluate(() => {
+    const app = window.BA.app, orig = app._origResize || app.resize;
+    window.__fsResizeN = 0;
+    app._origResize = orig.bind(app);
+    app.resize = function () { window.__fsResizeN++; return app._origResize.apply(app, arguments); };
+  });
+  await page.click('#fsHomeBtn');
+  await sleep(520);
+  const fsOn = await page.evaluate(() => {
+    const a = document.getElementById('fsHomeBtn'), b = document.getElementById('fsBtn');
+    const ea = a.querySelector('.fs-enter'), xa = a.querySelector('.fs-exit');
+    return {
+      isOn: window.BA.fullscreen.isOn(),
+      home: { pressed: a.getAttribute('aria-pressed'), title: a.title, enter: getComputedStyle(ea).display !== 'none', exit: getComputedStyle(xa).display !== 'none' },
+      battle: { pressed: b.getAttribute('aria-pressed'), title: b.title },
+      resize: window.__fsResizeN
+    };
+  });
+  ok('🖥️ 전체화면 버튼을 탭하면 켜지고, 아이콘이 축소 모양으로 바뀐다',
+    fsOn.isOn && fsOn.home.pressed === 'true' && fsOn.home.title === '전체화면 끄기' && fsOn.home.enter === false && fsOn.home.exit === true,
+    fsOn.home);
+  ok('🖥️ 홈과 전장의 전체화면 버튼이 같은 상태를 공유한다',
+    fsOn.battle.pressed === 'true' && fsOn.battle.title === '전체화면 끄기', fsOn.battle);
+  ok('🖥️ 전체화면 진입 시 3D 렌더러 resize 가 다시 맞춰진다', fsOn.resize >= 2, { resizeCalls: fsOn.resize });
+
+  await page.click('#fsHomeBtn');
+  await sleep(300);
+  const fsOff = await page.evaluate(() => ({
+    isOn: window.BA.fullscreen.isOn(),
+    home: document.getElementById('fsHomeBtn').getAttribute('aria-pressed'),
+    battle: document.getElementById('fsBtn').getAttribute('aria-pressed'),
+    title: document.getElementById('fsHomeBtn').title
+  }));
+  ok('🖥️ 다시 탭하면 전체화면이 해제되고 아이콘·aria 가 되돌아온다',
+    fsOff.isOn === false && fsOff.home === 'false' && fsOff.battle === 'false' && fsOff.title === '전체화면', fsOff);
+
+  // 거부되는 환경 — 예외 없이 아이콘은 꺼진 채, 안내만
+  await page.evaluate(() => { window.__fsMode = 'reject'; });
+  await page.click('#fsHomeBtn');
+  await sleep(250);
+  const fsRejected = await page.evaluate(() => {
+    const t = document.getElementById('toast');
+    return {
+      pressed: document.getElementById('fsHomeBtn').getAttribute('aria-pressed'),
+      isOn: window.BA.fullscreen.isOn(),
+      toast: t ? t.textContent : '',
+      toastOpacity: t ? getComputedStyle(t).opacity : '0'
+    };
+  });
+  ok('🖥️ 전체화면이 거부되어도 예외 없이 꺼진 상태로 남고 안내만 뜬다',
+    fsRejected.pressed === 'false' && fsRejected.isOn === false && /전체화면/.test(fsRejected.toast),
+    fsRejected);
+
+  // API 자체가 없는 환경 (인앱 브라우저·아이폰 사파리) — 조용히 무시
+  await page.evaluate(() => {
+    const el = document.documentElement;
+    window.__fsMode = 'ok';
+    el.requestFullscreen = undefined;
+    el.webkitRequestFullscreen = undefined;
+    Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, get: () => false });
+  });
+  const fsSupportedNone = await page.evaluate(() => window.BA.fullscreen.supported());
+  await page.click('#fsHomeBtn');
+  await sleep(200);
+  const fsBlocked = await page.evaluate(() => {
+    const t = document.getElementById('toast');
+    return { pressed: document.getElementById('fsHomeBtn').getAttribute('aria-pressed'), toast: t ? t.textContent : '', err: null };
+  });
+  ok('🖥️ Fullscreen API 가 막힌 환경에서도 오류 없이 무시하고 안내한다',
+    fsSupportedNone === false && fsBlocked.pressed === 'false' && /전체화면/.test(fsBlocked.toast), fsBlocked);
+
+  // 진짜 API 복구 → 진짜 클릭으로 전체화면 진입/해제 (헤드리스 크롬)
+  await page.evaluate(() => window.__fsRestore());
+  const realSupported = await page.evaluate(() => window.BA.fullscreen.supported());
+  await page.click('#fsHomeBtn');
+  await sleep(650);
+  const realFs = await page.evaluate(() => {
+    const c = document.getElementById('gl');
+    const app = window.BA.app;
+    return {
+      el: !!document.fullscreenElement,
+      pressed: document.getElementById('fsHomeBtn').getAttribute('aria-pressed'),
+      canvas: c ? [c.width, c.height] : null,
+      win: [innerWidth, innerHeight],
+      dpr: window.devicePixelRatio || 1,
+      aspect: app.cam ? +app.cam.aspect.toFixed(3) : null,
+      winAspect: +(innerWidth / innerHeight).toFixed(3),
+      resize: window.__fsResizeN
+    };
+  });
+  ok('🖥️ 실제 Fullscreen API 로 전체화면에 들어가고 상태가 맞춰진다',
+    realSupported === true ? (realFs.el === true && realFs.pressed === 'true') : realFs.pressed === 'false', realFs);
+  ok('🖥️ 전체화면 전환 뒤 캔버스가 화면을 빈틈없이 채운다',
+    !realFs.canvas || (Math.abs(realFs.canvas[0] - Math.round(realFs.win[0] * realFs.dpr)) <= 1 &&
+      Math.abs(realFs.canvas[1] - Math.round(realFs.win[1] * realFs.dpr)) <= 1 &&
+      Math.abs(realFs.aspect - realFs.winAspect) < 0.02), realFs);
+
+  // 창 크기가 바뀌어도(회전·전체화면 해제) 렌더러가 따라온다
+  await page.setViewport({ width: 844, height: 390, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
+  await sleep(600);
+  const rotated = await page.evaluate(() => {
+    const c = document.getElementById('gl'); const app = window.BA.app;
+    return { canvas: [c.width, c.height], win: [innerWidth, innerHeight], aspect: +app.cam.aspect.toFixed(3), winAspect: +(innerWidth / innerHeight).toFixed(3) };
+  });
+  ok('🖥️ 창 크기가 바뀌어도(가로 회전) 3D 화면이 꽉 차게 갱신된다',
+    Math.abs(rotated.canvas[0] - rotated.win[0]) <= 1 && Math.abs(rotated.canvas[1] - rotated.win[1]) <= 1 &&
+    Math.abs(rotated.aspect - rotated.winAspect) < 0.02, rotated);
+  if (realFs.el) { await page.evaluate(() => { try { document.exitFullscreen(); } catch (e) { /* noop */ } }); await sleep(400); }
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
+  await sleep(400);
+  await page.evaluate(() => { const app = window.BA.app; if (app._origResize) { app.resize = app._origResize; delete app._origResize; } });
+
+  // 전장 HUD 배치 — 👁️ · ⛶ · ☰ 이 겹치지 않고 화면 안에
+  await page.evaluate(() => window.BA.start({ cls: 'soldier', ally: 40, enemy: 40 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle', { timeout: 30000 });
+  await sleep(900);
+  const hudFs = await fsBox('#fsBtn', '#battle');
+  const hudCam = await fsBox('#camBtn', '#battle');
+  const hudMenu = await fsBox('#menuBtn', '#battle');
+  const hudKill = await fsBox('.kill-chip', '#battle');
+  const hudStr = await fsBox('.strength', '#battle');
+  ok('🖥️ 전장 HUD 우측 상단에 👁️ · ⛶ · ☰ 이 나란히 있고 터치된다',
+    hudFs.visible && hudFs.w >= 32 && hudFs.h >= 32 && hudFs.inside && hudFs.hitOk &&
+    gapX(hudCam, hudFs) >= 3 && gapX(hudFs, hudMenu) >= 3, { fs: hudFs, camGap: gapX(hudCam, hudFs), menuGap: gapX(hudFs, hudMenu) });
+  ok('🖥️ 전장 전체화면 버튼이 처치 칩·병력 상태와 겹치지 않는다',
+    !overlaps(hudFs, hudKill) && !overlaps(hudFs, hudStr) && !overlaps(hudCam, hudKill) && !overlaps(hudStr, hudKill) && gapX(hudStr, hudKill) >= 2,
+    { strKillGap: gapX(hudStr, hudKill), fsKill: overlaps(hudFs, hudKill), fsStr: overlaps(hudFs, hudStr) });
+  ok('🖥️ 전투 중 ⛶ 버튼을 눌러도 전장·시점이 그대로다', await page.evaluate(() => {
+    const before = window.BA.state();
+    return before.state === 'battle' && !!window.BA.battle && window.BA.app.state === 'battle';
+  }));
+  const battleFsOn = await (async () => {
+    await page.click('#fsBtn');
+    await sleep(700);
+    const on = await page.evaluate(() => {
+      const c = document.getElementById('gl'); const app = window.BA.app;
+      return {
+        el: !!document.fullscreenElement,
+        pressed: document.getElementById('fsBtn').getAttribute('aria-pressed'),
+        title: document.getElementById('fsBtn').title,
+        canvas: [c.width, c.height], win: [innerWidth, innerHeight],
+        dpr: window.devicePixelRatio || 1,
+        aspect: +app.cam.aspect.toFixed(3), winAspect: +(innerWidth / innerHeight).toFixed(3)
+      };
+    });
+    await page.click('#fsBtn');
+    await sleep(600);
+    const off = await page.evaluate(() => ({
+      el: !!document.fullscreenElement,
+      pressed: document.getElementById('fsBtn').getAttribute('aria-pressed'),
+      state: window.BA.state().state
+    }));
+    return { on, off };
+  })();
+  ok('🖥️ 전투 중 ☰ 옆 ⛶ 을 탭하면 실제 전체화면으로 들어가고 다시 탭하면 빠져나온다',
+    battleFsOn.on.pressed === 'true' && battleFsOn.on.title === '전체화면 끄기' && battleFsOn.off.pressed === 'false' &&
+    (battleFsOn.on.el ? battleFsOn.off.el === false : true) && battleFsOn.off.state === 'battle', battleFsOn);
+  ok('🖥️ 전투 중 전체화면에서도 3D 화면이 빈틈없이 꽉 찬다',
+    Math.abs(battleFsOn.on.canvas[0] - Math.round(battleFsOn.on.win[0] * battleFsOn.on.dpr)) <= 1 &&
+    Math.abs(battleFsOn.on.canvas[1] - Math.round(battleFsOn.on.win[1] * battleFsOn.on.dpr)) <= 1 &&
+    Math.abs(battleFsOn.on.aspect - battleFsOn.on.winAspect) < 0.02, battleFsOn.on);
+  await shot('56-battle-fullscreen.png');
+
+  /* ===== 29b. 🎬 AI끼리(관전) 싸우면 아군·적군 승률 50:50 — 편향 점검 ===== */
+  // ① 관전 중인 플레이어(무적 유령)가 아군 전멸 판정을 막지 않는지
+  const ghostWin = await page.evaluate(async () => {
+    const { Battle } = await import('/src/battle.js');
+    const cfg = {
+      playerClass: 'soldier', seed: 5150,
+      allySoldiers: 4, enemySoldiers: 4, allyElites: 0, enemyElites: 0,
+      allyKnights: 0, enemyKnights: 0, allyWizards: 0, enemyWizards: 0,
+      allyBlademasters: 0, enemyBlademasters: 0, allyBerserkers: 0, enemyBerserkers: 0
+    };
+    const b = new Battle({ config: cfg, playerKills: 0, autoPlayer: false }).start();
+    b.playerSafe = true;
+    // 아군 AI를 전부 쓰러뜨린다 — 관전 플레이어는 살아 있다
+    for (const u of b.units) if (u.team === 'ally' && !u.isPlayer) { u.dead = true; u.deadT = 0.2; u.hp = 0; }
+    for (const c of Object.keys(b.remain.ally)) b.remain.ally[c] = 0;   // 예비도 없다
+    b.tallyUnits();
+    for (let i = 0; i < 150 && !b.over; i++) { b.update(1 / 60, null); b.drain(); }
+    return { over: b.over, winner: b.over ? b.winner : null, playerAlive: !!(b.player && !b.player.dead) };
+  });
+  ok('🎬 아군 AI가 전멸하면 관전 중이라도 패배로 끝난다 (유령 플레이어가 아군 수에 끼지 않음)',
+    ghostWin.over === true && ghostWin.winner === 'enemy' && ghostWin.playerAlive === true, ghostWin);
+
+  // ② 동일 편성 AI 대전 20판 — 아군·적군 승률이 균형인지
+  const fairness = await page.evaluate(async () => {
+    const { Battle } = await import('/src/battle.js');
+    const roster = { soldier: 20, elite: 0, knight: 1, wizard: 1, blademaster: 1, berserker: 0 };
+    const fight = (seed) => {
+      const cfg = {
+        playerClass: 'soldier', seed,
+        allySoldiers: roster.soldier, enemySoldiers: roster.soldier,
+        allyElites: roster.elite, enemyElites: roster.elite,
+        allyKnights: roster.knight, enemyKnights: roster.knight,
+        allyWizards: roster.wizard, enemyWizards: roster.wizard,
+        allyBlademasters: roster.blademaster, enemyBlademasters: roster.blademaster,
+        allyBerserkers: roster.berserker, enemyBerserkers: roster.berserker
+      };
+      const b = new Battle({ config: cfg, playerKills: 0, autoPlayer: false }).start();
+      b.playerSafe = true;                       // 관전 — 플레이어는 싸우지 않는다
+      if (b.player) b.player.hideModel = true;
+      let t = 0;
+      while (!b.over && t < 150) { b.update(1 / 60, null); b.drain(); t += 1 / 60; }
+      return b.over ? b.winner : 'timeout';
+    };
+    let ally = 0, enemy = 0, draw = 0, timeout = 0;
+    for (let i = 0; i < 20; i++) {
+      const w = fight(1000 + i * 37);
+      if (w === 'ally') ally++; else if (w === 'enemy') enemy++;
+      else if (w === 'draw') draw++; else timeout++;
+    }
+    return { ally, enemy, draw, timeout, n: 20 };
+  });
+  ok('🎬 동일 편성 AI 대전 20판 — 아군·적군 승률이 균형 (한쪽 몰살 없음)',
+    fairness.timeout <= 2 && fairness.ally >= 6 && fairness.enemy >= 6 && Math.abs(fairness.ally - fairness.enemy) <= 8,
+    fairness);
 
   ok('콘솔/페이지 오류 0 (헤드리스 SwiftShader)', errors.length === 0, errors.slice(0, 5));
   console.log(`\n모든 테스트 통과 (${passed}개) · 스크린샷 ${SHOTS}`);

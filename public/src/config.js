@@ -34,23 +34,26 @@ export const GUARD_FRONT_HALF = 1.35;   // ≈ ±77°
    · hold   = 대치 중(상대가 아직 휘두르지 않을 때) 미리 막아 두는 확률
    · cd     = 한 번 막고 나서 다시 막을 수 있을 때까지의 재사용 대기(초)
    · reactT = 반응 판단 주기(초) — 작을수록 칼이 날아오는 것을 빠르게 알아챈다
-   2026-11-26 조정: 병사는 조금 더 자주·빠르게, 고급 병사와 매화 검객은 눈에 보이게 자주 막는다.
-   (기사는 막기 불가 — CLASSES.knight.guard = false) */
+   · dur    = 막기 자세 유지 배율 (짧게 끊어 자주 막는 쪽이 공격도 살아 있다)
+   막을 수 있는 병종은 일반 병사·고급 병사·매화 검객 셋뿐이다
+   (기사=망치, 마법사=지팡이, 단검 광전사=쌍단검은 막기 불가 — CLASSES[x].guard = false).
+   2026-11-26: 위 3병종의 AI 막기 횟수를 예전 대비 약 2배로 올렸다 (판단 확률·대치 확률 상향,
+   재사용 대기 단축, 유지 시간 조정 — 순수 시뮬레이션 20초 난전에서 막은 횟수 1.95~2.07배). */
 export const GUARD_CHANCE = {
-  soldier: { react: 0.18, hold: 0.08, cd: 2.2, reactT: 0.10 },
-  elite: { react: 0.55, hold: 0.26, cd: 1.1, reactT: 0.09 },
-  blademaster: { react: 0.30, hold: 0.13, cd: 1.7, reactT: 0.08 },
-  berserker: { react: 0.22, hold: 0.09, cd: 1.9, reactT: 0.12 }
+  soldier: { react: 0.30, hold: 0.14, cd: 0.70, reactT: 0.08, dur: 0.80 },
+  elite: { react: 0.98, hold: 0.70, cd: 0.40, reactT: 0.05, dur: 0.65 },
+  blademaster: { react: 0.55, hold: 0.28, cd: 0.42, reactT: 0.07, dur: 0.80 }
 };
 
-/* 유닛별 증원(스폰) 간격 — 고급 병사·특수 유닛은 일반 병사보다 더 자주 들어온다 */
+/* 유닛별 증원(스폰) 간격 — 죽은 자리가 나면 이 간격으로 한두 명씩 들어온다.
+   2026-11-26: 0.07~0.14초는 초당 15~30명이 우르르 쏟아지는 느낌이라 0.35~0.55초로 완화 */
 export const SPAWN_INTERVAL = {
-  soldier: 0.14,
-  elite: 0.07,
-  blademaster: 0.085,
-  knight: 0.10,
-  wizard: 0.11,
-  berserker: 0.12
+  soldier: 0.45,
+  elite: 0.38,
+  blademaster: 0.40,
+  knight: 0.55,
+  wizard: 0.55,
+  berserker: 0.40
 };
 /* 전장에 동시에 서 있는 비율 (나머지는 예비 — 죽은 자리가 날 때마다 순차 투입) */
 export const FIELD_RATIO = { soldier: 0.6, elite: 0.55, knight: 0.75, wizard: 0.75, blademaster: 0.75, berserker: 0.6 };
@@ -159,7 +162,7 @@ export const CLASSES = {
     icon: '🩸',
     name: '단검 광전사',
     tag: 'RAPID · TANK',
-    blurb: '쌍단검을 쥔 광전사. 산처럼 단단하고 손이 미친 듯 빠르지만 한 방은 아주 약하다. 공격 버튼을 꾹 누르면 자동 연타.',
+    blurb: '쌍단검을 쥔 광전사. 산처럼 단단하고 손이 미친 듯 빠르지만 한 방은 아주 약하다. 공격 버튼을 꾹 누르면 자동 연타. 막기는 하지 않는다.',
     hp: 3000,           // 초고체력 탱커 (병사의 20배)
     damage: 18,         // 초약딜 — 대신 엄청나게 자주 찌른다
     speed: 4.15,        // 이동속도는 일반 병사와 동일
@@ -176,7 +179,7 @@ export const CLASSES = {
     armor: 0.06,
     mass: 1.45,
     viewEye: 1.70,
-    guard: true
+    guard: false        // 🩸 쌍단검으로 마구 찌르는 광전사 — 막기는 하지 않는다 (2026-11-26)
   },
   wizard: {
     key: 'wizard',

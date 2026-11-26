@@ -170,6 +170,7 @@ export class Battle {
       guardHold: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).hold,
       guardCdMax: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).cd,
       guardReactT: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).reactT || 0.12,
+      guardDur: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).dur || 1,
       cd: { fire: 0, lightning: 0, ice: 0, petal: 0 },
       dashT: -1, dashHit: null, dashCount: 0,
       casts: 0, kills: 0, growl: 1,
@@ -297,19 +298,39 @@ export class Battle {
     pu.mirror = 0;
     this.player = pu;
 
-    /* 스폰 직후 코앞에 아군이 겹쳐 시야를 가리지 않도록 플레이어 주변을 살짝 비운다 */
+    /* 스폰 직후 코앞에 아군이 겹쳐 시야를 가리지 않도록 플레이어 바로 앞만 살짝 비운다.
+       (예전 3m 는 앞줄 기사를 뒤로 밀어 아군 대열 가운데를 파내는 편향이 있었다 → 1.6m)
+       같은 이유로 적군 쪽 '거울 지점'도 똑같이 비운다 — 아군 대열에만 구멍이 생기면
+       AI끼리 싸울 때 한쪽이 불리해지는 숨은 편향이 된다. */
+    const clearAround = (cx, cz, side) => {
+      for (const u of this.units) {
+        if (u.dead || (side && u.team !== side)) continue;
+        const dx = u.x - cx, dz = u.z - cz;
+        const d = Math.hypot(dx, dz);
+        const clear = 1.6;
+        if (d < clear) {
+          const a = d > 0.001 ? Math.atan2(dx, dz) : u.rng() * TAU;
+          u.x = cx + Math.sin(a) * clear;
+          u.z = cz + Math.cos(a) * clear;
+        }
+      }
+    };
+    /* 아군 쪽은 플레이어 본인을 뺀 나머지를 비운다 (플레이어는 그 자리에 선다) */
     for (const u of this.units) {
       if (u === pu || u.dead) continue;
       const dx = u.x - pu.x, dz = u.z - pu.z;
       const d = Math.hypot(dx, dz);
-      const clear = 3.0;
+      const clear = 1.6;
       if (d < clear) {
         const a = d > 0.001 ? Math.atan2(dx, dz) : u.rng() * TAU;
         u.x = pu.x + Math.sin(a) * clear;
         u.z = pu.z + Math.cos(a) * clear;
       }
     }
+    /* 적군도 플레이어 자리의 거울 지점을 같은 반경으로 비운다 (완전 대칭) */
+    clearAround(pu.x, -pu.z, 'enemy');
 
+    this.orderPhase = this.rng() < 0.5 ? 0 : 1;   // 이 전장에서 어느 진영이 먼저 처리될지
     this.spawned = true;
     this.stats.startAt = 0;
     this.rosterTotal = form.length;
@@ -447,13 +468,22 @@ export class Battle {
       const arr = byMirror.get(k);
       // 같은 자리(거울)의 아군·적군을 붙여서 처리하되,
       // 매 자리마다 먼저 처리하는 진영을 번갈아 先手 이점을 없앤다.
-      const allyFirst = k % 2 === 0;
-      arr.sort((a, b) => {
-        const av = a.team === 'ally' ? (allyFirst ? 0 : 1) : (allyFirst ? 1 : 0);
-        const bv = b.team === 'ally' ? (allyFirst ? 0 : 1) : (allyFirst ? 1 : 0);
-        return av - bv;
-      });
-      for (const u of arr) order.push(u);
+      /* 선수(먼저 처리되는 쪽) 이점이 특정 진영에 고정되지 않도록
+         전장마다 시작 패리티를 무작위로 정한다 (아군이 늘 유리/불리해지던 원인) */
+      const allyFirst = ((k + (this.orderPhase || 0)) % 2) === 0;
+      const allies = arr.filter((u) => u.team === 'ally');
+      const foes = arr.filter((u) => u.team !== 'ally');
+      /* 한 자리에 여러 명(증원은 모두 거울 0)이 몰려도 한 팀이 통째로 먼저 때리지 않도록
+         두 팀을 1:1로 번갈아 놓고, 짝마다 먼저 처리하는 진영도 번갈아 바꾼다 */
+      const many = allies.length > 1 || foes.length > 1;
+      const pairs = Math.max(allies.length, foes.length);
+      for (let i = 0; i < pairs; i++) {
+        const aFirst = many ? (i % 2 === 0 ? allyFirst : !allyFirst) : allyFirst;
+        const first = aFirst ? allies[i] : foes[i];
+        const second = aFirst ? foes[i] : allies[i];
+        if (first) order.push(first);
+        if (second) order.push(second);
+      }
     }
     this.order = order;
     return order;
@@ -577,7 +607,7 @@ export class Battle {
 
     /* 🛡️ 검 막기 — 바라보는 정면(±77°)에서 날아온 공격은 마법·망치·일섬·평타 구분 없이
        피해 0으로 완전히 막아낸다. 뒤에서 맞으면 그대로 들어간다. (가드 브레이크 없음)
-       · 병사·고급 병사·매화 검객·단검 광전사만 막는다. 기사(양손 망치)·마법사는 막을 수 없다
+       · 일반 병사·고급 병사·매화 검객 셋만 막는다. 기사(양손 망치)·마법사·단검 광전사(쌍단검)는 막을 수 없다
        · from 이 주어지면 그 지점을 '날아온 곳'으로 본다 — 화염구처럼 투사체가 터진 자리에서
          퍼지는 광역 피해도 맞는 쪽이 그 방향을 바라보고 있으면 막힌다 */
     const tSpec = CLASSES[target.cls] || CLASSES.soldier;
@@ -952,7 +982,7 @@ export class Battle {
     if (p && !p.dead && input && !this.autoPlayer) {
       const mx = input.mx || 0, mz = input.mz || 0;
       const len = Math.hypot(mx, mz);
-      // 🛡️ 검·방패 막기 — 누르고 있는 동안 계속 (기사·마법사는 막을 수 없다)
+      // 🛡️ 검 막기 — 누르고 있는 동안 계속 (기사·마법사·단검 광전사는 막을 수 없다)
       const canGuardCls = (CLASSES[p.cls] || CLASSES.soldier).guard !== false;
       p.guard = canGuardCls ? !!input.guard : false;
       p.aimPart = input.aimPart || 'body';
@@ -1147,7 +1177,7 @@ export class Battle {
       }
 
       // 🛡️ 검 막기 (AI) — 적이 검을 휘두르면 반응해서 막는다 (아군·적군 완전 동일 규칙)
-      //    막을 수 있는 병종: 병사·고급 병사·매화 검객·단검 광전사 (기사·마법사는 막기 불가)
+      //    막을 수 있는 병종: 일반 병사·고급 병사·매화 검객 (기사·마법사·단검 광전사는 막기 불가)
       //    병종마다 반응 확률·미리 막아 두는 확률·반응 판단 주기가 다르다 (GUARD_CHANCE)
       if (spec.guard !== false) {
         const windup = t && t.attackT >= 0 && t.attackT < this.impactT(t) + 0.06;
@@ -1160,7 +1190,8 @@ export class Battle {
           if (u.rng() < chance) {
             // 상대 칼이 실제로 닿는 순간까지 검을 세운다 (타이밍 판단)
             const eta = Math.max(0.05, this.impactT(t) - (t.attackT >= 0 ? t.attackT : 0));
-            u.guard = true; u.guardT = Math.min(1.1, eta + 0.20 + u.rng() * 0.12);
+            const gdur = u.guardDur || 1;           // 병종별 막기 유지 배율 (2배 상향 개편)
+            u.guard = true; u.guardT = Math.min(1.8, (eta + 0.20 + u.rng() * 0.12) * gdur);
             u.attackT = -1;                  // 휘두르던 손을 거두고 막기로
           }
         } else if (!u.guard && u.guardCd <= 0 && !threat) {
@@ -1168,7 +1199,8 @@ export class Battle {
           if (u.guardCheckT <= 0) {
             u.guardCheckT = 1.1 + u.rng() * 1.1;
             if (d < spec.reach + 2.6 && u.rng() < holdChance) {
-              u.guard = true; u.guardT = 0.45 + u.rng() * 0.30;
+              const gdur = u.guardDur || 1;
+              u.guard = true; u.guardT = (0.45 + u.rng() * 0.30) * gdur;
               u.attackT = -1;
             }
           }
@@ -1292,6 +1324,10 @@ export class Battle {
     if (!this.over && graceDone && !this.practice) {
       let allyAlive = 0, enemyAlive = 0;
       for (const c of CLASS_LIST) { allyAlive += this.tally.ally[c] || 0; enemyAlive += this.tally.enemy[c] || 0; }
+      /* 🎬 관전 중인 플레이어(무적 유령)는 아군 전멸 판정에서 뺀다.
+         예전엔 이 유령이 아군으로 계속 세어져 아군 AI가 전멸해도 판이 끝나지 않았고,
+         그 때문에 AI끼리 싸울 때 아군은 지지 않고 이기기만 하는 편향이 있었다. */
+      if (p && p.team === 'ally' && this.playerSafe && !p.dead && !p.removed && allyAlive > 0) allyAlive -= 1;
       const playerBack = !!(p && p.dead && !p.removed && !this.autoPlayer);  // 부활 대기 중이면 아군 전멸이 아니다
       const allyUp = allyAlive > 0 || playerBack;
       const enemyWiped = enemyAlive === 0 && this.reserveTotal('enemy') === 0 && (this.initialTotalEnemy || 0) > 0;

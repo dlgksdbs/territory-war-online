@@ -12,6 +12,7 @@ import { computePose, attackDuration } from './pose.js';
 import { FX } from './fx.js';
 import { ViewModel } from './viewmodel.js';
 import { Sfx } from './sfx.js';
+import { createFullscreenToggle, isFullscreen, fullscreenSupported } from './fullscreen.js';
 import { loadProgress, saveProgress, rosterOf, rosterTotal, growthMult, growthLabel, playerSpec, powerIndex } from './config.js';
 import { clamp, lerp, damp, angLerp, angDiff, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 
@@ -35,8 +36,9 @@ class App {
     this.progress = loadProgress();
     this.cfg = {
       playerClass: 'soldier',
-      allySoldiers: 60, allyElites: 0, allyKnights: 2, allyWizards: 1, allyBlademasters: 1, allyBerserkers: 0,
-      enemySoldiers: 60, enemyElites: 0, enemyKnights: 2, enemyWizards: 1, enemyBlademasters: 1, enemyBerserkers: 0
+      /* 기본 편성 — 가볍고 보기 좋은 규모 (한 진영 23명 · 양쪽 46명) */
+      allySoldiers: 20, allyElites: 0, allyKnights: 1, allyWizards: 1, allyBlademasters: 1, allyBerserkers: 0,
+      enemySoldiers: 20, enemyElites: 0, enemyKnights: 1, enemyWizards: 1, enemyBlademasters: 1, enemyBerserkers: 0
     };
     this.state = 'home';
     this.paused = false;
@@ -140,7 +142,7 @@ class App {
       knight: '큰 망치를 든 중갑 장군. 내려치기 한 번에 <b>최대 100명</b>을 으스러뜨린다. 망치를 두 손으로 쥐므로 <b>막기 불가</b>.',
       wizard: '몸은 약하지만 <b>화염·번개·빙결</b> 세 마법으로 전장을 지운다. 버튼으로 직접 시전.',
       blademaster: '가장 빠른 연속 베기와 기동력. <b>🌸 매화 일섬</b>으로 전방을 돌진하며 쓸어버린다.',
-      berserker: '쌍단검을 쥔 <b>초고체력·초고속 연타</b> 탱커. 한 방은 약하지만 공격 버튼을 <b>꾹 누르면 자동 연타</b>가 나간다.'
+      berserker: '쌍단검을 쥔 <b>초고체력·초고속 연타</b> 탱커. 한 방은 약하지만 공격 버튼을 <b>꾹 누르면 자동 연타</b>가 나간다. 쌍단검이라 <b>막기는 불가</b>.'
     };
     $('#classNote').innerHTML = note[this.cfg.playerClass] || '';
     $$('.row').forEach((row) => {
@@ -224,15 +226,16 @@ class App {
         // 프리셋을 고르면 다른 병종은 초기화한다 (이전 선택이 남아 섞이지 않게)
         this.cfg.allyBerserkers = 0; this.cfg.enemyBerserkers = 0;
       };
+      /* 프리셋도 한 진영 30~150명 수준으로 가볍게 — 2026-11-26 기본 인원 축소에 맞춤 */
       if (p === 'duel') { set(0, 1, 0, 0, 1, 0); }
-      else if (p === 'clash') { set(60, 2, 1, 60, 2, 1, 1, 1, 6, 6); }
-      else if (p === 'epic') { set(400, 12, 6, 400, 12, 6, 4, 4, 40, 40); }
-      else if (p === 'horde') { set(3000, 8, 4, 3000, 8, 4, 3, 3, 120, 120); this.cfg.playerClass = 'blademaster'; }
-      else if (p === 'insane') { set(10000, 10, 4, 10000, 10, 4, 4, 4, 200, 200); this.cfg.playerClass = 'blademaster'; }
-      else if (p === 'elite') { set(0, 0, 0, 0, 0, 0, 0, 0, 300, 300); this.cfg.playerClass = 'elite'; }
-      else if (p === 'veteran') { set(0, 4, 2, 0, 4, 2, 4, 4, 500, 500); this.cfg.playerClass = 'elite'; }
-      else if (p === 'magic') { set(0, 0, 20, 0, 0, 20); this.cfg.playerClass = 'wizard'; }
-      else if (p === 'blade') { set(0, 0, 0, 0, 0, 0, 20, 20); this.cfg.playerClass = 'blademaster'; }
+      else if (p === 'clash') { set(24, 1, 1, 24, 1, 1, 1, 1, 4, 4); }
+      else if (p === 'epic') { set(120, 6, 3, 120, 6, 3, 6, 6, 20, 20); }
+      else if (p === 'horde') { set(600, 0, 0, 600, 0, 0, 0, 0, 0, 0); this.cfg.playerClass = 'blademaster'; }
+      else if (p === 'insane') { set(2000, 0, 0, 2000, 0, 0, 0, 0, 0, 0); this.cfg.playerClass = 'blademaster'; }
+      else if (p === 'elite') { set(0, 0, 0, 0, 0, 0, 0, 0, 60, 60); this.cfg.playerClass = 'elite'; }
+      else if (p === 'veteran') { set(0, 4, 2, 0, 4, 2, 4, 4, 120, 120); this.cfg.playerClass = 'elite'; }
+      else if (p === 'magic') { set(0, 0, 12, 0, 0, 12); this.cfg.playerClass = 'wizard'; }
+      else if (p === 'blade') { set(0, 0, 0, 0, 0, 0, 12, 12); this.cfg.playerClass = 'blademaster'; }
       else if (p === 'rage') {
         set(0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         this.cfg.allyBerserkers = 12; this.cfg.enemyBerserkers = 12;
@@ -252,6 +255,7 @@ class App {
     $('#startBtn').addEventListener('click', () => this.startBattle());
     $('#camBtn').addEventListener('click', () => this.cycleCamera());
     $('#menuBtn').addEventListener('click', () => { $('#menuSheet').classList.add('is-on'); this.paused = true; });
+    this._bindFullscreen();
     $('#menuSheet').addEventListener('click', (e) => {
       const b = e.target.closest('button');
       if (!b) return;
@@ -367,6 +371,37 @@ class App {
         const gb = $('#guardBtn'); if (gb) gb.classList.remove('is-held');
       }
     });
+  }
+
+  /* 🖥️ 전체화면 — 홈 상단과 전장 HUD 의 ⛶ 버튼이 같은 상태를 공유한다 */
+  _bindFullscreen() {
+    this.fs = createFullscreenToggle({
+      buttons: [$('#fsBtn'), $('#fsHomeBtn')],
+      onChange: () => this._onFullscreenChange(),
+      onError: (kind) => {
+        if (this._fsNoticeT && performance.now() - this._fsNoticeT < 1200) return;
+        this._fsNoticeT = performance.now();
+        this._toast(kind === 'unsupported' ? '이 브라우저에서는 전체화면을 쓸 수 없어요' : '전체화면 전환을 브라우저가 막았어요');
+      }
+    });
+    for (const b of [$('#fsBtn'), $('#fsHomeBtn')]) {
+      if (!b) continue;
+      b.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.sfx) { try { this.sfx.resume(); this.sfx.ui(); } catch (err) { /* 소리 없는 환경 */ } }
+        this.fs.toggle();
+      });
+    }
+  }
+
+  /* 전체화면 진입/해제 — 브라우저 창 크기가 바뀌는 중이라 여러 번 맞춰 준다 */
+  _onFullscreenChange() {
+    this.resize();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => this.resize());
+    clearTimeout(this._fsResizeT);
+    this._fsResizeT = setTimeout(() => this.resize(), 320);
+    if (this.state === 'battle' && this.cam) this.cam.updateProjectionMatrix();
   }
 
   _bindJoystick() {
@@ -634,7 +669,9 @@ class App {
       t = document.createElement('div');
       t.id = 'toast';
       t.style.cssText = 'position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);padding:8px 14px;border-radius:10px;background:rgba(8,10,14,.78);border:1px solid rgba(232,194,122,.3);color:#ffe6b4;font-size:11px;letter-spacing:.08em;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30';
-      $('#battle').appendChild(t);
+      // 홈에서도 보이도록 — 전장 밖이면 화면 전체(#app) 위에 띄운다
+      const host = (this.state === 'battle' && $('#battle')) ? $('#battle') : ($('#app') || $('#battle'));
+      host.appendChild(t);
     }
     t.textContent = msg;
     t.style.opacity = '1';
@@ -1252,7 +1289,7 @@ class App {
       num.textContent = cd > 0 ? Math.ceil(cd) : '';
       skBtn.querySelector('.sk-label').textContent = cd > 0 ? '충전' : '매화 일섬';
     }
-    // 🛡️ 막기 버튼 — 병사·고급 병사·매화 검객·단검 광전사만 (기사·마법사는 막기 불가)
+    // 🛡️ 막기 버튼 — 일반 병사·고급 병사·매화 검객만 (기사·마법사·단검 광전사는 막기 불가)
     const gdBtn = $('#guardBtn');
     if (gdBtn) {
       const canGuard = (CLASSES[p.cls] || CLASSES.soldier).guard !== false;
@@ -1393,6 +1430,12 @@ window.BA = {
   skill() { app.useSkill(); },
   attack() { app.input.attack = true; },
   setPlayerClass(cls) { app.cfg.playerClass = cls; app.vm.setClass(cls); app._syncHome(); },
+  fullscreen: {
+    toggle: () => (app.fs ? app.fs.toggle() : Promise.resolve(false)),
+    sync: () => (app.fs ? app.fs.sync() : false),
+    isOn: () => isFullscreen(),
+    supported: () => fullscreenSupported()
+  },
   debug: {
     pause(v) { app.paused = v === undefined ? true : !!v; },
     pose({ cls, kind, t, side }) {

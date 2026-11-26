@@ -79,6 +79,7 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   border: 1px solid rgba(232,194,122,.26); background: linear-gradient(160deg, rgba(58,42,20,.55), rgba(20,18,16,.5));
   flex: 0 0 auto;
 }
+.home-tools { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .gb-label { font-size: 9px; color: var(--gold-dim); letter-spacing: .06em; }
 .growth-badge strong { font-family: var(--serif); font-size: 16px; color: #ffe9bb; }
 .gb-unit { font-size: 9px; color: var(--muted); }
@@ -229,6 +230,15 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   backdrop-filter: blur(6px); pointer-events: auto;
 }
 .icon-btn:active { background: rgba(232,194,122,.2); }
+
+/* 🖥️ 전체화면 토글 — 홈 상단 · 전장 HUD 공용 (⛶ / 전체화면 중엔 축소 아이콘) */
+.fs-btn { display: grid; place-items: center; padding: 0; color: #e2eaf5; transition: background .15s, border-color .15s, color .15s; }
+.fs-btn .fs-ico { width: 17px; height: 17px; display: block; }
+.fs-btn .fs-exit { display: none; }
+.fs-btn[aria-pressed="true"] { color: #ffe6b4; border-color: rgba(232,194,122,.5); background: rgba(232,194,122,.18); }
+.fs-btn[aria-pressed="true"] .fs-enter { display: none; }
+.fs-btn[aria-pressed="true"] .fs-exit { display: block; }
+.fs-btn:active svg { transform: scale(.9); }
 
 .player-status {
   position: absolute; top: calc(58px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
@@ -524,7 +534,7 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   .joy { width: 96px; height: 96px; }
 }
 
-/* 좁은 화면(폰 390px) — 브랜드 부제와 성장 뱃지가 겹치지 않게 */
+/* 층부 화면(폰 390px) — 브랜드 부제와 성장 뱃지가 겹치지 않게 */
 @media (max-width: 430px) {
   .brand-text p { display: none; }
   .gb-label { display: none; }
@@ -534,4 +544,17 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   .brand-text h1 { font-size: 15px; }
   .foot-note { font-size: 9px; gap: 6px; }
   .foot-note span { font-size: 9px; }
+  /* 전체화면 버튼이 붙어도 상단 바가 넘치지 않게 — 전장은 상태 바를 조금 줄인다 */
+  .home-tools { gap: 5px; }
+  .top-right { flex: 0 0 auto; gap: 5px; }
+  .strength { width: 150px; flex: 0 1 150px; min-width: 92px; }
+}
+
+/* 아주 좁은 화면(360px 이하) — 전체화면 버튼과 성장 뱃지가 함께 들어가게 */
+@media (max-width: 380px) {
+  .brand-mark { width: 30px; height: 30px; flex: 0 0 30px; font-size: 16px; }
+  .brand-text h1 { font-size: 13.5px; letter-spacing: .10em; }
+  .home-tools { gap: 4px; }
+  .kill-chip span { display: none; }
+  .strength { width: 140px; flex: 0 1 140px; }
 }

@@ -248,6 +248,11 @@ function ok(name, cond, extra) {
   ok('내 공격이 상대에게 실제 피해를 준다 (양쪽 체력 일치)',
     hpB1 < hpB0 && Math.abs(hpB1 - hpSeenByA) < 1.5, { before: hpB0, after: hpB1, seen: hpSeenByA });
   ok('맞은 쪽은 피격 이벤트를 받는다', (await A.evaluate(() => window.BA.pvp.state().stats.hits)) >= 1);
+  const ret = await A.evaluate(() => {
+    const el = document.getElementById('reticle');
+    return { hit: el.classList.contains('is-hit'), color: getComputedStyle(el.querySelector('i')).backgroundColor };
+  });
+  ok('지금 공격하면 맞는 상대에게 조준점이 붉게 바뀐다', ret.hit === true, ret);
 
   /* ===== 5. 검 막기 ===== */
   await B.evaluate(() => window.BA.pvp.guard(true));

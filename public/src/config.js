@@ -48,12 +48,12 @@ export const GUARD_CHANCE = {
 /* 유닛별 증원(스폰) 간격 — 죽은 자리가 나면 이 간격으로 한두 명씩 들어온다.
    2026-11-26: 0.07~0.14초는 초당 15~30명이 우르르 쏟아지는 느낌이라 0.35~0.55초로 완화 */
 export const SPAWN_INTERVAL = {
-  soldier: 0.45,
+  soldier: 0.50,
   elite: 0.38,
   blademaster: 0.40,
-  knight: 0.55,
-  wizard: 0.55,
-  berserker: 0.40
+  berserker: 0.42,
+  knight: 0.44,
+  wizard: 0.46
 };
 /* 전장에 동시에 서 있는 비율 (나머지는 예비 — 죽은 자리가 날 때마다 순차 투입) */
 export const FIELD_RATIO = { soldier: 0.6, elite: 0.55, knight: 0.75, wizard: 0.75, blademaster: 0.75, berserker: 0.6 };

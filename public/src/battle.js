@@ -274,10 +274,13 @@ export class Battle {
       const u = this.newUnit(f.cls, 'ally', f.x, -f.z, false, this.unitSeed(i));
       u.mirror = i;
     }
+    /* 전장마다 적군 대형을 좌우로 뒤집을지 무작위로 정한다 — 좌우 미세 편향이
+       한 진영에 고정되지 않게 (아레나는 좌우 대칭이라 뒤집어도 공정하다) */
+    const flipX = this.rng() < 0.5 ? -1 : 1;
     for (let i = 0; i < formE.length; i++) {
       const f = formE[i];
       const seed = this.unitSeed(i);
-      const u = this.newUnit(f.cls, 'enemy', f.x, f.z, false, seed);
+      const u = this.newUnit(f.cls, 'enemy', f.x * flipX, f.z, false, seed);
       u.mirror = i;
       u.yaw = Math.PI;
     }

@@ -3,7 +3,7 @@
 /* =============================================================================
    배틀 아레나 3D · 모바일(390×844 세로) 실제 렌더 검증
    -----------------------------------------------------------------------------
-   · ⚔️ 병종 밸런스: 병사 150/150 · 기사 체력 2200·막기 불가 · 검객 1200/178/0.30초 · 고급 병사 방패 제거
+   · ⚔️ 병종 밸런스: 병사 150/150 · 기사 체력 2900·공격력 285·막기 불가 · 검객 1200/178/0.30초 · 고급 병사 방패 제거
    · 🩸 신규 6번째 병종 '단검 광전사' — 3600 체력(3000 → 20% 상향) · 18 공격력 · 0.25초 연타 · 이속 5.00(병사보다 20% 빠름) · 홀드 자동 연타
    · 🔮 대마법사 마법 위력 15% 너프 (화염 212 · 번개 178 · 빙결 170) · 매화 일섬 246
    · 🩸 적중 흡혈: 실제 피해를 입힌 공격자는 그 7%(최소 1)를 회복 — 막기(0 피해)에는 회복 없음
@@ -173,9 +173,10 @@ function ok(name, cond, extra) {
     Math.abs(C.elite.speed - C.soldier.speed * 1.1) < 0.01 &&
     Math.abs(C.elite.cycle - C.soldier.cycle / 1.1) < 0.005,
     { hp: C.elite.hp, speed: C.elite.speed, cycle: C.elite.cycle });
-  ok('🔨 기사 체력 2000~2400 · 한 번에 100명 · 막기 불가',
-    C.knight.hp >= 2000 && C.knight.hp <= 2400 && C.knight.maxTargets === 100 && C.knight.guard === false,
-    { hp: C.knight.hp, guard: C.knight.guard });
+  ok('🔨 기사 체력 2800~3000 · 공격력 270~290 (망치 상향) · 한 번에 100명 · 막기 불가',
+    C.knight.hp >= 2800 && C.knight.hp <= 3000 && C.knight.damage >= 270 && C.knight.damage <= 290 &&
+    C.knight.maxTargets === 100 && C.knight.guard === false,
+    { hp: C.knight.hp, dmg: C.knight.damage, guard: C.knight.guard });
   ok('🌸 검객 체력 1200(900 → 33% 상향) · 딜 178(210 에서 약 15% 하향) · 공속 0.30초 · 한 번에 10명 · 막기 가능',
     C.blademaster.hp === 1200 && C.blademaster.damage === 178 && C.blademaster.maxTargets === 10 &&
     C.blademaster.speed > 5.0 && C.blademaster.cycle <= 0.305 && C.blademaster.guard === true,

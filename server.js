@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const Friends = require('./friends');
 
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -1992,10 +1993,15 @@ function newPlayer(slot, name, ws, isAI, controlSlot) {
   };
 }
 
-function createRoom(ws, name, aiFill, sim) {
+function createRoom(ws, name, aiFill, sim, opts) {
   const code = makeRoomCode();
+  const mode = opts && opts.mode === 'castle' ? 'castle' : 'classic';
+  const capacity = mode === 'castle' ? clampNum(Math.floor(Number(opts.capacity) || 5), Friends.CFG.minPlayers, Friends.CFG.maxPlayers) : 0;
   const room = {
     code,
+    mode,
+    capacity,
+    friends: mode === 'castle' ? Friends.createState({ capacity, aiFill }) : null,
     hostSlot: 0,
     players: [newPlayer(0, name, ws, false, sim ? -1 : 0)],
     started: false,
@@ -2025,8 +2031,9 @@ function joinRoom(ws, codeRaw, name) {
   if (!room) return { error: ['NO_ROOM', '그런 방이 없어요. 코드를 확인해 주세요.'] };
   if (room.sim) return { error: ['SIM_ROOM', 'AI 시뮬레이션 방에는 난입할 수 없어요.'] };
   if (room.started) return { error: ['ROOM_STARTED', '이미 시작된 방이에요.'] };
-  if (room.players.filter((p) => !p.isAI).length >= MAX_PLAYERS) {
-    return { error: ['ROOM_FULL', '방이 가득 찼어요 (4명).'] };
+  const roomMax = room.mode === 'castle' ? (room.friends ? room.friends.capacity : 5) : MAX_PLAYERS;
+  if (room.players.filter((p) => !p.isAI).length >= roomMax) {
+    return { error: ['ROOM_FULL', '방이 가득 찼어요 (' + roomMax + '명).'] };
   }
   let slot = 0;
   const used = new Set(room.players.map((p) => p.slot));
@@ -2306,6 +2313,7 @@ function lobbyPayload(room, slot) {
 }
 
 function broadcastLobby(room) {
+  if (room.mode === 'castle') { Friends.broadcastLobby(room); return; }
   for (const p of room.players) {
     if (!p.ws || p.isAI || !p.connected) continue;
     send(p.ws, lobbyPayload(room, controlOf(room, p)));
@@ -2766,6 +2774,7 @@ function leaveRoom(ws, explicit) {
   const room = ws.room;
   const player = ws.player;
   if (!room || !player) return;
+  if (room.mode === 'castle') return leaveCastleRoom(ws, room, player);
   if (skirmishActive(player)) endSkirmish(room, player, 'leave');
   const wasHost = player.slot === room.hostSlot;
 
@@ -2809,6 +2818,42 @@ function leaveRoom(ws, explicit) {
   if (!anyHuman) {
     room.closed = true;
     rooms.delete(room.code);
+  }
+}
+
+/* 2~5인 친구 방 나가기 — 시작 전이면 자리를 비우고, 시작 후에는 AI가 이어받는다 */
+function leaveCastleRoom(ws, room, player) {
+  const wasHost = player.slot === room.hostSlot;
+  const st = room.friends;
+  if (st && st.phase === 'lobby') {
+    room.players = room.players.filter((p) => p !== player);
+  } else {
+    player.abandoned = true;
+    player.connected = false;
+    player.ws = null;
+    const n = st && st.nations[player.slot];
+    if (n) { n.autoAI = true; n.ai = true; }
+    if (st) {
+      st.pendingEvents = st.pendingEvents || [];
+      st.pendingEvents.push({ text: player.name + ' 님이 나갔습니다 · AI가 이어받습니다', kind: 'warn', at: Date.now() });
+    }
+  }
+  if (ws.room === room) {
+    ws.room = null;
+    ws.player = null;
+  }
+  const humans = room.players.filter((p) => !p.isAI);
+  if (!humans.length) {
+    room.closed = true;
+    rooms.delete(room.code);
+    return;
+  }
+  if (wasHost) room.hostSlot = humans[0].slot;
+  if (st && st.phase !== 'lobby') {
+    Friends.broadcastState(room);
+    Friends.broadcastLobby(room);
+  } else {
+    Friends.broadcastLobby(room);
   }
 }
 
@@ -3147,19 +3192,23 @@ function handleMessage(ws, msg) {
       return;
     }
     const sim = !!msg.sim;
-    const { room, player } = createRoom(ws, name, sim ? true : !!msg.aiFill, sim);
+    const mode = msg.mode === 'castle' ? 'castle' : 'classic';
+    const { room, player } = createRoom(ws, name, sim ? true : !!msg.aiFill, sim, { mode, capacity: msg.capacity });
     send(ws, {
       type: 'joined',
+      mode: room.mode,
       code: room.code,
       token: player.token,
       slot: player.slot,
       name: player.name,
-      sim
+      sim,
+      capacity: room.capacity
     });
     if (sim) {
       startSim(room);
     } else {
       broadcastLobby(room);
+      if (room.mode === 'castle') Friends.broadcastState(room);
     }
     return;
   }
@@ -3175,12 +3224,15 @@ function handleMessage(ws, msg) {
     }
     send(ws, {
       type: 'joined',
+      mode: out.room.mode,
       code: out.room.code,
       token: out.player.token,
       slot: out.player.slot,
-      name: out.player.name
+      name: out.player.name,
+      capacity: out.room.capacity
     });
     broadcastLobby(out.room);
+    if (out.room.mode === 'castle') Friends.broadcastState(out.room);
     return;
   }
 
@@ -3197,12 +3249,18 @@ function handleMessage(ws, msg) {
     bind(ws, room, player);
     send(ws, {
       type: 'resumed',
+      mode: room.mode,
       code: room.code,
       token: player.token,
       slot: player.slot,
       name: player.name,
       sim: !!room.sim
     });
+    if (room.mode === 'castle') {
+      Friends.broadcastLobby(room);
+      Friends.sendState(room, player);
+      return;
+    }
     addLog(room, player.name + ' 님이 다시 접속했습니다', 'info');
     if (room.started) {
       broadcastState(room);
@@ -3220,6 +3278,23 @@ function handleMessage(ws, msg) {
     return;
   }
   room.lastAt = Date.now();
+
+  if (room.mode === 'castle') {
+    if (type === 'leave') {
+      leaveRoom(ws, true);
+      send(ws, { type: 'left' });
+      return;
+    }
+    if (type === 'ping') {
+      send(ws, { type: 'pong', at: Date.now() });
+      return;
+    }
+    const out = Friends.handleMessage(room, player, type, msg);
+    if (out && out.error) {
+      send(ws, { type: 'error', code: out.error[0], message: out.error[1] });
+    }
+    return;
+  }
 
   if (type === 'aiFill') {
     if (player.slot !== room.hostSlot || room.started) return;
@@ -3307,6 +3382,33 @@ function handleDisconnect(ws) {
   const player = ws.player;
   if (!room || !player) return;
   if (player.ws && player.ws !== ws) return;
+  if (room.mode === 'castle') {
+    player.connected = false;
+    player.ws = null;
+    player.disconnectedAt = Date.now();
+    if (room.friends && room.friends.phase === 'lobby') {
+      if (player.dropTimer) clearTimeout(player.dropTimer);
+      player.dropTimer = setTimeout(() => {
+        player.dropTimer = null;
+        if (player.connected || player.ws) return;
+        if (!room.friends || room.friends.phase !== 'lobby') return;
+        room.players = room.players.filter((p) => p !== player);
+        if (!room.players.filter((p) => !p.isAI).length) {
+          room.closed = true;
+          rooms.delete(room.code);
+          return;
+        }
+        if (room.hostSlot === player.slot) {
+          const next = room.players.find((p) => !p.isAI);
+          if (next) room.hostSlot = next.slot;
+        }
+        Friends.broadcastLobby(room);
+      }, 45000);
+    }
+    Friends.broadcastLobby(room);
+    Friends.broadcastState(room);
+    return;
+  }
   if (skirmishActive(player)) endSkirmish(room, player, 'disconnect');
   player.connected = false;
   player.ws = null;
@@ -3359,7 +3461,11 @@ function serveStatic(req, res) {
 
   if (pathname === '/healthz') {
     let live = 0;
-    for (const room of rooms.values()) if (room.game && !room.game.over) live++;
+    for (const room of rooms.values()) {
+      if (room.mode === 'castle') {
+        if (room.friends && room.friends.phase === 'battle') live++;
+      } else if (room.game && !room.game.over) live++;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ ok: true, rooms: rooms.size, live, uptime: Math.round(process.uptime()) }));
     return;
@@ -3448,7 +3554,12 @@ function createServer() {
   // 실시간 시뮬레이션: 방 전체를 한 타이머로 돌린다
   const simulation = setInterval(() => {
     for (const room of Array.from(rooms.values())) {
-      if (!room.game || room.closed) continue;
+      if (room.closed) continue;
+      if (room.mode === 'castle') {
+        Friends.stepRoom(room);
+        continue;
+      }
+      if (!room.game) continue;
       try {
         stepRoom(room);
       } catch (err) {
@@ -3520,6 +3631,7 @@ module.exports = {
   TUNING: SIM,
   SKIRMISH,
   rooms,
+  Friends,
   createServer,
   createRoom,
   joinRoom,

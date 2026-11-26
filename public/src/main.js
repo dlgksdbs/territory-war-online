@@ -1658,4 +1658,7 @@ window.addEventListener('error', (e) => {
   console.error('PAGE_ERROR', e.message, e.filename, e.lineno);
 });
 
+/* 홈 아래 「🤝 친구와 플레이」 패널 (2~5인 국가전쟁 로비) */
+import('./friends-home.js').then((m) => m.initFriendsHome()).catch((err) => console.error('friends-home', err));
+
 export { app };

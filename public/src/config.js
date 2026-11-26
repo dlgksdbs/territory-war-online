@@ -126,8 +126,8 @@ export const CLASSES = {
     name: '중갑 기사',
     tag: 'HEAVY · AOE 100',
     blurb: '큰 망치를 든 중갑 장군. 한 번의 내리치기로 전방의 적을 최대 100명까지 으스러뜨린다. 망치를 두 손으로 쥐느라 막기는 불가.',
-    hp: 2200,           // 무거운 망치 · 산처럼 단단하다 (병사의 약 14.7배)
-    damage: 220,        // 일반 병사(150)를 한 번에 처치
+    hp: 2900,           // 무거운 망치 · 산처럼 단단하다 (2200 → 2900, 약 32% 상향 · 병사의 19.3배)
+    damage: 285,        // 220 → 285 (약 30% 상향) · 일반 병사(150)를 한 번에 처치하고 고급 병사도 한 방
     speed: 3.3,
     radius: 0.52,
     height: 1.94,
@@ -291,7 +291,7 @@ export const SKILL = {
 };
 
 /* 표시용 전투력 지수 (병사 = 1.00 기준) */
-export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 2.8, wizard: 2.2, blademaster: 3.2, berserker: 2.4 };
+export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 3.15, wizard: 2.2, blademaster: 3.2, berserker: 2.4 };
 export function powerIndex(cls) {
   return POWER_INDEX[cls] || 1.0;
 }

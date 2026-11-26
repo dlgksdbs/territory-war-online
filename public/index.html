@@ -78,8 +78,8 @@
               <div class="cc-body">
                 <div class="cc-name">중갑 기사</div>
                 <div class="cc-tag">HEAVY · AOE 100</div>
-                <div class="cc-stats"><b data-stat="hp">2200</b> HP · <b data-stat="dmg">220</b> DMG</div>
-                <div class="cc-power">전투력 <strong data-stat="power">2.8×</strong></div>
+                <div class="cc-stats"><b data-stat="hp">2900</b> HP · <b data-stat="dmg">285</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">3.15×</strong></div>
               </div>
             </button>
             <button class="class-card" data-cls="blademaster">
@@ -208,6 +208,38 @@
             <button data-count="3000">3,000</button>
             <button data-count="10000">10,000</button>
           </div>
+        </div>
+
+        <div class="panel friends-panel" id="friendsPanel">
+          <div class="panel-title"><span>🤝 친구와 플레이</span><em>2~5인 실시간 국가전쟁</em></div>
+          <p class="fp-desc">성과 성벽을 세우고 편성치 안에서 병력을 나눠 겨루는 국가전쟁. 방을 만들거나 친구의 방 코드로 입장하세요.</p>
+          <button id="fpResume" class="fp-resume hidden" type="button">🔄 진행 중인 방으로 돌아가기</button>
+          <div id="fpSetup" class="fp-setup">
+            <input id="fpName" class="fp-input" type="text" maxlength="12" placeholder="지휘관 이름" autocomplete="nickname" />
+            <div class="fp-row">
+              <div class="fp-cap" id="fpCap">
+                <span>인원</span>
+                <button type="button" data-cap="2">2</button>
+                <button type="button" data-cap="3">3</button>
+                <button type="button" data-cap="4">4</button>
+                <button type="button" data-cap="5" class="on">5</button>
+              </div>
+              <label class="fp-ai"><input type="checkbox" id="fpAi" checked /><span>빈 자리 AI</span></label>
+            </div>
+            <button id="fpCreate" class="fp-btn primary" type="button">방 만들기</button>
+            <div class="fp-join">
+              <input id="fpCode" class="fp-input code" type="text" maxlength="5" placeholder="방 코드" autocapitalize="characters" autocomplete="off" spellcheck="false" />
+              <button id="fpJoin" class="fp-btn" type="button">입장</button>
+            </div>
+          </div>
+          <div id="fpWait" class="fp-wait hidden">
+            <div class="fp-code-row"><span>방 코드</span><b id="fpWaitCode">----</b><button id="fpCopy" type="button">복사</button></div>
+            <div id="fpPlayers" class="fp-players"></div>
+            <button id="fpStart" class="fp-btn primary" type="button">게임 시작</button>
+            <p id="fpHint" class="fp-hint"></p>
+            <button id="fpLeave" class="fp-btn ghost" type="button">나가기</button>
+          </div>
+          <p id="fpStatus" class="fp-hint"></p>
         </div>
       </div>
 

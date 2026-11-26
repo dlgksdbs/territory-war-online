@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="theme-color" content="#0a1017" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>친구와 플레이 · 2~5인 국가전쟁</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤝</text></svg>" />
+<link rel="stylesheet" href="/friends/friends.css" />
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<!-- ============================ 전장 HUD ============================ -->
+<div id="hud" class="hidden">
+  <div id="topbar">
+    <div class="tb-left">
+      <button id="roomCodeBtn" title="방 코드 복사"><b id="roomCode">----</b></button>
+      <span id="phaseLabel">편성</span>
+    </div>
+    <div class="tb-right">
+      <span id="timer">0:00</span>
+      <button id="speedBtn" class="mini">×1</button>
+      <button id="logBtn" class="mini" aria-label="전황">📜</button>
+      <button id="menuBtn" class="mini" aria-label="메뉴">☰</button>
+    </div>
+  </div>
+
+  <div id="nationStrip"></div>
+  <div id="eventFeed"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <div id="joy" aria-label="이동 조이스틱"><i id="joyKnob"></i></div>
+  <div id="altBtns">
+    <button type="button" data-alt="up" aria-label="상승">▲</button>
+    <button type="button" data-alt="down" aria-label="하강">▼</button>
+  </div>
+  <div id="camBtns">
+    <button id="camMine" type="button">🏰 내 성</button>
+    <button id="camAll" type="button">🗺️ 전체</button>
+  </div>
+
+  <div id="actionBar">
+    <button id="btnSetup" type="button"><span>📋</span><b>편성</b></button>
+    <button id="btnDiplo" type="button"><span>🤝</span><b>외교</b></button>
+    <button id="btnMarch" type="button" class="primary"><span>⚔️</span><b>파병</b></button>
+  </div>
+</div>
+
+<!-- ============================ 로비 ============================ -->
+<div id="lobby" class="overlay">
+  <div class="lobby-inner">
+    <div class="brand">
+      <div class="brand-mark">🤝</div>
+      <div>
+        <h1>친구와 플레이</h1>
+        <p>2~5인 실시간 국가전쟁 · 성과 성벽을 부숴라</p>
+      </div>
+    </div>
+
+    <div id="homePanel" class="card">
+      <label class="lbl" for="nameInput">지휘관 이름</label>
+      <input id="nameInput" class="txt" type="text" maxlength="12" placeholder="이름 (최대 12자)" autocomplete="nickname" />
+      <div class="cap-row">
+        <span class="lbl">인원</span>
+        <div id="capBtns" class="seg">
+          <button type="button" data-cap="2">2</button>
+          <button type="button" data-cap="3">3</button>
+          <button type="button" data-cap="4">4</button>
+          <button type="button" data-cap="5" class="on">5</button>
+        </div>
+      </div>
+      <label class="switch-row">
+        <span><b>빈 자리를 AI로 채우기</b><small>혼자서도 바로 확인할 수 있어요</small></span>
+        <input type="checkbox" id="aiToggle" checked />
+        <i class="switch" aria-hidden="true"></i>
+      </label>
+      <button id="btnCreate" class="primary big" type="button">방 만들기</button>
+      <div class="or"><span>또는</span></div>
+      <div class="join-row">
+        <input id="joinCode" class="txt code" type="text" maxlength="5" placeholder="방 코드" autocapitalize="characters" autocomplete="off" spellcheck="false" aria-label="방 코드" />
+        <button id="btnJoin" class="sbtn" type="button">입장</button>
+      </div>
+      <p class="note">방 코드를 친구에게 보내면 같은 전장에서 실시간으로 겨룹니다.</p>
+    </div>
+
+    <div id="waitPanel" class="card hidden">
+      <div class="code-row">
+        <div><span class="lbl">방 코드</span><b id="waitCode" class="big-code">----</b></div>
+        <button id="btnCopyCode" class="sbtn" type="button">복사</button>
+      </div>
+      <div id="waitPlayers" class="wait-players"></div>
+      <label class="switch-row">
+        <span><b>빈 자리를 AI로 채우기</b><small id="waitAiNote">남는 나라는 AI가 맡습니다</small></span>
+        <input type="checkbox" id="waitAi" checked />
+        <i class="switch" aria-hidden="true"></i>
+      </label>
+      <button id="btnStart" class="primary big" type="button">게임 시작</button>
+      <p id="waitHint" class="note"></p>
+      <button id="btnLeave" class="ghost" type="button">나가기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 편성 ============================ -->
+<div id="setupSheet" class="sheet hidden">
+  <div class="sheet-card">
+    <div class="sh-head">
+      <b>🏰 국가 편성</b>
+      <span id="setupLeft">60초</span>
+    </div>
+    <div class="budget">
+      <div class="bbar"><i id="budgetBar"></i></div>
+      <span id="budgetTxt">0 / 5,000</span>
+    </div>
+    <div class="presets" id="setupPresets"></div>
+    <div id="setupRows" class="rows"></div>
+    <div id="defRows" class="def-rows"></div>
+    <div class="sheet-foot">
+      <span id="setupSummary"></span>
+      <button id="btnReady" class="primary" type="button">준비 완료</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 파병 ============================ -->
+<div id="marchSheet" class="sheet hidden">
+  <div class="sheet-card">
+    <div class="sh-head"><b>⚔️ 군사 파견</b><span id="marchHint">보낼 상대와 병력을 고르세요</span></div>
+    <div id="marchTargets" class="targets"></div>
+    <div class="ratio-row" id="marchRatio">
+      <button type="button" data-ratio="0.25">25%</button>
+      <button type="button" data-ratio="0.5" class="on">50%</button>
+      <button type="button" data-ratio="0.75">75%</button>
+      <button type="button" data-ratio="1">100%</button>
+    </div>
+    <div id="marchRows" class="rows"></div>
+    <div class="sheet-foot">
+      <span id="marchTotal">0명</span>
+      <button id="btnSend" class="primary" type="button">파견</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 외교 ============================ -->
+<div id="diploSheet" class="sheet hidden">
+  <div class="sheet-card">
+    <div class="sh-head"><b>🤝 외교</b><span id="diploHint">동맹 · 불가침 · 선전포고</span></div>
+    <div id="propList" class="props"></div>
+    <div id="diploList" class="diplo-list"></div>
+    <div class="sheet-foot">
+      <span></span>
+      <button id="diploClose" class="ghost" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 전황 ============================ -->
+<div id="logSheet" class="sheet hidden">
+  <div class="sheet-card">
+    <div class="sh-head"><b>📜 전황</b><span id="logTime"></span></div>
+    <div id="logList" class="log-list"></div>
+    <div class="sheet-foot"><span></span><button id="logClose" class="ghost" type="button">닫기</button></div>
+  </div>
+</div>
+
+<!-- ============================ 메뉴 ============================ -->
+<div id="menuSheet" class="sheet hidden">
+  <div class="sheet-card">
+    <div class="sh-head"><b>☰ 메뉴</b><span id="menuCode">----</span></div>
+    <div class="menu-btns">
+      <button id="menuSpeed" class="ghost" type="button">⏩ 게임 속도 ×1</button>
+      <button id="menuAll" class="ghost" type="button">🗺️ 전장 전체 보기</button>
+      <button id="menuLeave" class="ghost danger" type="button">방 나가기</button>
+      <button id="menuClose" class="primary" type="button">닫기</button>
+    </div>
+    <div class="rules">
+      <p><b>목표</b> — 다른 나라의 성을 모두 부수면 승리. 내 성이 무너지면 탈락(관전).</p>
+      <p><b>편성</b> — 편성치 5,000 안에서 병력·성벽·성을 나눠 배분. 기본 상한은 병사 2,000 · 고급 500 · 특수 각 20이고, 수치를 직접 입력해 더 넣을 수 있어요.</p>
+      <p><b>파병</b> — 상대 성으로 군사를 보내면 성벽 → 성 순서로 부숩니다. 성벽이 살아 있는 동안 성은 무적이에요.</p>
+      <p><b>외교</b> — 동맹·불가침은 서로 공격을 막습니다. 깨려면 선전포고하세요.</p>
+      <p><b>시점</b> — 왼쪽 조이스틱으로 하늘을 날고, 화면을 드래그해 시점을 돌립니다.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 결과 ============================ -->
+<div id="resultOv" class="overlay hidden">
+  <div class="card result">
+    <div id="resultMark" class="result-mark">👑</div>
+    <h2 id="resultTitle">승리!</h2>
+    <p id="resultSub" class="note"></p>
+    <div class="res-stats">
+      <div><b id="resTime">0:00</b><span>전쟁 시간</span></div>
+      <div><b id="resLeft">0</b><span>생존 국가</span></div>
+      <div><b id="resSent">0</b><span>파견 병력</span></div>
+    </div>
+    <button id="btnRematch" class="primary" type="button">같은 멤버로 다시</button>
+    <p id="rematchHint" class="note hidden">방장이 다시 시작할 수 있어요.</p>
+    <button id="btnResultLeave" class="ghost danger" type="button">로비로 나가기</button>
+  </div>
+</div>
+
+<div id="connBar" class="hidden">연결이 끊겼어요 · 다시 연결 중…</div>
+
+<script type="module" src="/friends/friends.js"></script>
+</body>
+</html>

@@ -380,6 +380,21 @@ function ok(name, cond, extra) {
     { wheel, want: want.spells });
   await shot('04b-battle-spells.png');
 
+  /* 🎬 관전 모드 — 커스텀 배치여도 액션 버튼은 숨고 조이스틱만 남는다 */
+  const spec = await page.evaluate(async () => {
+    const cam = document.getElementById('camBtn');
+    cam.click();                       // 👁️ 1인칭 → 🎬 관전
+    await new Promise((r) => setTimeout(r, 240));
+    const a = getComputedStyle(document.getElementById('actions')).display;
+    const joy = getComputedStyle(document.getElementById('joy')).display;
+    const cls = document.getElementById('battle').classList.contains('is-spectate');
+    cam.click();                       // 🎬 관전 → 👁️ 참전
+    await new Promise((r) => setTimeout(r, 200));
+    return { spectate: cls, spec: a, joy, fp: getComputedStyle(document.getElementById('actions')).display };
+  });
+  ok('🎬 관전 모드에서는 커스텀 배치여도 액션 버튼이 숨고 조이스틱은 남는다',
+    spec.spectate && spec.spec === 'none' && spec.joy !== 'none' && spec.fp !== 'none', spec);
+
   /* ===== 7. 전체화면에서도 같은 자리 ===== */
   const fs = await page.evaluate(() => {
     const before = (() => {

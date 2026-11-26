@@ -96,7 +96,9 @@ function unplaceItem(el) {
   el.style.removeProperty('--hs');
 }
 
-/* .actions 는 기본이 flex 세로 정렬 — 커스텀 배치에서는 화면 전체를 덮는 판으로 */
+/* .actions 는 기본이 flex 세로 정렬 — 커스텀 배치에서는 화면 전체를 덮는 판으로.
+   display 는 인라인이 아니라 클래스로 바꿔야 관전 모드(`#battle.is-spectate … { display:none }`)가
+   그대로 이긴다 (인라인이면 관전 중에도 액션 버튼이 남는다). */
 function freeActions(el, on) {
   if (!el) return;
   if (on) {
@@ -106,10 +108,9 @@ function freeActions(el, on) {
     el.style.top = '0';
     el.style.right = '0';
     el.style.bottom = '0';
-    el.style.display = 'block';
   } else {
     el.classList.remove('hud-free');
-    for (const k of ['position', 'left', 'top', 'right', 'bottom', 'display']) el.style[k] = '';
+    for (const k of ['position', 'left', 'top', 'right', 'bottom']) el.style[k] = '';
   }
 }
 

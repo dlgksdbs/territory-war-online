@@ -3,8 +3,9 @@
 /* =============================================================================
    배틀 아레나 3D · 모바일(390×844 세로) 실제 렌더 검증
    -----------------------------------------------------------------------------
-   · ⚔️ 병종 밸런스: 병사 150/150 · 기사 체력 2200·막기 불가 · 검객 900/0.30초 · 고급 병사 방패 제거
-   · 🩸 신규 6번째 병종 '단검 광전사' — 3600 체력(3000 → 20% 상향) · 18 공격력 · 0.18초 연타 · 홀드 자동 연타
+   · ⚔️ 병종 밸런스: 병사 150/150 · 기사 체력 2200·막기 불가 · 검객 1200/178/0.30초 · 고급 병사 방패 제거
+   · 🩸 신규 6번째 병종 '단검 광전사' — 3600 체력(3000 → 20% 상향) · 18 공격력 · 0.25초 연타 · 이속 5.00(병사보다 20% 빠름) · 홀드 자동 연타
+   · 🔮 대마법사 마법 위력 15% 너프 (화염 212 · 번개 178 · 빙결 170) · 매화 일섬 246
    · 🩸 적중 흡혈: 실제 피해를 입힌 공격자는 그 7%(최소 1)를 회복 — 막기(0 피해)에는 회복 없음
    · 💚 자연 회복: 살아 있는 모든 유닛이 초당 최대 체력의 1.5% 를 스스로 회복
    · ☀️ 밝기·광택: 노출/조명/안개가 어둡지 않고, 갑옷이 번쩍이지 않는 범위인지
@@ -175,16 +176,24 @@ function ok(name, cond, extra) {
   ok('🔨 기사 체력 2000~2400 · 한 번에 100명 · 막기 불가',
     C.knight.hp >= 2000 && C.knight.hp <= 2400 && C.knight.maxTargets === 100 && C.knight.guard === false,
     { hp: C.knight.hp, guard: C.knight.guard });
-  ok('🌸 검객 체력 900 · 공속 조금 빠르게(0.30초) · 한 번에 10명 · 막기 가능',
-    C.blademaster.hp === 900 && C.blademaster.maxTargets === 10 && C.blademaster.speed > 5.0 &&
-    C.blademaster.cycle <= 0.305 && C.blademaster.guard === true,
-    { hp: C.blademaster.hp, cycle: C.blademaster.cycle });
-  ok('🩸 단검 광전사 = 3600 체력(3000 에서 20% 상향) · 18 공격력 · 0.18초 연타 · 병사와 같은 이속 · 막기 불가',
+  ok('🌸 검객 체력 1200(900 → 33% 상향) · 딜 178(210 에서 약 15% 하향) · 공속 0.30초 · 한 번에 10명 · 막기 가능',
+    C.blademaster.hp === 1200 && C.blademaster.damage === 178 && C.blademaster.maxTargets === 10 &&
+    C.blademaster.speed > 5.0 && C.blademaster.cycle <= 0.305 && C.blademaster.guard === true,
+    { hp: C.blademaster.hp, dmg: C.blademaster.damage, cycle: C.blademaster.cycle });
+  ok('🌸 매화 일섬 위력도 같은 비율로 하향 (290 → 246) · 기본딜 178 보다 세다',
+    specs.skill && specs.skill.damage === 246 && specs.skill.damage > C.blademaster.damage,
+    specs.skill && { dmg: specs.skill.damage, base: C.blademaster.damage });
+  ok('🩸 단검 광전사 = 3600 체력(3000 에서 20% 상향) · 18 공격력 · 0.25초 연타(0.18 → 공속 너프) · 이속 5.00 버프 · 막기 불가',
     C.berserker && C.berserker.hp === 3600 && Math.abs(C.berserker.hp - 3000 * 1.2) < 0.001 && C.berserker.damage === 18 &&
-    C.berserker.cycle === 0.18 && C.berserker.speed === C.soldier.speed && C.berserker.guard === false,
+    C.berserker.cycle === 0.25 && C.berserker.cycle >= 0.24 && C.berserker.cycle <= 0.26 &&
+    C.berserker.speed === 5.0 && C.berserker.speed > C.soldier.speed * 1.15 && C.berserker.guard === false,
     C.berserker && { hp: C.berserker.hp, dmg: C.berserker.damage, cycle: C.berserker.cycle, speed: C.berserker.speed, guard: C.berserker.guard });
   ok('🔮 마법사 이속·마법 쿨타임 조정 · 막기 불가', C.wizard.speed < 3.6 && C.wizard.guard === false &&
     specs.spells.fire.cooldown === 3.8 && specs.spells.lightning.cooldown === 6.6 && specs.spells.ice.cooldown === 8.6);
+  ok('🔮 마법 3종 위력 15% 너프 (화염 250→212 · 번개 210→178 · 빙결 200→170)',
+    specs.spells.fire.damage === 212 && specs.spells.lightning.damage === 178 && specs.spells.ice.damage === 170 &&
+    specs.spells.fire.damage < 250 && specs.spells.lightning.damage < 210 && specs.spells.ice.damage < 200,
+    { fire: specs.spells.fire.damage, lightning: specs.spells.lightning.damage, ice: specs.spells.ice.damage });
   ok('이속: 병사·기사 상향', C.soldier.speed > 3.9 && C.knight.speed > 3.1);
 
   /* ===== 0b. 밝기 · 광택 ===== */
@@ -722,7 +731,7 @@ function ok(name, cond, extra) {
     }
     return res;
   });
-  /* 광전사는 0.18초 주기로 0.24초 모션을 압축 재생한다 — 프레임당 회전이 원래 크다 */
+  /* 광전사는 0.25초 주기로 0.24초 모션을 재생한다 — 프레임당 회전이 원래 크다 */
   const atkLimits = { soldier: 0.45, elite: 0.45, knight: 0.45, blademaster: 0.85, wizard: 0.35, berserker: 1.15 };
   const badAtk = Object.keys(atkLimits).filter((k) => motion[k].atk.max > atkLimits[k]);
   const badDeath = Object.keys(motion).filter((k) => motion[k].death.max > 0.25 || motion[k].death.rootJump > 0.12);
@@ -1073,17 +1082,17 @@ function ok(name, cond, extra) {
   });
   ok('🩸 단검 광전사가 양 진영에 스폰되고 1인칭·HUD·3D 모델이 붙는다 (막기 버튼은 숨김)',
     bers.cls === 'berserker' && bers.allyAI === 4 && bers.enemyAI === 4 &&
-    Math.abs(bers.playerHp - 3600) < 120 && bers.cycle === 0.18 && bers.speed === bers.soldierSpeed &&
+    Math.abs(bers.playerHp - 3600) < 120 && bers.cycle === 0.25 && bers.speed > bers.soldierSpeed * 1.15 &&
     bers.buckets.includes('berserker') && bers.parts > 20 && bers.vmModel &&
     bers.hudIcon === '🩸' && bers.atkLabel === '연타' && bers.guardOn === false, bers);
 
   const poseBers = await page.evaluate(() => {
     const r = {};
-    r.atk = window.BA.debug.poseTrack({ cls: 'berserker', kind: 'attack', from: 0, to: 0.18, frames: 11 });
+    r.atk = window.BA.debug.poseTrack({ cls: 'berserker', kind: 'attack', from: 0, to: 0.25, frames: 15 });
     r.guard = window.BA.debug.poseTrack({ cls: 'berserker', kind: 'guard', from: 0, to: 0.5, frames: 30 });
     return r;
   });
-  ok('🩸 광전사 모션이 0.18초 주기에 맞게 재생된다 (공격·막기 모두 끊김 없음)',
+  ok('🩸 광전사 모션이 0.25초 주기에 맞게 재생된다 (공격·막기 모두 끊김 없음)',
     !!poseBers.atk && poseBers.atk.max < 1.15 && poseBers.guard.max < 0.6,
     { atk: poseBers.atk, guard: poseBers.guard });
 
@@ -1223,6 +1232,10 @@ function ok(name, cond, extra) {
       blademaster: { react: 0.55, hold: 0.28, cd: 0.42, reactT: 0.07, dur: 0.80 }
     };
     const current = JSON.parse(JSON.stringify(CFG.GUARD_CHANCE));
+    /* 스킬 피해(히트스톱 시간)가 막기 횟수 측정에 끼어들지 않게 0으로 — 가드 설정만 비교한다.
+       (피해·체력 밸런스를 조정해도 이 비교는 흔들리지 않는다) */
+    const skillDamage = CFG.SKILL.damage;
+    CFG.SKILL.damage = 0;
     const setTable = (t) => {
       for (const k of Object.keys(CFG.GUARD_CHANCE)) delete CFG.GUARD_CHANCE[k];
       for (const k of Object.keys(t)) CFG.GUARD_CHANCE[k] = Object.assign({}, t[k]);
@@ -1278,6 +1291,7 @@ function ok(name, cond, extra) {
       };
     }
     setTable(current);
+    CFG.SKILL.damage = skillDamage;
     return out;
   });
   const gdClasses = ['soldier', 'elite', 'blademaster'];

@@ -5,7 +5,7 @@
    · 고급 병사(ELITE) = 일반 병사의 체력·이속·공속 +10% · 검으로 막는 정예 검병(방패 없음)
    · 특수 유닛(기사·마법사·검객·광전사)은 병사보다 뚜렷하게 강한 체급
    · 중갑 기사는 막기를 쓰지 않는다 (큰 망치를 두 손으로 쥔다)
-   · 🩸 단검 광전사 = 초고체력·초고속 연타·초약딜 탱커 (이속은 일반 병사와 동일)
+   · 🩸 단검 광전사 = 초고체력·고속 연타·초약딜 탱커 (이속은 전 병종 중 최상위)
    · 모든 살아 있는 유닛은 매초 최대 체력의 REGEN_FRAC 만큼 자연 회복한다
    아군·적군 스펙은 완전히 동일하다(진영은 색만 다르다).
    ============================================================================= */
@@ -150,8 +150,8 @@ export const CLASSES = {
     name: '매화 검객',
     tag: 'SWIFT · DASH',
     blurb: '매화처럼 흩날리는 초고속 연속 베기. 스킬로 전방을 쓸어버리는 돌진 참격.',
-    hp: 900,            // 가벼운 검 · 단단한 수련 (병사의 6배)
-    damage: 210,        // 일반 병사(150)를 한 번에 처치
+    hp: 1200,           // 가벼운 검 · 단단한 수련 (900 → 1200, 33% 상향 · 병사의 8배)
+    damage: 178,        // 210 → 178 (약 15% 하향) · 그래도 일반 병사(150)는 한 번에 처치
     speed: 5.4,
     radius: 0.38,
     height: 1.76,
@@ -176,13 +176,13 @@ export const CLASSES = {
     blurb: '쌍단검을 쥔 광전사. 산처럼 단단하고 손이 미친 듯 빠르지만 한 방은 아주 약하다. 공격 버튼을 꾹 누르면 자동 연타. 막기는 하지 않는다.',
     hp: 3600,           // 초고체력 탱커 (병사의 24배 · 기존 3000 에서 20% 상향)
     damage: 18,         // 초약딜 — 대신 엄청나게 자주 찌른다
-    speed: 4.15,        // 이동속도는 일반 병사와 동일
+    speed: 5.00,        // 4.15 → 5.00 (약 20% 상향) — 단검 광전사의 기동력을 확실히 살린다
     radius: 0.44,
     height: 1.80,
     reach: 1.85,        // 단검 — 사거리가 짧다
     arc: 2.05,
-    cycle: 0.18,        // 초고속 연타 (초당 약 5.6회)
-    animDur: 0.24,      // 모션 원본 길이 (0.18초에 맞춰 재생된다)
+    cycle: 0.25,        // 연타 (0.18 → 0.25 · 초당 약 4회) — 여전히 전 병종 중 최고 공속
+    animDur: 0.24,      // 모션 원본 길이 (0.25초에 맞춰 재생된다)
     windup: 0.05,
     impact: 0.11,
     maxTargets: 1,
@@ -237,7 +237,7 @@ export const SPELLS = {
     icon: '🔥',
     cooldown: 3.8,
     cast: 0.42,
-    damage: 250,
+    damage: 212,        // 250 → 212 (약 15% 하향)
     radius: 3.5,
     range: 19,
     color: 0xff7a24,
@@ -251,7 +251,7 @@ export const SPELLS = {
     icon: '⚡',
     cooldown: 6.6,
     cast: 0.34,
-    damage: 210,
+    damage: 178,        // 210 → 178 (약 15% 하향)
     jumps: 4,           // 최대 대상 수
     falloff: 0.78,      // 연쇄마다 위력 감소
     range: 17,
@@ -266,7 +266,7 @@ export const SPELLS = {
     icon: '❄️',
     cooldown: 8.6,
     cast: 0.46,
-    damage: 200,
+    damage: 170,        // 200 → 170 (15% 하향)
     radius: 7.4,
     halfAngle: Math.PI / 3.1,   // 전방 약 58°
     freeze: 1.35,
@@ -283,7 +283,7 @@ export const SKILL = {
   name: '매화 일섬',
   icon: '🌸',
   cooldown: 5.0,
-  damage: 290,
+  damage: 246,        // 290 → 246 (기본 딜 210 → 178 과 같은 비율)
   radius: 2.8,
   dash: 7.2,
   dashTime: 0.34,
@@ -291,7 +291,7 @@ export const SKILL = {
 };
 
 /* 표시용 전투력 지수 (병사 = 1.00 기준) */
-export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 2.8, wizard: 2.4, blademaster: 3.2, berserker: 2.4 };
+export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 2.8, wizard: 2.2, blademaster: 3.2, berserker: 2.4 };
 export function powerIndex(cls) {
   return POWER_INDEX[cls] || 1.0;
 }

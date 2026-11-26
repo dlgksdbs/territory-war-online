@@ -651,7 +651,7 @@ export class WarScene {
       this._applyDamageVisual(entry, n, now);
       if (entry.label) {
         const d = Math.hypot(this.cam.x - n.pos.x, this.cam.z - n.pos.z, this.cam.y);
-        entry.label.material.opacity = n.alive ? clamp((d - 28) / 30, 0, 1) : 0.35;
+        entry.label.material.opacity = n.alive ? clamp((d - 52) / 40, 0, 1) : 0.3;
       }
     }
     this._updateUnits(state, dt, now);

@@ -20,10 +20,14 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 /* 시점 감도 — 예전보다 조금 더 민첩하게 (1.4배) */
-const LOOK_SENS = 0.0063;        // 화면 드래그 1px 당 좌우 회전(rad)
-const LOOK_PITCH_SENS = 0.0049;  // 화면 드래그 1px 당 상하 회전(rad)
-const SPEC_SENS = 0.0072;        // 관전 카메라 좌우
-const SPEC_PITCH_SENS = 0.0056;  // 관전 카메라 상하
+/* 시점 감도 — 2026-11-26: 전체화면에서 "감도도 조금 빠르게" 요청으로 기본 10% 올리고,
+   전체화면일 때 한 번 더 27% 보정한다 (손놀림은 그대로인데 화면이 커져 답답한 느낌을 없엔다). */
+const LOOK_SENS = 0.0069;        // 화면 드래그 1px 당 좌우 회전(rad)
+const LOOK_PITCH_SENS = 0.0054;  // 화면 드래그 1px 당 상하 회전(rad)
+const SPEC_SENS = 0.0079;        // 관전 카메라 좌우
+const SPEC_PITCH_SENS = 0.0062;  // 관전 카메라 상하
+const FS_SENS_BOOST = 1.27;      // 전체화면 보정 배율
+const lookSens = (base) => base * (isFullscreen() ? FS_SENS_BOOST : 1);
 /* 🎬 관전 자유 비행 범위 — 땅 아래만 막고 하늘(120m)·성채 뒷편까지 어디든 */
 const SPECTATE_MIN_Y = 1.2;
 const SPECTATE_MAX_Y = 120;
@@ -36,9 +40,9 @@ class App {
     this.progress = loadProgress();
     this.cfg = {
       playerClass: 'soldier',
-      /* 기본 편성 — 가볍고 보기 좋은 규모 (한 진영 23명 · 양쪽 46명) */
-      allySoldiers: 20, allyElites: 0, allyKnights: 1, allyWizards: 1, allyBlademasters: 1, allyBerserkers: 0,
-      enemySoldiers: 20, enemyElites: 0, enemyKnights: 1, enemyWizards: 1, enemyBlademasters: 1, enemyBerserkers: 0
+      /* 기본 편성 — 2026-11-26 부터 전 병종 0명 (첫 화면에서 직접 편성하게 비워 둔다) */
+      allySoldiers: 0, allyElites: 0, allyKnights: 0, allyWizards: 0, allyBlademasters: 0, allyBerserkers: 0,
+      enemySoldiers: 0, enemyElites: 0, enemyKnights: 0, enemyWizards: 0, enemyBlademasters: 0, enemyBerserkers: 0
     };
     this.state = 'home';
     this.paused = false;
@@ -397,6 +401,9 @@ class App {
 
   /* 전체화면 진입/해제 — 브라우저 창 크기가 바뀌는 중이라 여러 번 맞춰 준다 */
   _onFullscreenChange() {
+    /* HUD 배치·버튼 크기·시점 감도가 상태를 한 번에 알아보도록 #app 에도 표시한다 */
+    const el = document.getElementById('app');
+    if (el) el.classList.toggle('is-fullscreen', isFullscreen());
     this.resize();
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => this.resize());
     clearTimeout(this._fsResizeT);
@@ -456,14 +463,14 @@ class App {
       if (this.camMode === 'spectate') {
         if (!this.spectate) this._enterSpectate();
         const s = this.spectate;
-        s.yaw -= dx * SPEC_SENS;        // 1인칭과 같은 방향 (예전엔 부호가 반대라 화면이 거꾸로 돌았다)
-        s.pitch = clamp(s.pitch - dy * SPEC_PITCH_SENS, -1.50, 0.92);
+        s.yaw -= dx * lookSens(SPEC_SENS);        // 1인칭과 같은 방향 (예전엔 부호가 반대라 화면이 거꾸로 돌았다)
+        s.pitch = clamp(s.pitch - dy * lookSens(SPEC_PITCH_SENS), -1.50, 0.92);
         this._spectateIdle = 0;
         this.autoSpectate = false;      // 손으로 돌리면 자동 회전은 멈춘다
       } else {
         // 1인칭 — 화면을 민 방향으로 고개가 돈다
-        this.camYaw -= dx * LOOK_SENS;
-        this.camPitch = clamp(this.camPitch - dy * LOOK_PITCH_SENS, -1.15, 0.9);
+        this.camYaw -= dx * lookSens(LOOK_SENS);
+        this.camPitch = clamp(this.camPitch - dy * lookSens(LOOK_PITCH_SENS), -1.15, 0.9);
       }
     });
     const end = (e) => { if (e.pointerId === id) id = null; };
@@ -500,6 +507,15 @@ class App {
 
   /* ------------------------------------------------------------------ 전투 */
   startBattle() {
+    /* ⚔️ 아군·적군이 모두 0명이면 빈 전장에 플레이어만 서게 된다 — 승패도 없고 볼 것도 없다.
+       첫 화면 기본 편성이 0명이라 아무것도 고르지 않고 누를 수 있으므로, 편성부터 안내하고
+       전장에 들어가지 않는다 (아군 0 + 적군 N = 1 vs N, 적군 0 = 연습 모드는 그대로 허용). */
+    if (rosterTotal(rosterOf(this.cfg)) === 0) {
+      this._toast('병력을 1명 이상 편성해 줘 · 프리셋을 눌러도 된다');
+      this._nudgeArmy();
+      this.sfx.ui();
+      return;
+    }
     this.sfx.resume();
     this.initGL();
     $('#home').classList.remove('is-active');
@@ -661,6 +677,17 @@ class App {
     }
     this.autoSpectate = false;
     b.playerSafe = false;
+  }
+
+  /* 병력 편성이 비어 있을 때 편성판을 한 번 깜빡인다 */
+  _nudgeArmy() {
+    const panel = document.querySelector('.army-panel');
+    if (!panel) return;
+    panel.classList.remove('is-nudge');
+    void panel.offsetWidth;          // 애니메이션 재시작
+    panel.classList.add('is-nudge');
+    clearTimeout(this._nudgeT);
+    this._nudgeT = setTimeout(() => panel.classList.remove('is-nudge'), 950);
   }
 
   _toast(msg) {
@@ -1399,6 +1426,12 @@ window.BA = {
   config: () => ({ ...app.cfg }),
   /* 밸런스 스펙 (테스트·디버그) */
   specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS, guardChance: GUARD_CHANCE, regen: REGEN_FRAC }),
+  /* 시점 감도 (테스트·디버그) — 지금 화면 기준 실제 적용값 */
+  look: () => ({
+    sens: LOOK_SENS, pitch: LOOK_PITCH_SENS, spec: SPEC_SENS, specPitch: SPEC_PITCH_SENS,
+    fsBoost: FS_SENS_BOOST, fullscreen: isFullscreen(),
+    now: { sens: lookSens(LOOK_SENS), spec: lookSens(SPEC_SENS) }
+  }),
   setConfig(cfg) {
     Object.assign(app.cfg, cfg || {});
     app._syncHome();

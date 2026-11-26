@@ -103,34 +103,63 @@ function ok(name, cond, extra) {
   await page.waitForFunction(() => window.BA && window.BA.app, { timeout: 30000 });
   await sleep(600);
 
-  /* ===== 0-a. 🧮 기본 편성 — 가벼운 기본 인원 · 자연스러운 증원 간격 ===== */
+  /* ===== 0-a. 🧮 기본 편성 — 전 병종 0명 (직접 편성하게 비워 둔다) ===== */
   const defaults = await page.evaluate(async () => {
     const CFG = await import('/src/config.js');
     const cfg = window.BA.config();
     const rows = Array.from(document.querySelectorAll('.row')).map((r) => ({
       team: r.dataset.team, unit: r.dataset.unit,
-      v: Number(r.querySelector('input.num').value)
+      v: Number(r.querySelector('input.num').value),
+      range: Number(r.querySelector('input[type=range]').value)
     }));
-    const val = (team, unit) => (rows.find((r) => r.team === team && r.unit === unit) || {}).v;
     return {
       cfg, total: document.getElementById('rosterTotal').textContent,
-      spawn: CFG.SPAWN_INTERVAL,
-      html: { aS: val('ally', 'soldier'), aK: val('ally', 'knight'), aW: val('ally', 'wizard'), aB: val('ally', 'blademaster'),
-        eS: val('enemy', 'soldier'), eK: val('enemy', 'knight'), eW: val('enemy', 'wizard'), eB: val('enemy', 'blademaster') }
+      rows,
+      spawn: CFG.SPAWN_INTERVAL
     };
   });
-  ok('🧮 기본 편성 = 한 진영 병사 20 + 기사·마법사·검객 1 (한쪽 23명 · 양쪽 46명)',
-    defaults.cfg.allySoldiers === 20 && defaults.cfg.enemySoldiers === 20 &&
-    defaults.cfg.allyKnights === 1 && defaults.cfg.enemyKnights === 1 &&
-    defaults.cfg.allyWizards === 1 && defaults.cfg.enemyWizards === 1 &&
-    defaults.cfg.allyBlademasters === 1 && defaults.cfg.enemyBlademasters === 1 &&
-    defaults.cfg.allyElites === 0 && defaults.cfg.allyBerserkers === 0 &&
-    /총 46명/.test(defaults.total) &&
-    defaults.html.aS === 20 && defaults.html.eS === 20 && defaults.html.aK === 1 && defaults.html.eK === 1,
-    { cfg: defaults.cfg, total: defaults.total, html: defaults.html });
+  ok('🧮 기본 편성 = 전 병종 0명 (아군·적군 6종 모두 0 · 총 0명 출전)',
+    defaults.rows.length === 12 && defaults.rows.every((r) => r.v === 0 && r.range === 0) &&
+    Object.keys(defaults.cfg).filter((k) => /^(ally|enemy)/.test(k)).every((k) => defaults.cfg[k] === 0) &&
+    /총 0명/.test(defaults.total),
+    { cfg: defaults.cfg, total: defaults.total, rows: defaults.rows });
   ok('🧮 증원 간격이 0.35~0.55초로 완화됐다 (예전 0.07~0.14초)',
     Object.values(defaults.spawn).every((v) => v >= 0.35 && v <= 0.55) && defaults.spawn.soldier >= 0.4,
     defaults.spawn);
+
+  /* ===== 0-a-2. 🧮 0명 상태에서 '전장으로' — 빈 전장에 들어가지 않고 편성부터 안내 ===== */
+  const emptyStart = await page.evaluate(() => {
+    const before = window.BA.state().state;
+    document.getElementById('startBtn').click();
+    const toast = document.getElementById('toast');
+    return {
+      before,
+      after: window.BA.state().state,
+      hasBattle: !!window.BA.app.battle,
+      nudge: !!document.querySelector('.army-panel.is-nudge'),
+      toast: toast ? toast.textContent : '',
+      total: document.getElementById('rosterTotal').textContent
+    };
+  });
+  ok('🧮 아군·적군 모두 0명으로 전장으로 → 입장하지 않고 편성 안내 (빈 전장·즉시 종료 없음)',
+    emptyStart.before === 'home' && emptyStart.after === 'home' && emptyStart.hasBattle === false &&
+    /편성/.test(emptyStart.toast) && /총 0명/.test(emptyStart.total), emptyStart);
+  ok('🧮 안내할 때 편성판을 한 번 깜빡인다', emptyStart.nudge === true, emptyStart.nudge);
+  const preset = await page.evaluate(() => {
+    document.querySelector('#presets button[data-preset="clash"]').click();
+    const clash = document.getElementById('rosterTotal').textContent;
+    document.querySelector('#presets button[data-preset="duel"]').click();
+    const duel = document.getElementById('rosterTotal').textContent;
+    // 다시 0명으로 되돌려 다음 테스트가 같은 조건에서 시작하게 한다
+    window.BA.setConfig({
+      playerClass: 'soldier', allySoldiers: 0, allyElites: 0, allyKnights: 0, allyWizards: 0, allyBlademasters: 0, allyBerserkers: 0,
+      enemySoldiers: 0, enemyElites: 0, enemyKnights: 0, enemyWizards: 0, enemyBlademasters: 0, enemyBerserkers: 0
+    });
+    return { clash, duel, back: document.getElementById('rosterTotal').textContent };
+  });
+  ok('🧮 프리셋 버튼은 그대로 동작한다 (균형 대결 62명 · 1:1 결투 2명)',
+    /총 62명/.test(preset.clash) && /총 2명/.test(preset.duel), preset);
+  ok('🧮 편성을 다시 0명으로 되돌리면 총 0명 출전', /총 0명/.test(preset.back), preset.back);
 
   /* ===== 0. 스펙 ===== */
   const specs = await page.evaluate(() => window.BA.specs());
@@ -285,14 +314,14 @@ function ok(name, cond, extra) {
     u.guard = true; u.guardT = 99;
     const front = { x: 0, z: 2, team: 'ally', id: 703 };
     for (let i = 0; i < 12; i++) b.damage(u, 400, front, 'blade');
-    // 막기 빈도 설정값도 확인 (병사 0.56/0.315 · 고급 0.68/0.385)
+    // 막기 빈도 설정값도 확인 (병사 0.30/0.14 · 고급 0.84/0.58)
     const units = b.units.filter((x) => x.cls === 'elite' && !x.isPlayer).slice(0, 1)[0];
     return { hp: u.hp, react: units.guardReaction, hold: units.guardHold, cdMax: units.guardCdMax };
   });
   ok('🛡️ 고급 병사는 횟수 제한 없이 12번 연속 완전 방어', eliteGuard.hp === 900, eliteGuard);
-  ok('🛡️ AI 막기 빈도 상향 — 고급 병사 0.98/0.70 (병사 0.30/0.14 · 검객 0.52/0.27)',
-    Math.abs(eliteGuard.react - 0.98) < 0.01 && Math.abs(eliteGuard.hold - 0.70) < 0.01 &&
-    eliteGuard.cdMax <= 0.5 && eliteGuard.react > 0.5, eliteGuard);
+  ok('🛡️ AI 막기 빈도 — 고급 병사 0.84/0.58 (병사 0.30/0.14 · 검객 0.66/0.36)',
+    Math.abs(eliteGuard.react - 0.84) < 0.01 && Math.abs(eliteGuard.hold - 0.58) < 0.01 &&
+    eliteGuard.cdMax <= 0.55 && eliteGuard.react > 0.5, eliteGuard);
   const gc = specs.guardChance || {};
   ok('🛡️ AI 막기 확률표 — 일반 병사·고급 병사·매화 검객만 (기사·마법사·단검 광전사는 막기 없음)',
     gc.soldier && gc.elite && gc.blademaster && !gc.berserker && !gc.knight && !gc.wizard &&
@@ -363,6 +392,38 @@ function ok(name, cond, extra) {
   await advance(0.1);
   const p1 = (await st()).spectate.pitch;
   ok('드래그로 아래를 내려다본다', p1 < p0 - 0.3, { before: p0, after: p1 });
+
+  /* ===== 5b. 👁️ 시점 감도 — 기본 10% 상향 + 전체화면에서는 27% 더 빠르게 ===== */
+  const sens = await page.evaluate(() => window.BA.look());
+  ok('👁️ 기본 시점 감도가 10% 올라갔다 (1인칭 0.0069 · 관전 0.0079)',
+    Math.abs(sens.sens - 0.0069) < 0.0002 && Math.abs(sens.spec - 0.0079) < 0.0002 &&
+    Math.abs(sens.pitch - 0.0054) < 0.0002 && Math.abs(sens.specPitch - 0.0062) < 0.0002, sens);
+  const fsSens = await page.evaluate(() => {
+    const app = window.BA.app, c = document.getElementById('gl');
+    const mode0 = app.camMode, yawSave = app.camYaw, pitchSave = app.camPitch;
+    const dragBy = (dx) => {
+      const mk = (type, x, y) => new PointerEvent(type, {
+        pointerId: 91, pointerType: 'touch', isPrimary: true,
+        clientX: x, clientY: y, bubbles: true, cancelable: true
+      });
+      c.dispatchEvent(mk('pointerdown', 195, 420));
+      c.dispatchEvent(mk('pointermove', 195 + dx, 420));
+      c.dispatchEvent(mk('pointerup', 195 + dx, 420));
+    };
+    app.camMode = 'fp';
+    const yaw0 = app.camYaw; dragBy(40);
+    const normal = Math.abs(app.camYaw - yaw0);
+    // 표준 전체화면 상태를 흔들어 같은 드래그를 한 번 더
+    const had = Object.getOwnPropertyDescriptor(document, 'fullscreenElement');
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => document.documentElement });
+    const yaw1 = app.camYaw; dragBy(40);
+    const fs = Math.abs(app.camYaw - yaw1);
+    if (had) Object.defineProperty(document, 'fullscreenElement', had); else delete document.fullscreenElement;
+    app.camMode = mode0; app.camYaw = yawSave; app.camPitch = pitchSave;   // 관전 상태로 되돌린다
+    return { normal: +normal.toFixed(4), fs: +fs.toFixed(4), ratio: +(fs / normal).toFixed(2), boost: window.BA.look().fsBoost, after: window.BA.look().fullscreen };
+  });
+  ok('👁️ 전체화면에서는 같은 드래그에 시점이 25~30% 더 빠르게 돈다 (기본 1.27배)',
+    fsSens.ratio >= 1.24 && fsSens.ratio <= 1.30 && Math.abs(fsSens.boost - 1.27) < 0.01 && fsSens.after === false, fsSens);
   await page.evaluate(() => { const s = window.BA.app.spectate; s.pitch = -1.0; s.yaw = 0; s.x = 0; s.z = 0; });
   await joy(0, -42, 'down');
   const ys = [(await st()).spectate.y];
@@ -1144,15 +1205,21 @@ function ok(name, cond, extra) {
   ok('🛡️ 고급 병사 AI가 병사보다 눈에 띄게 자주 막는다 (20초 난전 · 고급 ≥ 병사 ×1.5)',
     guardCount.elite.blocks >= 3 && guardCount.elite.blocks > guardCount.soldier.blocks * 1.5, guardCount);
 
-  /* ===== 27b. 🛡️ 막기 가능 3병종 AI 막기 횟수 2배 상향 (예전 설정과 순수 시뮬레이션 비교) ===== */
-  const guardDoubling = await page.evaluate(async () => {
+  /* ===== 27b. 🛡️ 막기 빈도 미세 조정 — 일반 병사·매화는 그대로, 고급 병사만 아주 조금 낮추고 매화는 조금 높임 ===== */
+  const guardTuning = await page.evaluate(async () => {
     const { Battle } = await import('/src/battle.js');
     const CFG = await import('/src/config.js');
-    // 2026-11-26 개편 전 설정 (비교 기준)
+    // 2026-11-26 1차 상향 전 기본 설정
     const BASELINE = {
       soldier: { react: 0.18, hold: 0.08, cd: 2.2, reactT: 0.10, dur: 1 },
       elite: { react: 0.55, hold: 0.26, cd: 1.1, reactT: 0.09, dur: 1 },
       blademaster: { react: 0.30, hold: 0.13, cd: 1.7, reactT: 0.08, dur: 1 }
+    };
+    // 2026-11-26 1차 상향(약 2배) 설정 — "너무 자주 막는다"로 줄이기 전 기준
+    const BOOSTED = {
+      soldier: { react: 0.30, hold: 0.14, cd: 0.70, reactT: 0.08, dur: 0.80 },
+      elite: { react: 0.98, hold: 0.70, cd: 0.40, reactT: 0.05, dur: 0.65 },
+      blademaster: { react: 0.55, hold: 0.28, cd: 0.42, reactT: 0.07, dur: 0.80 }
     };
     const current = JSON.parse(JSON.stringify(CFG.GUARD_CHANCE));
     const setTable = (t) => {
@@ -1188,7 +1255,7 @@ function ok(name, cond, extra) {
     };
     const measure = (table, cls) => {
       setTable(table);
-      const runs = [23, 77].map((s) => run(cls, s));
+      const runs = [23, 77, 131].map((s) => run(cls, s));
       return {
         blocks: runs.reduce((a, r) => a + r.blocks, 0) / runs.length,
         acts: runs.reduce((a, r) => a + r.acts, 0) / runs.length
@@ -1196,24 +1263,39 @@ function ok(name, cond, extra) {
     };
     const out = {};
     for (const cls of ['soldier', 'elite', 'blademaster']) {
-      const before = measure(BASELINE, cls);
-      const after = measure(current, cls);
+      const base = measure(BASELINE, cls);
+      const boosted = measure(BOOSTED, cls);
+      const now = measure(current, cls);
       out[cls] = {
-        before: { blocks: +before.blocks.toFixed(1), acts: +before.acts.toFixed(1) },
-        after: { blocks: +after.blocks.toFixed(1), acts: +after.acts.toFixed(1) },
-        blockRatio: +(after.blocks / Math.max(1, before.blocks)).toFixed(2),
-        actRatio: +(after.acts / Math.max(1, before.acts)).toFixed(2)
+        base: { blocks: +base.blocks.toFixed(1), acts: +base.acts.toFixed(1) },
+        boosted: { blocks: +boosted.blocks.toFixed(1), acts: +boosted.acts.toFixed(1) },
+        now: { blocks: +now.blocks.toFixed(1), acts: +now.acts.toFixed(1) },
+        blockVsBoost: +(now.blocks / Math.max(1, boosted.blocks)).toFixed(2),
+        blockVsBase: +(now.blocks / Math.max(1, base.blocks)).toFixed(2),
+        actVsBoost: +(now.acts / Math.max(1, boosted.acts)).toFixed(2),
+        actVsBase: +(now.acts / Math.max(1, base.acts)).toFixed(2)
       };
     }
     setTable(current);
     return out;
   });
   const gdClasses = ['soldier', 'elite', 'blademaster'];
-  ok('🛡️ 막기 가능 3병종 AI가 예전의 약 2배로 자주 막는다 (막아낸 횟수 1.7~2.5배)',
-    gdClasses.every((c) => guardDoubling[c].blockRatio >= 1.7 && guardDoubling[c].blockRatio <= 2.5), guardDoubling);
-  ok('🛡️ 막기를 올리는(발동) 횟수도 2배 수준으로 늘었다',
-    gdClasses.every((c) => guardDoubling[c].actRatio >= 1.8 && guardDoubling[c].actRatio <= 3.2),
-    gdClasses.map((c) => ({ cls: c, actRatio: guardDoubling[c].actRatio })));
+  const nowTable = await page.evaluate(() => window.BA.specs().guardChance);
+  ok('🛡️ 일반 병사 막기 빈도는 그대로 (0.30/0.14 · cd 0.70)',
+    Math.abs(nowTable.soldier.react - 0.30) < 0.005 && Math.abs(nowTable.soldier.hold - 0.14) < 0.005 &&
+    Math.abs(nowTable.soldier.cd - 0.70) < 0.005, nowTable.soldier);
+  ok('🛡️ 고급 병사만 아주 조금 낮췄다 (0.98/0.70·cd 0.40 → 0.84/0.58·cd 0.50)',
+    Math.abs(nowTable.elite.react - 0.84) < 0.005 && Math.abs(nowTable.elite.hold - 0.58) < 0.005 &&
+    Math.abs(nowTable.elite.cd - 0.50) < 0.005 &&
+    nowTable.elite.react < 0.98 && nowTable.elite.hold < 0.70 && nowTable.elite.cd > 0.40, nowTable.elite);
+  ok('🛡️ 매화 검객은 조금 더 자주 막는다 (0.55/0.28·cd 0.42 → 0.66/0.36·cd 0.36)',
+    Math.abs(nowTable.blademaster.react - 0.66) < 0.005 && Math.abs(nowTable.blademaster.hold - 0.36) < 0.005 &&
+    Math.abs(nowTable.blademaster.cd - 0.36) < 0.005 &&
+    nowTable.blademaster.react > 0.55 && nowTable.blademaster.cd < 0.42, nowTable.blademaster);
+  ok('🛡️ 실제 난전에서 고급 병사 막기는 직전보다 늘지 않았고(같은 수준), 매화 검객은 더 자주 막는다',
+    guardTuning.elite.actVsBoost <= 1.05 && guardTuning.elite.blockVsBoost <= 1.30 &&
+    guardTuning.blademaster.blockVsBoost >= 1.05 && guardTuning.blademaster.actVsBoost >= 1.05,
+    gdClasses.map((c) => ({ cls: c, b: guardTuning[c].blockVsBoost, a: guardTuning[c].actVsBoost })));
 
   /* ===== 28. 🛡️ 고급 병사 방패 제거 — 3D 모델·1인칭 모두 검으로 막는다 ===== */
   await page.evaluate(() => window.BA.start({ cls: 'elite', ally: 4, enemy: 4, ae: 2, ee: 2, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
@@ -1500,6 +1582,95 @@ function ok(name, cond, extra) {
     Math.abs(battleFsOn.on.canvas[1] - Math.round(battleFsOn.on.win[1] * battleFsOn.on.dpr)) <= 1 &&
     Math.abs(battleFsOn.on.aspect - battleFsOn.on.winAspect) < 0.02, battleFsOn.on);
   await shot('56-battle-fullscreen.png');
+
+  /* ===== 28a. 🖥️ 전체화면 HUD — 조이스틱·공격/막기/스킬 버튼 여백·크기 (세로·가로) ===== */
+  await page.evaluate(() => window.BA.start({ cls: 'blademaster', ally: 4, enemy: 4, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0 }));
+  await page.waitForFunction(() => window.BA.state().state === 'battle' && window.BA.state().player, { timeout: 30000 });
+  await sleep(600);
+  const fsHud = () => page.evaluate(() => {
+    const box = (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      // 숨어 있는 버튼(병종에 따라 마법·스킬이 꺼진다)도 크기는 계산값으로 잰다
+      return { w: +r.width.toFixed(1), h: +r.height.toFixed(1), cw: parseFloat(cs.width) || 0, ch: parseFloat(cs.height) || 0,
+        l: +r.left.toFixed(1), t: +r.top.toFixed(1), r: +r.right.toFixed(1), b: +r.bottom.toFixed(1) };
+    };
+    const sels = ['#joy', '#actions', '#attackBtn', '#guardBtn', '#skillBtn', '.spell-btn'];
+    return {
+      fs: document.getElementById('app').classList.contains('is-fullscreen'),
+      win: [innerWidth, innerHeight],
+      joy: box('#joy'), actions: box('#actions'),
+      attack: box('#attackBtn'), guard: box('#guardBtn'), skill: box('#skillBtn'), spell: box('.spell-btn'),
+      inside: sels.every((s) => {
+        const el = document.querySelector(s);
+        if (!el) return true;
+        const r = el.getBoundingClientRect();
+        return r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5;
+      })
+    };
+  });
+  // 표준 전체화면 상태를 흉내 낸다 (fullscreenchange → #app.is-fullscreen)
+  const fakeFs = (on) => page.evaluate((on) => {
+    if (on) {
+      window.__hudFsHad = Object.getOwnPropertyDescriptor(document, 'fullscreenElement');
+      Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => document.documentElement });
+    } else if (window.__hudFsHad) {
+      Object.defineProperty(document, 'fullscreenElement', window.__hudFsHad);
+      delete window.__hudFsHad;
+    } else {
+      delete document.fullscreenElement;
+    }
+    document.dispatchEvent(new Event('fullscreenchange'));
+  }, on);
+  const hudGrow = (a, b) => (a && b ? +(b.cw / a.cw).toFixed(3) : 0);
+  const hudLayoutOk = (h) => h.attack && h.guard && h.skill && h.joy && h.actions && h.inside &&
+    h.attack.w > 0 && h.guard.w > 0 && h.skill.w > 0 &&
+    h.joy.r <= h.actions.l + 0.01 && h.joy.l >= 16 && h.win[0] - h.actions.r >= 16 &&
+    h.win[1] - Math.max(h.joy.b, h.actions.b) >= 16;
+
+  const hudP0 = await fsHud();
+  await fakeFs(true);
+  await sleep(180);
+  const hudP1 = await fsHud();
+  ok('🖥️ 전체화면에서 공격·막기·스킬·마법 버튼이 1.08~1.15배로 커진다 (390×844)',
+    hudP1.fs === true &&
+    ['attack', 'guard', 'skill', 'spell'].every((k) => hudGrow(hudP0[k], hudP1[k]) >= 1.08 && hudGrow(hudP0[k], hudP1[k]) <= 1.15),
+    { attack: hudGrow(hudP0.attack, hudP1.attack), guard: hudGrow(hudP0.guard, hudP1.guard), skill: hudGrow(hudP0.skill, hudP1.skill), spell: hudGrow(hudP0.spell, hudP1.spell) });
+  ok('🖥️ 전체화면에서 조이스틱·액션 버튼이 모서리에서 16px 이상 안쪽으로 들고, 겹치지 않으며 화면 안에 있다 (390×844)',
+    hudLayoutOk(hudP1),
+    { joyLeft: hudP1.joy.l, joyBottom: +(hudP1.win[1] - hudP1.joy.b).toFixed(1), actionsRight: +(hudP1.win[0] - hudP1.actions.r).toFixed(1), actionsBottom: +(hudP1.win[1] - hudP1.actions.b).toFixed(1), joyActionsGap: +(hudP1.actions.l - hudP1.joy.r).toFixed(1), inside: hudP1.inside });
+  ok('🖥️ 전체화면이 아니면 버튼이 원래 크기로 돌아온다 (390×844 공격 92px → 전체화면 101px)',
+    Math.abs(hudP0.attack.cw - 92) < 0.6 && Math.abs(hudP1.attack.cw - 101) < 0.6 && Math.abs(hudP0.guard.cw - 60) < 0.6,
+    { normal: hudP0.attack, fs: hudP1.attack, guard: hudP0.guard });
+  await shot('57-battle-fullscreen-hud.png');
+
+  // 가로(844×390)에서도 키우되 화면을 넘거나 겹치지 않는다
+  await fakeFs(false);
+  await sleep(120);
+  await page.setViewport({ width: 844, height: 390, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
+  await sleep(700);
+  const hudL0 = await fsHud();
+  await fakeFs(true);
+  await sleep(200);
+  const hudL1 = await fsHud();
+  ok('🖥️ 가로 전체화면에서도 공격·막기·스킬·마법 버튼이 1.08~1.15배로 커진다 (844×390)',
+    hudL1.fs === true && hudL1.win[0] > hudL1.win[1] &&
+    ['attack', 'guard', 'skill', 'spell'].every((k) => hudGrow(hudL0[k], hudL1[k]) >= 1.08 && hudGrow(hudL0[k], hudL1[k]) <= 1.15),
+    { attack: hudGrow(hudL0.attack, hudL1.attack), guard: hudGrow(hudL0.guard, hudL1.guard), skill: hudGrow(hudL0.skill, hudL1.skill), spell: hudGrow(hudL0.spell, hudL1.spell) });
+  ok('🖥️ 가로 전체화면에서도 조이스틱·액션 버튼이 화면 안에서 겹치지 않는다 (844×390)',
+    hudLayoutOk(hudL1),
+    { joy: hudL1.joy, actions: hudL1.actions, gap: +(hudL1.actions.l - hudL1.joy.r).toFixed(1), inside: hudL1.inside, win: hudL1.win });
+  await shot('58-battle-fullscreen-hud-landscape.png');
+  await fakeFs(false);
+  await sleep(120);
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1, isMobile: true, hasTouch: true });
+  await sleep(600);
+  const hudBack = await fsHud();
+  ok('🖥️ 전체화면을 끄면 HUD가 원래 배치로 돌아온다',
+    hudBack.fs === false && hudBack.inside && hudBack.attack.w === hudP0.attack.w &&
+    Math.abs(hudBack.joy.l - 14) <= 2, { fs: hudBack.fs, attack: hudBack.attack, joy: hudBack.joy });
 
   /* ===== 29b. 🎬 AI끼리(관전) 싸우면 아군·적군 승률 50:50 — 편향 점검 ===== */
   // ① 관전 중인 플레이어(무적 유령)가 아군 전멸 판정을 막지 않는지

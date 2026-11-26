@@ -93,6 +93,12 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   box-shadow: 0 14px 34px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.045);
   padding: 9px 11px 10px; margin-bottom: 8px;
 }
+/* 병력이 0명인 채로 '전장으로'를 누르면 편성판을 한 번 깜빡여 시선을 준다 */
+@keyframes nudgeGlow {
+  0%, 100% { border-color: rgba(255,255,255,.07); box-shadow: 0 14px 34px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.045); }
+  35% { border-color: rgba(255,124,92,.8); box-shadow: 0 0 0 2px rgba(255,124,92,.32), 0 14px 34px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.045); }
+}
+.panel.is-nudge { animation: nudgeGlow .9s ease-out 1; }
 .panel-title { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
 .panel-title span { font-family: var(--serif); font-size: 13px; letter-spacing: .18em; color: #f4e5c6; }
 .panel-title em { font-style: normal; font-size: 9.5px; color: var(--muted); letter-spacing: .03em; }
@@ -548,6 +554,39 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   .home-tools { gap: 5px; }
   .top-right { flex: 0 0 auto; gap: 5px; }
   .strength { width: 150px; flex: 0 1 150px; min-width: 92px; }
+}
+
+/* =========================================================================
+   🖥️ 전체화면 HUD — 화면이 커지면 엄지 손가락이 닿기 좋게
+   · 조이스틱·액션 버튼을 화면 모서리에서 살짝 들이고
+   · 공격·막기·스킬·마법 버튼을 약 1.1배 키운다 (세로·가로 모두)
+   ========================================================================= */
+#app.is-fullscreen .joy {
+  left: calc(24px + env(safe-area-inset-left));
+  bottom: calc(24px + env(safe-area-inset-bottom));
+}
+#app.is-fullscreen .actions {
+  right: calc(22px + env(safe-area-inset-right));
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  gap: 11px;
+}
+#app.is-fullscreen .attack-btn { width: 101px; height: 101px; }   /* 92 × 1.10 */
+#app.is-fullscreen .skill-btn { width: 66px; height: 66px; }      /* 60 × 1.10 */
+#app.is-fullscreen .spell-btn { width: 57px; height: 57px; }      /* 52 × 1.10 */
+#app.is-fullscreen .ab-icon { font-size: 26px; }
+#app.is-fullscreen .ab-label { font-size: 10px; }
+#app.is-fullscreen .sk-icon { font-size: 22px; }
+#app.is-fullscreen .sk-label { font-size: 8px; }
+#app.is-fullscreen .sp-icon { font-size: 19px; }
+
+/* 가로(844×390) — 높이가 낮으므로 한 단계 작게 키워 화면 밖으로 나가지 않게 */
+@media (orientation: landscape) and (max-height: 520px) {
+  #app.is-fullscreen .joy { width: 104px; height: 104px; }
+  #app.is-fullscreen .actions { gap: 8px; }
+  #app.is-fullscreen .attack-btn { width: 86px; height: 86px; }    /* 78 × 1.10 */
+  #app.is-fullscreen .skill-btn { width: 66px; height: 66px; }     /* 60 × 1.10 (막기·스킬 공통) */
+  #app.is-fullscreen .spell-btn { width: 50px; height: 50px; }     /* 46 × 1.09 */
+  #app.is-fullscreen .ab-icon { font-size: 22px; }
 }
 
 /* 아주 좁은 화면(360px 이하) — 전체화면 버튼과 성장 뱃지가 함께 들어가게 */

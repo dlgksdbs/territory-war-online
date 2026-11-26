@@ -2,7 +2,7 @@
   "name": "territory-war-online",
   "version": "3.3.0",
   "private": true,
-  "description": "한 손으로 즐기는 실시간(RTS) 영토 확장 전략 게임 · 1인칭 3D(Three.js) 칼질 액션 · 대규모 난전 · 2~5인 친구 국가전쟁(성·성벽·외교·파병) · Node.js + WebSocket 멀티플레이",
+  "description": "한 손으로 즐기는 1인칭 3D(Three.js) 칼질 액션 · 대규모 난전 · 버튼 크기·위치 커스텀 HUD · Node.js + WebSocket",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,7 +11,7 @@
     "test:friends": "node test/friends.js",
     "test:arena": "node test/mobile-arena.js",
     "test:arena3d": "node test/mobile-arena3d.js",
-    "test:mobile-friends": "node test/mobile-friends.js"
+    "test:hud": "node test/mobile-hud-custom.js"
   },
   "engines": {
     "node": ">=18"

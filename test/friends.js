@@ -290,9 +290,10 @@ async function networkTests() {
 
   const page = await get('/friends/');
   ok('GET /friends/ 200 · 친구와 플레이 페이지', page.status === 200 && page.body.indexOf('친구와 플레이') >= 0);
+  /* 홈(/)에는 국가전쟁 입구를 두지 않는다 — 배틀 아레나 홈만 남는다 */
   const home = await get('/');
-  ok('홈에 「친구와 플레이」 섹션', home.status === 200 && /id="friendsPanel"/.test(home.body) &&
-    /2~5인 실시간 국가전쟁/.test(home.body));
+  ok('홈에는 「친구와 플레이」 섹션이 없다 (배틀 아레나 홈만)', home.status === 200 &&
+    !/id="friendsPanel"/.test(home.body) && !/2~5인 실시간 국가전쟁/.test(home.body));
 
   const clients = [];
   for (let i = 0; i < 5; i++) clients.push(await connect(port));

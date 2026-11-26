@@ -209,41 +209,12 @@
             <button data-count="10000">10,000</button>
           </div>
         </div>
-
-        <div class="panel friends-panel" id="friendsPanel">
-          <div class="panel-title"><span>🤝 친구와 플레이</span><em>2~5인 실시간 국가전쟁</em></div>
-          <p class="fp-desc">성과 성벽을 세우고 편성치 안에서 병력을 나눠 겨루는 국가전쟁. 방을 만들거나 친구의 방 코드로 입장하세요.</p>
-          <button id="fpResume" class="fp-resume hidden" type="button">🔄 진행 중인 방으로 돌아가기</button>
-          <div id="fpSetup" class="fp-setup">
-            <input id="fpName" class="fp-input" type="text" maxlength="12" placeholder="지휘관 이름" autocomplete="nickname" />
-            <div class="fp-row">
-              <div class="fp-cap" id="fpCap">
-                <span>인원</span>
-                <button type="button" data-cap="2">2</button>
-                <button type="button" data-cap="3">3</button>
-                <button type="button" data-cap="4">4</button>
-                <button type="button" data-cap="5" class="on">5</button>
-              </div>
-              <label class="fp-ai"><input type="checkbox" id="fpAi" checked /><span>빈 자리 AI</span></label>
-            </div>
-            <button id="fpCreate" class="fp-btn primary" type="button">방 만들기</button>
-            <div class="fp-join">
-              <input id="fpCode" class="fp-input code" type="text" maxlength="5" placeholder="방 코드" autocapitalize="characters" autocomplete="off" spellcheck="false" />
-              <button id="fpJoin" class="fp-btn" type="button">입장</button>
-            </div>
-          </div>
-          <div id="fpWait" class="fp-wait hidden">
-            <div class="fp-code-row"><span>방 코드</span><b id="fpWaitCode">----</b><button id="fpCopy" type="button">복사</button></div>
-            <div id="fpPlayers" class="fp-players"></div>
-            <button id="fpStart" class="fp-btn primary" type="button">게임 시작</button>
-            <p id="fpHint" class="fp-hint"></p>
-            <button id="fpLeave" class="fp-btn ghost" type="button">나가기</button>
-          </div>
-          <p id="fpStatus" class="fp-hint"></p>
-        </div>
       </div>
 
       <footer class="home-foot">
+        <button id="hudCfgBtn" class="hud-cfg-btn" type="button" aria-haspopup="dialog" aria-controls="hudEditor">
+          <span aria-hidden="true">🎮</span> 버튼 크기·위치 설정 <em>전투 HUD 커스텀</em>
+        </button>
         <button id="startBtn" class="start-btn">
           <span class="sb-icon">⚔</span>
           <span class="sb-text"><strong>전장으로</strong><em>BATTLE START</em></span>
@@ -368,6 +339,60 @@
 
     <div class="hit-vignette" id="hitVignette"></div>
   </section>
+
+  <!-- 🎮 전투 HUD 버튼 크기·위치 편집기 — 실제 전장 화면 비율 그대로 미리보며 배치 -->
+  <div id="hudEditor" class="hud-editor" role="dialog" aria-modal="true" aria-labelledby="heTitle" aria-hidden="true">
+    <div class="he-head">
+      <h2 id="heTitle">🎮 버튼 크기·위치</h2>
+      <p>버튼을 끌어서 옮기고, 슬라이더로 크기를 맞춰</p>
+      <button class="he-close" id="heClose" type="button" aria-label="닫기">✕</button>
+    </div>
+    <div class="he-stage-wrap" id="heStageWrap">
+      <div class="he-frame" id="heFrame">
+        <div class="he-stage" id="heStage">
+          <div class="he-field"><span class="he-hint">전장 화면 미리보기</span></div>
+          <div class="hud-bottom he-hud">
+            <div class="joy" data-slot="joy" id="heJoy"><div class="joy-ring"></div><div class="joy-knob"></div></div>
+            <div class="actions he-actions" id="heActions">
+              <div class="spell-wheel" data-slot="spells" id="heSpells">
+                <button class="spell-btn" type="button" tabindex="-1"><span class="sp-icon">🔥</span><span class="sp-name">화염구</span></button>
+                <button class="spell-btn" type="button" tabindex="-1"><span class="sp-icon">⚡</span><span class="sp-name">번개</span></button>
+                <button class="spell-btn" type="button" tabindex="-1"><span class="sp-icon">❄️</span><span class="sp-name">빙결</span></button>
+              </div>
+              <button class="skill-btn is-on" data-slot="skill" id="heSkill" type="button" tabindex="-1">
+                <span class="sk-icon">🌸</span><span class="sk-label">매화 일섬</span>
+              </button>
+              <button class="skill-btn guard-btn is-on" data-slot="guard" id="heGuard" type="button" tabindex="-1">
+                <span class="sk-icon">🗡️</span><span class="sk-label">검 막기</span>
+              </button>
+              <button class="attack-btn" data-slot="attack" id="heAttack" type="button" tabindex="-1">
+                <span class="ab-icon">⚔️</span><span class="ab-label">베기</span><span class="ab-ring"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="he-panel">
+      <div class="he-chips" id="heChips" role="group" aria-label="편집할 버튼">
+        <button type="button" data-slot="joy" class="is-on">🕹️ 조이스틱<em>100%</em></button>
+        <button type="button" data-slot="attack">⚔️ 공격<em>100%</em></button>
+        <button type="button" data-slot="guard">🛡️ 막기<em>100%</em></button>
+        <button type="button" data-slot="skill">🌸 스킬<em>100%</em></button>
+        <button type="button" data-slot="spells">🔥 마법<em>100%</em></button>
+      </div>
+      <label class="he-size" for="heSize">
+        <span>크기 <b id="heSizeVal">100%</b></span>
+        <input id="heSize" type="range" min="70" max="160" step="1" value="100" />
+      </label>
+      <label class="he-all"><input type="checkbox" id="heAll" /><span>모든 버튼 함께 조절</span></label>
+      <div class="he-btns">
+        <button type="button" id="heReset" class="he-reset">기본값 초기화</button>
+        <button type="button" id="heCancel">닫기</button>
+        <button type="button" id="heSave" class="he-save">저장</button>
+      </div>
+    </div>
+  </div>
 </div>
 <script type="module" src="/src/main.js"></script>
 </body>

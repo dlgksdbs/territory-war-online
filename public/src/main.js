@@ -13,6 +13,7 @@ import { FX } from './fx.js';
 import { ViewModel } from './viewmodel.js';
 import { Sfx } from './sfx.js';
 import { createFullscreenToggle, isFullscreen, fullscreenSupported } from './fullscreen.js';
+import { initHudLayout } from './hud-custom.js';
 import { loadProgress, saveProgress, rosterOf, rosterTotal, growthMult, growthLabel, playerSpec, powerIndex } from './config.js';
 import { clamp, lerp, damp, angLerp, angDiff, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 
@@ -75,6 +76,8 @@ class App {
     this._raf = null;
     this._hudCache = {};
     this._bindUI();
+    /* 🎮 전투 HUD 버튼 크기·위치 커스텀 — 저장된 배치를 지금 바로 적용한다 */
+    this.hudLayout = initHudLayout(this);
     this._readUrl();
     this._showHome();
   }
@@ -123,6 +126,8 @@ class App {
     this.renderer.setSize(w, h, false);
     this.cam.aspect = w / h;
     this.cam.updateProjectionMatrix();
+    /* 화면이 커지거나 돌아가면 커스텀 버튼 배치도 새 화면 안으로 다시 맞춘다 */
+    if (this.hudLayout) this.hudLayout.apply();
   }
 
   /* ------------------------------------------------------------------ 화면 */
@@ -414,7 +419,8 @@ class App {
   _bindJoystick() {
     const joy = $('#joy'), knob = $('#joyKnob');
     let id = null, cx = 0, cy = 0;
-    const R = 42;
+    /* 손잡이가 움직이는 반경 — 조이스틱이 커스텀 배율로 커지면 같이 넓어진다 */
+    let R = 42;
     const move = (e) => {
       const dx = e.clientX - cx, dy = e.clientY - cy;
       const len = Math.hypot(dx, dy);
@@ -431,6 +437,7 @@ class App {
       id = e.pointerId;
       const rect = joy.getBoundingClientRect();
       cx = rect.left + rect.width / 2; cy = rect.top + rect.height / 2;
+      R = Math.max(20, rect.width * 0.375);
       try { joy.setPointerCapture(id); } catch (err) { /* 합성 이벤트 */ }
       move(e);
     });
@@ -520,6 +527,8 @@ class App {
     this.initGL();
     $('#home').classList.remove('is-active');
     $('#battle').classList.add('is-active');
+    /* 커스텀 버튼 배치 — 전장이 보이는 지금 실제 크기로 한 번 더 맞춘다 */
+    if (this.hudLayout) this.hudLayout.apply();
     $('#result').classList.remove('is-on');
     $('#menuSheet').classList.remove('is-on');
     this.state = 'battle';
@@ -1286,8 +1295,8 @@ class App {
       const hit = !p.dead && this.camMode !== 'spectate' && !this.paused && !!b.aimTarget();
       if (this._retHit !== hit) { this._retHit = hit; ret.classList.toggle('is-hit', hit); }
     }
-    // 쿨타임
-    $$('.spell-btn').forEach((btn) => {
+    // 쿨타임 — 편집기 미리보기의 마법 버튼은 제외하고 실제 전장 HUD 만
+    $$('#battle .spell-btn').forEach((btn) => {
       const key = btn.dataset.spell;
       const cd = p.cd[key] || 0;
       const max = SPELLS[key].cooldown;
@@ -1463,6 +1472,7 @@ window.BA = {
   skill() { app.useSkill(); },
   attack() { app.input.attack = true; },
   setPlayerClass(cls) { app.cfg.playerClass = cls; app.vm.setClass(cls); app._syncHome(); },
+  get hudLayout() { return app.hudLayout; },
   fullscreen: {
     toggle: () => (app.fs ? app.fs.toggle() : Promise.resolve(false)),
     sync: () => (app.fs ? app.fs.sync() : false),
@@ -1657,8 +1667,5 @@ window.BA = {
 window.addEventListener('error', (e) => {
   console.error('PAGE_ERROR', e.message, e.filename, e.lineno);
 });
-
-/* 홈 아래 「🤝 친구와 플레이」 패널 (2~5인 국가전쟁 로비) */
-import('./friends-home.js').then((m) => m.initFriendsHome()).catch((err) => console.error('friends-home', err));
 
 export { app };

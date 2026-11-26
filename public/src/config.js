@@ -57,9 +57,11 @@ export const GUARD_CHANCE = {
 };
 
 /* 유닛별 증원(스폰) 간격 — 죽은 자리가 나면 이 간격으로 한두 명씩 들어온다.
-   2026-11-26: 0.07~0.14초는 초당 15~30명이 우르르 쏟아지는 느낌이라 0.35~0.55초로 완화 */
+   2026-11-26: 0.07~0.14초는 초당 15~30명이 우르르 쏟아지는 느낌이라 0.35~0.55초로 완화.
+   2026-11-26 저녁: "스폰되는 속도 올린 거야? 이걸로 해줘" — 동시 배치를 160명 → 0.6배(96명)로
+   되돌리는 대신 일반 병사 증원 간격을 0.12초(초당 약 8명)로 당겨, 예비 병력이 끊임없이 밀려오게 한다. */
 export const SPAWN_INTERVAL = {
-  soldier: 0.50,
+  soldier: 0.12,
   elite: 0.38,
   blademaster: 0.40,
   berserker: 0.42,
@@ -67,7 +69,7 @@ export const SPAWN_INTERVAL = {
   wizard: 0.46
 };
 /* 전장에 동시에 서 있는 비율 (나머지는 예비 — 죽은 자리가 날 때마다 순차 투입) */
-export const FIELD_RATIO = { soldier: 1.0, elite: 0.55, knight: 0.75, wizard: 0.75, blademaster: 0.75, berserker: 0.6 };
+export const FIELD_RATIO = { soldier: 0.6, elite: 0.55, knight: 0.75, wizard: 0.75, blademaster: 0.75, berserker: 0.6 };
 /* 전장 동시 배치 상한 (광전사는 초당 연타가 많아 화면·연산 부담을 고려해 45명) */
 export const FIELD_MAX = { soldier: 160, elite: 400, knight: 60, wizard: 60, blademaster: 60, berserker: 45 };
 

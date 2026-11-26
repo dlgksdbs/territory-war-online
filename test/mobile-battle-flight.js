@@ -125,8 +125,9 @@ function ok(name, cond, extra) {
     Object.keys(defaults.cfg).filter((k) => /^(ally|enemy)/.test(k)).every((k) => defaults.cfg[k] === 0) &&
     /총 0명/.test(defaults.total),
     { cfg: defaults.cfg, total: defaults.total, rows: defaults.rows });
-  ok('🧮 증원 간격이 0.35~0.55초로 완화됐다 (예전 0.07~0.14초)',
-    Object.values(defaults.spawn).every((v) => v >= 0.35 && v <= 0.55) && defaults.spawn.soldier >= 0.4,
+  ok('🧮 일반 병사 증원은 0.12초(초당 약 8명) · 고급·특수 유닛은 0.38~0.46초',
+    defaults.spawn.soldier === 0.12 &&
+    ['elite', 'blademaster', 'berserker', 'knight', 'wizard'].every((k) => defaults.spawn[k] >= 0.35 && defaults.spawn[k] <= 0.55),
     defaults.spawn);
 
   /* ===== 0-a-2. 🧮 0명 상태에서 '전장으로' — 빈 전장에 들어가지 않고 편성부터 안내 ===== */
@@ -197,22 +198,37 @@ function ok(name, cond, extra) {
     { fire: specs.spells.fire.damage, lightning: specs.spells.lightning.damage, ice: specs.spells.ice.damage });
   ok('이속: 병사·기사 상향', C.soldier.speed > 3.9 && C.knight.speed > 3.1);
 
-  /* ===== 0a. 일반 병사 동시 160명 (FIELD_RATIO.soldier = 1.0) ===== */
+  /* ===== 0a. 일반 병사 동시 96명(비율 0.6) + 빠른 증원(0.12초) ===== */
   const fieldRatio = await page.evaluate(async () => {
-    const { FIELD_RATIO, FIELD_MAX } = await import('/src/config.js');
+    const { FIELD_RATIO, FIELD_MAX, SPAWN_INTERVAL } = await import('/src/config.js');
+    // start() 는 동기 — 전투가 막 만들어진 순간의 상한·예비를 그대로 읽는다
     window.BA.start({ cls: 'soldier', ally: 160, enemy: 0, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0, az: 0, ez: 0 });
-    await new Promise((r) => setTimeout(r, 1800));
     const b = window.BA.battle;
-    const full = { cap: b.fieldCap.ally.soldier, reserve: b.remain.ally.soldier };
+    const full = { cap: b.fieldCap.ally.soldier, reserve: b.remain.ally.soldier, alive: b.countAlive('ally') };
+    // 24명이 쓰러지면 0.7초 동안 예비에서 몇 명이 밀려 들어오는지 (병사 증원 0.12초 × 2명)
+    let killed = 0;
+    for (const u of b.units) {
+      if (killed >= 24) break;
+      if (u.team === 'ally' && !u.isPlayer && !u.dead) { u.dead = true; u.hp = 0; killed++; }
+    }
+    window.BA.debug.advance(0.7);
+    const refill = { alive: b.countAlive('ally'), reserve: b.remain.ally.soldier };
     window.BA.start({ cls: 'soldier', ally: 300, enemy: 0, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0, az: 0, ez: 0 });
-    await new Promise((r) => setTimeout(r, 1800));
     const b2 = window.BA.battle;
-    return { ratio: FIELD_RATIO.soldier, max: FIELD_MAX.soldier, full, over: { cap: b2.fieldCap.ally.soldier, reserve: b2.remain.ally.soldier } };
+    return {
+      ratio: FIELD_RATIO.soldier, max: FIELD_MAX.soldier, interval: SPAWN_INTERVAL.soldier,
+      full, killed, refill, over: { cap: b2.fieldCap.ally.soldier, reserve: b2.remain.ally.soldier }
+    };
   });
-  ok('⚔️ 일반 병사 160명이 한 번에 전장에 찬다 (비율 1.0 · 예비 0)',
-    fieldRatio.ratio === 1 && fieldRatio.max === 160 && fieldRatio.full.cap === 160 && fieldRatio.full.reserve === 0,
+  ok('⚔️ 일반 병사는 전장 96명(비율 0.6)이 서고 나머지 64명은 예비',
+    fieldRatio.ratio === 0.6 && fieldRatio.max === 160 && fieldRatio.full.cap === 96 && fieldRatio.full.reserve === 64,
     fieldRatio.full);
-  ok('⚔️ 160명을 넘겨 넣으면 전장 160 + 나머지는 예비',
+  ok('⚔️ 병사 증원 간격 0.12초 — 24명이 쓰러지면 0.7초에 8명 이상이 다시 들어온다',
+    fieldRatio.interval === 0.12 && fieldRatio.killed === 24 &&
+    fieldRatio.refill.alive > fieldRatio.full.alive - 24 && fieldRatio.full.alive - fieldRatio.refill.alive >= 8 &&
+    fieldRatio.refill.reserve < 64,
+    { interval: fieldRatio.interval, killed: fieldRatio.killed, refill: fieldRatio.refill });
+  ok('⚔️ 상한(160)을 넘겨 넣으면 전장 160 + 나머지는 예비',
     fieldRatio.over.cap === 160 && fieldRatio.over.reserve === 140, fieldRatio.over);
 
   /* ===== 0b. 밝기 · 광택 ===== */
@@ -821,7 +837,7 @@ function ok(name, cond, extra) {
       const r = b.getBoundingClientRect();
       const lbl = b.querySelector('.sk-label');
       // 마법사는 마법 3버튼이 같이 떠 있다 — 막기 버튼과 겹치지 않는지 본다
-      const spells = Array.from(document.querySelectorAll('.spell-btn'))
+      const spells = Array.from(document.querySelectorAll('#battle .spell-btn'))
         .filter((s) => getComputedStyle(s).display !== 'none')
         .map((s) => { const q = s.getBoundingClientRect(); return { l: q.left, t: q.top, r: q.right, b: q.bottom }; });
       const overlaps = spells.filter((q) => !(q.r < r.left || q.l > r.right || q.b < r.top || q.t > r.bottom));
@@ -895,7 +911,7 @@ function ok(name, cond, extra) {
     const g = document.getElementById('guardBtn');
     const gr = g.getBoundingClientRect();
     const gOn = g.classList.contains('is-on') && getComputedStyle(g).display !== 'none';
-    const spells = Array.from(document.querySelectorAll('.spell-btn'))
+    const spells = Array.from(document.querySelectorAll('#battle .spell-btn'))
       .filter((s) => getComputedStyle(s).display !== 'none')
       .map((s) => { const q = s.getBoundingClientRect(); return { l: q.left, t: q.top, r: q.right, b: q.bottom, inside: q.left >= 0 && q.right <= innerWidth + 0.5 && q.bottom <= innerHeight + 0.5 }; });
     const b = window.BA.battle, p = b.player;

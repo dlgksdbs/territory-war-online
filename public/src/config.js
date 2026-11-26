@@ -67,7 +67,7 @@ export const SPAWN_INTERVAL = {
   wizard: 0.46
 };
 /* 전장에 동시에 서 있는 비율 (나머지는 예비 — 죽은 자리가 날 때마다 순차 투입) */
-export const FIELD_RATIO = { soldier: 0.6, elite: 0.55, knight: 0.75, wizard: 0.75, blademaster: 0.75, berserker: 0.6 };
+export const FIELD_RATIO = { soldier: 1.0, elite: 0.55, knight: 0.75, wizard: 0.75, blademaster: 0.75, berserker: 0.6 };
 /* 전장 동시 배치 상한 (광전사는 초당 연타가 많아 화면·연산 부담을 고려해 45명) */
 export const FIELD_MAX = { soldier: 160, elite: 400, knight: 60, wizard: 60, blademaster: 60, berserker: 45 };
 

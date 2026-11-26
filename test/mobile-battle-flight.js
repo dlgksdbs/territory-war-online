@@ -197,6 +197,24 @@ function ok(name, cond, extra) {
     { fire: specs.spells.fire.damage, lightning: specs.spells.lightning.damage, ice: specs.spells.ice.damage });
   ok('이속: 병사·기사 상향', C.soldier.speed > 3.9 && C.knight.speed > 3.1);
 
+  /* ===== 0a. 일반 병사 동시 160명 (FIELD_RATIO.soldier = 1.0) ===== */
+  const fieldRatio = await page.evaluate(async () => {
+    const { FIELD_RATIO, FIELD_MAX } = await import('/src/config.js');
+    window.BA.start({ cls: 'soldier', ally: 160, enemy: 0, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0, az: 0, ez: 0 });
+    await new Promise((r) => setTimeout(r, 1800));
+    const b = window.BA.battle;
+    const full = { cap: b.fieldCap.ally.soldier, reserve: b.remain.ally.soldier };
+    window.BA.start({ cls: 'soldier', ally: 300, enemy: 0, ae: 0, ee: 0, ak: 0, ek: 0, aw: 0, ew: 0, ab: 0, eb: 0, az: 0, ez: 0 });
+    await new Promise((r) => setTimeout(r, 1800));
+    const b2 = window.BA.battle;
+    return { ratio: FIELD_RATIO.soldier, max: FIELD_MAX.soldier, full, over: { cap: b2.fieldCap.ally.soldier, reserve: b2.remain.ally.soldier } };
+  });
+  ok('⚔️ 일반 병사 160명이 한 번에 전장에 찬다 (비율 1.0 · 예비 0)',
+    fieldRatio.ratio === 1 && fieldRatio.max === 160 && fieldRatio.full.cap === 160 && fieldRatio.full.reserve === 0,
+    fieldRatio.full);
+  ok('⚔️ 160명을 넘겨 넣으면 전장 160 + 나머지는 예비',
+    fieldRatio.over.cap === 160 && fieldRatio.over.reserve === 140, fieldRatio.over);
+
   /* ===== 0b. 밝기 · 광택 ===== */
   const look = await page.evaluate(() => {
     const app = window.BA.app;

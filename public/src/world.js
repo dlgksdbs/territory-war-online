@@ -8,16 +8,18 @@ import { mulberry32, clamp, lerp, fbm, noise2, TAU } from './util.js';
 
 const SUN_DIR = new THREE.Vector3(-0.62, 0.72, 0.36).normalize();   // 해를 조금 더 높여 그림자를 줄이고 전장을 밝게
 
-function terrainHeight(x, z) {
+export function terrainHeight(x, z) {
   const r = Math.hypot(x, z);
   // 전투 공간(반경 46m)은 평평하게, 바깥은 완만한 둔덕과 언덕
   const flat = 1 - clamp((r - 42) / 26, 0, 1);
   const rim = Math.max(0, (r - 42)) * 0.055;
   const hills = fbm(x * 0.013 + 11, z * 0.013 - 7, 4) * 3.4;
   /* 전투장(반경 ~28m)은 거의 평평하게 — 병사 발·피 웅덩이·접지 그림자가 땅에 파묻히지 않게 */
-  const bumpAmp = 0.10 + 0.90 * clamp((r - 10) / 26, 0, 1);
+  const bumpAmp = 0.55 + 0.45 * clamp((r - 10) / 26, 0, 1);
   const bumps = (fbm(x * 0.11, z * 0.11, 3) - 0.5) * 0.34 * bumpAmp;
-  return (hills + rim) * (1 - flat) + bumps * (0.35 + 0.65 * (1 - flat)) - 0.02;
+  /* 완만한 기복 — 병사가 지면을 따라 오르내리는 것이 보이도록 (전투 판정은 수평 거리라 영향 없음) */
+  const roll = (fbm(x * 0.036 + 3.1, z * 0.036 - 2.4, 3) - 0.5) * 1.5 * (1 - clamp((r - 28) / 22, 0, 1));
+  return (hills + rim) * (1 - flat) + bumps * (0.35 + 0.65 * (1 - flat)) + roll - 0.02;
 }
 
 /* 하늘 그라디언트 셰이더 */
@@ -55,6 +57,14 @@ void main() {
 export function buildWorld(scene, renderer) {
   const rng = mulberry32(2024);
   const out = { sun: null, key: null, torches: [], banners: [], flames: [], update: null, terrain: null };
+  /* 🪨 지형물 충돌 — 플레이어와 AI 가 바위·기둥·횃불을 뚫고 지나가지 못하게
+     {x, z, r} 원형 콜라이더를 모아 둔다 (main.js 가 전투에 넘긴다) */
+  const colliders = [];
+  const addCollider = (x, z, r) => {
+    if (!(r > 0.05)) return;
+    colliders.push({ x, z, r });
+  };
+  out.colliders = colliders;
 
   /* ---------------------------------------------------------------- 하늘 */
   const skyMat = new THREE.ShaderMaterial({
@@ -556,6 +566,7 @@ void main(){
       dummy.scale.set(1, h / 6.4, 1);
       dummy.updateMatrix();
       shafts.setMatrixAt(i, dummy.matrix);
+      addCollider(p.x, p.z, 0.95);   // 서 있는 기둥·부러진 기둥 모두 통과 금지
       dummy.position.set(p.x, gy + 0.2, p.z);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
@@ -579,11 +590,16 @@ void main(){
     for (let i = 0; i < 12; i++) {
       const a = rng() * TAU, r = 30 + rng() * 22;
       const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      const yawF = rng() * TAU;
+      const len = 2 + rng() * 3;
       dummy.position.set(x, terrainHeight(x, z) + 0.6, z);
-      dummy.rotation.set(0, rng() * TAU, Math.PI / 2);
-      dummy.scale.set(1, 2 + rng() * 3, 1);
+      dummy.rotation.set(0, yawF, Math.PI / 2);
+      dummy.scale.set(1, len, 1);
       dummy.updateMatrix();
       segs.setMatrixAt(i, dummy.matrix);
+      /* 누운 기둥 조각 — 축을 따라 세 점으로 근사한다 */
+      const ax = Math.cos(yawF), az = -Math.sin(yawF);
+      for (const t of [-0.34, 0, 0.34]) addCollider(x + ax * len * t, z + az * len * t, 0.62);
     }
     segs.instanceMatrix.needsUpdate = true;
     segs.castShadow = true; segs.receiveShadow = true;
@@ -638,6 +654,8 @@ void main(){
     sc.set(s * (0.8 + rng() * 0.7), s * (0.55 + rng() * 0.5), s * (0.8 + rng() * 0.7));
     m4.compose(pv, q, sc);
     rocks.setMatrixAt(i, m4);
+    /* 무릎보다 큰 돌은 장애물 — 병사가 뚫고 지나가지 못한다 */
+    if (s > 0.30) addCollider(x, z, s * 0.72);
   }
   rocks.instanceMatrix.needsUpdate = true;
   scene.add(rocks);
@@ -735,6 +753,7 @@ void main(){
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       poles.setMatrixAt(i, dummy.matrix);
+      addCollider(x, z, 0.28);   // 깃대
       dummy.position.set(x, gy + 6.8, z);
       dummy.updateMatrix();
       finials.setMatrixAt(i, dummy.matrix);
@@ -775,6 +794,7 @@ void main(){
     torchPosts.setMatrixAt(i, _td.matrix);
     _td.position.set(t.x, gy + 1.9, t.z); _td.updateMatrix();
     torchBowls.setMatrixAt(i, _td.matrix);
+    addCollider(t.x, t.z, 0.34);   // 🔥 횃불 기둥도 통과 금지
 
     for (let k = 0; k < 2; k++) {
       const f = new THREE.Sprite(new THREE.SpriteMaterial({

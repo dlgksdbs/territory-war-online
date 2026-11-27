@@ -8,7 +8,7 @@ import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_ELITES, MAX_SPEC
 import { buildWorld } from './world.js';
 import { UnitRenderer } from './rig.js';
 import { Battle } from './battle.js';
-import { computePose, attackDuration } from './pose.js';
+import { computePose, attackDuration, stepWalk } from './pose.js';
 import { FX } from './fx.js';
 import { ViewModel } from './viewmodel.js';
 import { Sfx } from './sfx.js';
@@ -16,6 +16,8 @@ import { createFullscreenToggle, isFullscreen, fullscreenSupported } from './ful
 import { initHudLayout } from './hud-custom.js';
 import { loadProgress, saveProgress, rosterOf, rosterTotal, growthMult, growthLabel, playerSpec, powerIndex } from './config.js';
 import { PvpClient } from './pvp.js';
+import { buildOctagon } from './octagon.js';
+import { groundY, clampOctagon, resolveObstacles, blockedAt, OCTAGON } from './ground.js';
 import { clamp, lerp, damp, angLerp, angDiff, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -117,6 +119,8 @@ class App {
     this.cam = cam;
     this.world = buildWorld(scene, r);
     this.fx = new FX(scene, cam);
+    /* 지면 높이 — 이펙트(피·불티)도 언덕을 따라간다 */
+    this.fx.ground = (x, z) => groundY(x, z, !!(this.battle && this.battle.pvp));
     this.vm = new ViewModel(r, scene, cam);
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -337,6 +341,8 @@ class App {
       const press = (e) => {
         if (e.cancelable) e.preventDefault();
         pid = e.pointerId;
+        /* ⚔️ PVP — 최대 유지·쿨타임이 있는 검 막기 */
+        if (this.battle && this.battle.pvp && this.pvp) { this.pvp.pressGuard(); return; }
         this.input.guard = true;
         this.guardMinT = Math.max(this.guardMinT || 0, 0.40);   // 탭 한 번만 해도 0.4초는 막힌다
         guardBtn.classList.add('is-held');
@@ -345,6 +351,7 @@ class App {
       const release = (e) => {
         if (pid !== null && e && e.pointerId !== undefined && e.pointerId !== pid) return;
         pid = null;
+        if (this.battle && this.battle.pvp && this.pvp) { this.pvp.releaseGuard(); return; }
         this.input.guard = false;
         guardBtn.classList.remove('is-held');
       };
@@ -367,6 +374,7 @@ class App {
       this.keys[e.code] = true;
       if (e.code === 'Space') { e.preventDefault(); this.attackHeld = true; this.input.attack = true; this._aimAssist(); }
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') {
+        if (this.battle && this.battle.pvp && this.pvp) { this.pvp.pressGuard(); return; }
         this.input.guard = true; this.guardMinT = Math.max(this.guardMinT || 0, 0.40);
         const gb = $('#guardBtn'); if (gb) gb.classList.add('is-held');
       }
@@ -379,6 +387,7 @@ class App {
       if (this.keys) this.keys[e.code] = false;
       if (e.code === 'Space') this.attackHeld = false;
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') {
+        if (this.battle && this.battle.pvp && this.pvp) { this.pvp.releaseGuard(); return; }
         this.input.guard = false;
         const gb = $('#guardBtn'); if (gb) gb.classList.remove('is-held');
       }
@@ -553,6 +562,9 @@ class App {
       config: cfg,
       playerKills: this.progress.kills
     }).start();
+    /* 🪨 지형물 충돌 — 바위·기둥·횃불을 뚫고 지나가지 못한다 */
+    this.battle.colliders = this.world.colliders || [];
+    this.battle.groundFn = (x, z) => groundY(x, z, false);
 
     // 클래스별 버킷
     const buckets = {};
@@ -644,11 +656,22 @@ class App {
       enemySoldiers: 0, enemyElites: 0, enemyKnights: 0, enemyWizards: 0, enemyBlademasters: 0, enemyBerserkers: 0,
       seed: (Date.now() % 100000)
     };
-    this.battle = new Battle({ config: zero, playerKills: 0 }).start();
+    /* ⚔️ PVP 는 영구 성장 제외 — 솔로에서 쌓은 배율도 쓰지 않는다 */
+    this.battle = new Battle({ config: zero, playerKills: 0, noGrowth: true }).start();
     this.battle.pvp = true;
     this.battle.practice = false;
-    this.battle.arenaR = Math.max(28, (init.arenaR || 26) + 3);
+    this.battle.arenaR = OCTAGON.fence;
+    this.battle.groundFn = (x, z) => groundY(x, z, true);
+    /* 🥊 PVP 는 UFC 옥타곤 링 위에서만 — 바깥 지형물 충돌은 쓰지 않고 링 경계로 막는다 */
+    this.battle.colliders = [];
     this.battle.onPvpImpact = (u) => { if (this.pvp) this.pvp.sendAttack(u); };
+
+    /* 🥊 옥타곤 무대 — PVP 에서만 만들고, 나갈 때 걷어낸다 */
+    if (this.octagon) { try { this.octagon.dispose(); } catch (e) { /* noop */ } }
+    this.octagon = buildOctagon(this.scene);
+    /* 매트 위에 마법진(룬)이 비쳐 보이지 않게 PVP 에서는 숨긴다 */
+    if (this.world && this.world.rune) this.world.rune.visible = false;
+    if (this.pvp) this.pvp.octagon = { apothem: OCTAGON.apothem };
 
     /* 유닛 렌더러 — 병종별로 상세 슬롯을 넉넉히 잡아 PVP 인원 전원을 풀 디테일로 그린다 */
     const empty = {};
@@ -663,6 +686,10 @@ class App {
     p.z = init.spawn ? init.spawn.z : -9;
     p.yaw = init.spawn ? init.spawn.yaw : 0;
     p.hideModel = true;
+    /* 🥊 링 안으로 */
+    const spw = clampOctagon(p.x, p.z);
+    p.x = spw.x; p.z = spw.z;
+    p.y = groundY(p.x, p.z, true);
     this.camYaw = p.yaw + Math.PI;
     this.camPitch = -0.04;
     this.cam.fov = 62;
@@ -691,6 +718,8 @@ class App {
   toHome() {
     /* PVP 전투 중이면 방에서 나간 뒤 홈으로 (exitToHome 이 다시 toHome 을 부른다) */
     if (this.pvp && this.pvp.inBattle) { this.pvp.exitToHome(); return; }
+    if (this.octagon) { try { this.octagon.dispose(); } catch (e) { /* noop */ } this.octagon = null; }
+    if (this.world && this.world.rune) this.world.rune.visible = true;
     this.state = 'home';
     this.paused = true;
     this.camMode = 'fp';
@@ -785,6 +814,12 @@ class App {
     panel.classList.add('is-nudge');
     clearTimeout(this._nudgeT);
     this._nudgeT = setTimeout(() => panel.classList.remove('is-nudge'), 950);
+  }
+
+  /* 지면 높이 (이펙트 y 보정) */
+  _gy(x, z) {
+    if (x === undefined || z === undefined) return 0;
+    return groundY(x, z, !!(this.battle && this.battle.pvp));
   }
 
   _toast(msg) {
@@ -1008,7 +1043,7 @@ class App {
       const eye = spec.viewEye;
       // 화면 흔들림 없음 — 걸음 헤드밥·호흡·공격/피격 반동·시선 롤을 모두 제거했다.
       // 카메라는 눈높이에 정확히 고정되고, 시점만 드래그한 그대로 유지된다.
-      this.cam.position.set(p.x, p.dead ? 0.92 : eye, p.z);
+      this.cam.position.set(p.x, (p.y || 0) + (p.dead ? 0.92 : eye), p.z);
       this.camYaw = p.yaw + Math.PI;
       this.cam.rotation.set(this.camPitch, this.camYaw, 0, 'YXZ');
       this.cam.fov = 62;
@@ -1041,6 +1076,8 @@ class App {
       s.x = clamp(s.x, -bound, bound);
       s.z = clamp(s.z, -bound, bound);
       s.y = clamp(s.y, SPECTATE_MIN_Y, SPECTATE_MAX_Y);
+      /* ⛰️ 관전 카메라도 지면 아래로 파고들지 못한다 */
+      s.y = Math.max(s.y, groundY(s.x, s.z, !!b.pvp) + 0.7);
       const cp = Math.cos(s.pitch), sp2 = Math.sin(s.pitch);
       this.cam.position.set(s.x, s.y, s.z);
       this.cam.lookAt(s.x + Math.sin(s.yaw) * cp * 60, s.y + sp2 * 60, s.z + Math.cos(s.yaw) * cp * 60);
@@ -1134,6 +1171,14 @@ class App {
 
     // 포즈 계산 — 상세 모델로 그려지는 유닛만 (실루엣은 yaw 만으로 그린다 → 대규모에서 큰 절약)
     const units = this.battle.units;
+    /* ⛰️ 모든 유닛이 지면 높이를 따라간다 (언덕·경사·옥타곤 매트) */
+    const gf = this.battle.groundFn;
+    if (gf) {
+      for (let i = 0; i < units.length; i++) {
+        const u = units[i];
+        u.y = gf(u.x, u.z);
+      }
+    }
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
       if (!u.isPlayer && u.dslot < 0) continue;
@@ -1243,12 +1288,22 @@ class App {
       this.sfx.hit('hammer', dOf(e.x, e.z), true);
     } else if (e.type === 'block') {
       // 🛡️ 방패 막힘 — 스파크·둥근 충격파 + 철제 "쨍" + 내가 막았을 때 토스트
+      const gy = this._gy(e.x, e.z);
+      const by = (e.y || 1.1) + gy;
       this.sfx.block(dOf(e.x, e.z), e.heavy);
-      this.fx.spawnShieldSparks(e.x, e.y || 1.1, e.z, e.heavy);
+      this.fx.spawnShieldSparks(e.x, by, e.z, e.heavy);
+      /* ⚔️ 패링 100% 반사 — 금빛 폭발 + 화면 흔들림 (양쪽 화면 모두) */
+      if (e.reflect > 0) {
+        this.fx.flash(e.x, by, e.z, 1.9, 0xffe6a8, 0.15);
+        this.fx.ring(e.x, by, e.z, 1.6, 0xffcf7a, 0.40);
+        this.fx.addShake(0.26);
+      }
       if (e.unit && e.unit.isPlayer) {
         if (!this._blockToastAt || performance.now() - this._blockToastAt > 700) {
           this._blockToastAt = performance.now();
-          this._toast(e.heavy ? '🛡️ 강타를 막아냈다!' : '🛡️ 막았다!');
+          this._toast(e.reflect > 0
+            ? '⚔️ 패링! ' + Math.round(e.reflect) + ' 피해를 그대로 돌려줬다'
+            : (e.heavy ? '🛡️ 강타를 막아냈다!' : '🛡️ 막았다!'));
         }
       }
     } else if (e.type === 'explode') {
@@ -1278,11 +1333,9 @@ class App {
     } else if (e.type === 'playerDown') {
       this._toast('쓰러졌다 — 잠시 후 부활');
     } else if (e.type === 'levelUp') {
-      this.progress.kills = e.kills;
-      this._scheduleSave();
+      if (!(this.battle && this.battle.pvp)) { this.progress.kills = e.kills; this._scheduleSave(); }
     } else if (e.type === 'death' && e.by && e.by.isPlayer) {
-      this.progress.kills = this.battle.playerKills;
-      this._scheduleSave();
+      if (!(this.battle && this.battle.pvp)) { this.progress.kills = this.battle.playerKills; this._scheduleSave(); }
     }
   }
 
@@ -1429,10 +1482,35 @@ class App {
       if (chEl) chEl.style.display = 'none';
       gdBtn.classList.remove('is-empty');
       const lbl = gdBtn.querySelector('.sk-label');
-      const want = '검 막기';
-      if (lbl && lbl.textContent !== want) lbl.textContent = want;
       const ic = gdBtn.querySelector('.sk-icon');
-      if (ic) ic.textContent = '🗡️';
+      /* ⚔️ PVP — 막기 유지 시간과 쿨타임을 버튼에 그대로 보여준다 */
+      if (b.pvp && this.pvp) {
+        const pv = this.pvp;
+        const cd = Math.max(0, pv.guardCd || 0);
+        const isCd = cd > 0.05;
+        const held = !!pv.guardActive;
+        gdBtn.classList.toggle('is-cd', isCd);
+        gdBtn.classList.toggle('is-guardcd', isCd);
+        gdBtn.classList.toggle('is-guarding', held);
+        const mask = gdBtn.querySelector('.cd-mask');
+        if (mask) mask.style.transform = 'scaleY(' + clamp(cd / Math.max(0.1, pv.guardCdMax), 0, 1).toFixed(3) + ')';
+        const num = gdBtn.querySelector('.cd-num');
+        if (num) num.textContent = isCd ? (cd < 1 ? cd.toFixed(1) : String(Math.ceil(cd))) : '';
+        const want = held ? '막는 중' : isCd ? '재장전' : '검 막기';
+        if (lbl && lbl.textContent !== want) lbl.textContent = want;
+        if (ic) ic.textContent = isCd && !held ? '⏳' : '🗡️';
+        const ring = gdBtn.querySelector('.gd-ring');
+        if (ring) ring.style.transform = 'scaleX(' + (held ? clamp((pv.guardLeft || 0) / Math.max(0.1, pv.guardHoldMax), 0, 1).toFixed(3) : 0) + ')';
+      } else {
+        gdBtn.classList.remove('is-cd', 'is-guardcd', 'is-guarding');
+        const mask = gdBtn.querySelector('.cd-mask');
+        if (mask) mask.style.transform = 'scaleY(0)';
+        const num = gdBtn.querySelector('.cd-num');
+        if (num) num.textContent = '';
+        const want = '검 막기';
+        if (lbl && lbl.textContent !== want) lbl.textContent = want;
+        if (ic) ic.textContent = '🗡️';
+      }
     }
     const atkBtn = $('#attackBtn');
     atkBtn.style.display = p.cls === 'wizard' ? 'none' : '';
@@ -1475,6 +1553,11 @@ window.__THREE = THREE;
 window.BA = {
   app,
   get battle() { return app.battle; },
+  /* 🥊 PVP 옥타곤 링 정보 (테스트·디버그) */
+  oct: () => (app.octagon ? app.octagon.info() : null),
+  ground: (x, z) => groundY(x, z, !!(app.battle && app.battle.pvp)),
+  /* 🥊 옥타곤 경계 계산 (테스트용) */
+  ring: (x, z) => clampOctagon(x, z),
   state() {
     const b = app.battle;
     if (!b) return { state: app.state, frames: app.frames };

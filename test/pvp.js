@@ -81,9 +81,12 @@ async function engineTests() {
   ok('방 상태는 대기실에서 시작', st.phase === 'lobby' && st.capacity === 8);
   ok('팀 선택 · 자동 배정', P.handleMessage(room, room.players[0], 'pteam', { team: 'auto' }).ok &&
     P.entOf(st, room.players[0]).team === null);
-  ok('병종 선택', P.handleMessage(room, room.players[0], 'pclass', { cls: 'knight' }).ok &&
-    P.entOf(st, room.players[0]).cls === 'knight' &&
-    P.entOf(st, room.players[0]).maxHp === P.PVP.knight.hp);
+  /* ⚔️ PVP 병종은 일반 병사 고정 */
+  const picked = P.handleMessage(room, room.players[0], 'pclass', { cls: 'knight' });
+  ok('PVP 병종은 일반 병사로 고정 (다른 병종 요청도 soldier)', picked.ok && picked.fixed === true &&
+    P.entOf(st, room.players[0]).cls === 'soldier' &&
+    P.entOf(st, room.players[0]).maxHp === P.PVP.soldier.hp,
+    { cls: P.entOf(st, room.players[0]).cls });
   ok('없는 병종은 거절', P.handleMessage(room, room.players[0], 'pclass', { cls: 'dragon' }).error[0] === 'BAD_CLASS');
   ok('방장이 아닌 사람은 설정 불가',
     P.handleMessage(room, room.players[1], 'pconf', { bots: { ally: 2, enemy: 2 } }).error[0] === 'HOST_ONLY');
@@ -183,7 +186,7 @@ async function engineTests() {
     elim.pvp.phase === 'over' && elim.pvp.over.winner === 'ally' && b.respawnAt === 0,
     elim.pvp.over);
 
-  console.log('마법과 매화 일섬');
+  console.log('🥊 PVP 일반 병사 고정 — 마법·일섬 없음');
   const wiz = fakeRoom(2);
   P.handleMessage(wiz, wiz.players[0], 'pclass', { cls: 'wizard' });
   P.handleMessage(wiz, wiz.players[0], 'pteam', { team: 'ally' });
@@ -191,18 +194,12 @@ async function engineTests() {
   P.startBattle(wiz, { bySlot: 0 });
   const w = P.entOf(wiz.pvp, wiz.players[0]);
   const t = P.entOf(wiz.pvp, wiz.players[1]);
+  ok('마법사로 신청해도 일반 병사로 참전', w.cls === 'soldier' && t.cls === 'soldier',
+    { a: w.cls, b: t.cls });
   w.x = 0; w.z = 0; t.x = 0; t.z = 6; t.hp = t.maxHp;
   P.handleMessage(wiz, wiz.players[0], 'pspell', { key: 'fire', x: 0, z: 6 });
-  ok('화염구는 날아간 뒤에 터진다 (즉시 피해 없음)', t.hp === t.maxHp);
   await stepFor(wiz, 400);
-  ok('화염구가 도착하면 광역 피해', t.hp < t.maxHp, { hp: t.hp });
-  const hpAfterFire = t.hp;
-  P.handleMessage(wiz, wiz.players[0], 'pspell', { key: 'fire', x: 0, z: 6 });
-  ok('마법 쿨타임 중에는 다시 시전되지 않는다', t.hp === hpAfterFire && wiz.pvp.pending.length === 0);
-  w.nextSpellAt.lightning = 0;
-  t.hp = t.maxHp;
-  P.handleMessage(wiz, wiz.players[0], 'pspell', { key: 'lightning' });
-  ok('연쇄 번개는 즉시 피해', t.hp < t.maxHp, { hp: t.hp });
+  ok('PVP 에서는 마법을 쓸 수 없다 (화염구 무효)', t.hp === t.maxHp && wiz.pvp.pending.length === 0, { hp: t.hp });
 
   const bm = fakeRoom(2);
   P.handleMessage(bm, bm.players[0], 'pclass', { cls: 'blademaster' });
@@ -213,8 +210,79 @@ async function engineTests() {
   const v = P.entOf(bm.pvp, bm.players[1]);
   s.x = 0; s.z = 0; s.yaw = 0; v.x = 0; v.z = 4; v.hp = v.maxHp;
   P.handleMessage(bm, bm.players[0], 'pskill', { yaw: 0 });
-  ok('매화 일섬 돌진 경로의 상대가 맞는다', v.hp < v.maxHp, { hp: v.hp });
-  ok('일섬 쿨타임', s.nextSkillAt > Date.now() - 10);
+  ok('PVP 에서는 매화 일섬도 쓸 수 없다', v.hp === v.maxHp && !s.nextSkillAt, { hp: v.hp });
+
+  console.log('🛡️ PVP 검 막기 — 쿨타임·유지 시간·100% 반사');
+  const g = fakeRoom(2);
+  P.handleMessage(g, g.players[0], 'pteam', { team: 'ally' });
+  P.handleMessage(g, g.players[1], 'pteam', { team: 'enemy' });
+  P.startBattle(g, { bySlot: 0 });
+  const atk = P.entOf(g.pvp, g.players[0]);
+  const def = P.entOf(g.pvp, g.players[1]);
+  atk.x = 0; atk.z = 0; atk.yaw = 0;
+  def.x = 0; def.z = 1.6; def.yaw = Math.PI;
+  ok('검 막기를 켜면 막기 상태', P.setGuard(g, g.players[1], true).ok && def.guard === true);
+  ok('막기 유지 시간이 정해져 있다', def.guardUntil - def.guardAt === P.CFG.guardHold * 1000,
+    { ms: def.guardUntil - def.guardAt });
+
+  const hpAtk0 = atk.hp;
+  P.handleMessage(g, g.players[0], 'pattack', { yaw: 0 });
+  ok('정면으로 막으면 수비자는 피해 0', def.hp === def.maxHp, { hp: def.hp });
+  const reflected = hpAtk0 - atk.hp;
+  ok('막아낸 피해 100%가 공격자에게 반사된다',
+    Math.abs(reflected - Math.round(P.PVP.soldier.damage * P.CFG.guardReflect)) < 1.2 &&
+    Math.abs(reflected - P.PVP.soldier.damage) < 1.2, { reflected, dmg: P.PVP.soldier.damage });
+
+  /* 막기 쿨타임 — 유지 시간이 끝나면 자동 해제 + 쿨타임 동안은 다시 못 켠다 */
+  await stepFor(g, P.CFG.guardHold * 1000 + 220);
+  ok('최대 유지 시간이 지나면 막기가 풀린다', def.guard === false);
+  ok('막기가 풀리면 쿨타임이 시작된다', def.guardCdUntil > Date.now() - 50 &&
+    def.guardCdUntil - Date.now() <= P.CFG.guardCooldown * 1000, { left: def.guardCdUntil - Date.now() });
+  const denied = P.setGuard(g, g.players[1], true);
+  ok('쿨타임 중에는 막기를 다시 켤 수 없다', denied.ok === false && def.guard === false && denied.cd > 0,
+    { cd: denied.cd });
+  /* 그동안 들어오는 공격은 그대로 맞는다 */
+  def.hp = def.maxHp;
+  atk.nextAttackAt = 0;
+  atk.hp = atk.maxHp;
+  P.handleMessage(g, g.players[0], 'pattack', { yaw: 0 });
+  ok('쿨타임 중에는 막지 못해 피해가 들어간다', def.hp < def.maxHp, { hp: def.hp });
+
+  await sleep(P.CFG.guardCooldown * 1000 + 260);
+  ok('쿨타임이 끝나면 다시 막을 수 있다', P.setGuard(g, g.players[1], true).ok && def.guard === true);
+  const beforeOff = Date.now();
+  P.setGuard(g, g.players[1], false);
+  ok('막기를 풀어도 쿨타임이 시작된다', def.guard === false && def.guardCdUntil - beforeOff >= P.CFG.guardCooldown * 1000 - 40);
+  ok('풀자마자 다시 켜는 연타 막기도 막힌다', P.setGuard(g, g.players[1], true).ok === false);
+
+  /* 반사 킬 — 반사 피해로 공격자가 쓰러지면 수비자 킬 */
+  const gk = fakeRoom(2);
+  P.handleMessage(gk, gk.players[0], 'pteam', { team: 'ally' });
+  P.handleMessage(gk, gk.players[1], 'pteam', { team: 'enemy' });
+  P.startBattle(gk, { bySlot: 0 });
+  const a2 = P.entOf(gk.pvp, gk.players[0]);
+  const d2 = P.entOf(gk.pvp, gk.players[1]);
+  a2.x = 0; a2.z = 0; a2.yaw = 0; a2.hp = 60;
+  d2.x = 0; d2.z = 1.6; d2.yaw = Math.PI;
+  P.setGuard(gk, gk.players[1], true);
+  P.handleMessage(gk, gk.players[0], 'pattack', { yaw: 0 });
+  ok('반사 피해로 공격자가 쓰러진다', a2.dead && a2.hp === 0);
+  ok('반사 킬은 수비자 킬로 정상 처리', d2.kills === 1 && gk.pvp.score.enemy === 1,
+    { kills: d2.kills, score: gk.pvp.score });
+
+  console.log('🥊 UFC 옥타곤 링 경계');
+  ok('8각형 링 밖 좌표는 경계로 되돌아온다', (() => {
+    const c = P.clampOctagon(60, 0);
+    return c.hit && Math.abs(c.x - P.CFG.octApothem / Math.cos(Math.PI / 8)) < 0.01;
+  })(), P.clampOctagon(60, 0));
+  const inside = P.entOf(gk.pvp, gk.players[1]);
+  inside.x = 0; inside.z = 0; inside.lastInputAt = 0;
+  for (let i = 0; i < 30; i++) {
+    P.handleMessage(gk, gk.players[1], 'pinput', { x: 60, z: 0, yaw: 0, pitch: 0 });
+    await sleep(28);
+  }
+  ok('플레이어는 옥타곤 링 밖으로 나갈 수 없다',
+    inside.x <= P.CFG.octApothem / Math.cos(Math.PI / 8) + 0.02 && inside.x > 2, { x: inside.x });
 
   console.log('AI 병력 · 실제 전투');
   const botRoom = fakeRoom(1);

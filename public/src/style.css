@@ -800,7 +800,26 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 }
 .pl-chips button.is-on { border-color: rgba(232, 194, 122, .7); background: linear-gradient(100deg, rgba(232, 194, 122, .28), rgba(232, 194, 122, .1)); color: #ffeccb; }
 .pl-chips.classes button { padding: 5px 6px; }
-.pl-chips button:disabled { opacity: .4; }
+.pl-chips button:disabled { opacity: .38; filter: grayscale(.7); }
+.pl-chips button.is-locked { border-style: dashed; }
+.pl-row > span em { font-style: normal; font-size: 9px; letter-spacing: 0; color: #e8c27a; margin-left: 3px; }
+/* 🛡️ PVP 검 막기 쿨타임 — 버튼이 남은 시간을 초로 보여주고 회색으로 잠긴다 */
+.guard-btn .cd-num { font-size: 15px; letter-spacing: .01em; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+.guard-btn.is-guardcd { border-color: rgba(255, 150, 120, .7);
+  background: radial-gradient(circle at 38% 30%, rgba(255, 205, 185, .92), rgba(150, 78, 62, .92) 52%, rgba(52, 24, 20, .96)); }
+.guard-btn.is-guardcd .cd-mask { background: rgba(30, 8, 6, .62); }
+.guard-btn.is-guarding { filter: brightness(1.2); box-shadow: 0 0 20px rgba(255, 224, 160, .85), inset 0 0 12px rgba(255,255,255,.55); }
+.guard-btn.is-deny { animation: guardDeny .42s ease-out; }
+@keyframes guardDeny {
+  0% { transform: translateX(0); filter: brightness(1.4) saturate(1.4); }
+  25% { transform: translateX(-3px); }
+  55% { transform: translateX(3px); }
+  100% { transform: translateX(0); }
+}
+/* 막기 유지 시간 게이지 — 버튼 아래에서 줄어든다 */
+.guard-btn .gd-ring { position: absolute; left: 3px; right: 3px; bottom: 3px; height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, #ffe6a8, #ffb35c); transform-origin: left; transform: scaleX(0); pointer-events: none; }
+.guard-btn .gd-ring { transform: scaleX(0); }
 .pl-conf-disabled { opacity: .45; pointer-events: none; }
 .pl-start {
   width: 100%; margin-top: 12px; padding: 12px; border-radius: 12px;

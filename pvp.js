@@ -3,17 +3,22 @@
 /* =============================================================================
    플레이어 PVP · 실시간 1인칭 대전 (서버 권위)
    -----------------------------------------------------------------------------
-   · 방 만들기 / 코드 입장 → 대기실에서 팀(아군·적군)과 병종(6종) 선택
+   · 방 만들기 / 코드 입장 → 대기실에서 팀(아군·적군) 선택, 병종은 일반 병사 고정
    · 방장이 원하면 AI 병력을 팀마다 섞는다 (없으면 순수 1:1 ~ 다인 PVP)
    · 전투: 클라이언트가 위치·시선·행동을 보내고, 서버가 실제 타격을 판정한다
        - 근접: 사거리·부채꼴 안의 상대에게 실제 피해, 정면 검 막기는 피해 0
-       - 마법 3종(화염·번개·빙결) · 매화 일섬(돌진 참격)
+       - 검 막기: 최대 유지 시간 + 쿨타임 (무한 막기 금지) — PVP 전용
+       - 막아내면 공격한 상대에게 원래 피해의 100%를 반사 (패링)
+       - 무대는 UFC 옥타곤 링 — 8각형 경계 밖으로 나갈 수 없다
        - 흡혈·자연 회복·부활도 배틀 아레나와 같은 규칙
    · 승리: 설정한 킬 수 도달 또는 전멸전 / 제한 시간 종료 시 킬 수 우세
    · 재대결: 방장이 다시 시작하면 같은 팀·병종으로 곧바로 새 라운드
    ============================================================================= */
 
 const CLASS_KEYS = ['soldier', 'elite', 'knight', 'wizard', 'blademaster', 'berserker'];
+
+/* ⚔️ PVP 는 일반 병사 고정 — 순수 검술·막기 대전 (솔로 배틀 아레나는 6병종 그대로) */
+const FIXED_CLASS = 'soldier';
 
 /* PVP 병종 밸런스 — 1:1에서도 서로 몇 대씩 주고받도록 체력을 올리고
    한 방 피해를 낮췄다 (모션·막기·흡혈·회복·피격 연출은 배틀 아레나와 동일) */
@@ -50,6 +55,12 @@ const CFG = {
   botSpeedMul: 0.95,
   botNames: ['AI 병사', 'AI 창병', 'AI 궁병', 'AI 검병'],
   guardFront: 1.35,
+  /* 🛡️ PVP 검 막기 — 최대 유지 + 쿨타임 (솔로 배틀 아레나의 막기에는 적용하지 않는다) */
+  guardHold: 0.80,           // 한 번에 막을 수 있는 최대 시간 (초)
+  guardCooldown: 2.0,        // 막기 해제·자동 종료 뒤 쿨타임 (초)
+  guardReflect: 1.0,         // 막아내면 공격자에게 돌려주는 피해 비율 (100%)
+  /* 🥊 UFC 옥타곤 링 — 중심에서 각 변까지의 거리 (m), 이동 가능 경계 */
+  octApothem: 15.0,
   regenFrac: 0.015,
   lifestealFrac: 0.07,
   lifestealMin: 1,
@@ -68,6 +79,24 @@ const norm = (a) => {
   return x;
 };
 const angDiff = (a, b) => norm(a - b);
+
+/* ------------------------------------------------------------------ 옥타곤 링
+   정8각형 경계 — 변의 법선이 45° 간격. apothem(중심→변) 기준으로 방향별 경계
+   반지름을 구해 그 밖으로 나가면 경계 위로 되돌린다 (클라이언트 ground.js 와 동일). */
+const OCT_STEP = Math.PI / 4;
+function octRadius(phi, apothem) {
+  const t = ((phi % OCT_STEP) + OCT_STEP) % OCT_STEP - OCT_STEP / 2;
+  return apothem / Math.cos(t);
+}
+function clampOctagon(x, z, apothem) {
+  const a = apothem === undefined ? CFG.octApothem : apothem;
+  const r = Math.hypot(x, z);
+  if (r < 1e-6) return { x: 0, z: 0, hit: false };
+  const R = octRadius(Math.atan2(x, z), a);
+  if (r <= R) return { x, z, hit: false };
+  const k = R / r;
+  return { x: x * k, z: z * k, hit: true };
+}
 
 function send(ws, obj) {
   if (!ws || ws.readyState !== 1) return;
@@ -116,11 +145,11 @@ function makeEnt(player) {
     name: player.name,
     bot: false,
     team: null,
-    cls: 'soldier',
+    cls: FIXED_CLASS,
     x: 0, z: 0, yaw: 0, pitch: 0,
     hp: spec.hp, maxHp: spec.hp,
     dead: false, deathAt: 0, respawnAt: 0,
-    guard: false,
+    guard: false, guardAt: 0, guardUntil: 0, guardCdUntil: 0,
     kills: 0, deaths: 0,
     attackAt: 0,
     nextAttackAt: 0,
@@ -145,8 +174,9 @@ function entOf(st, player) {
   return e;
 }
 
-function applyClass(ent, cls) {
-  const spec = PVP[cls] || PVP.soldier;
+/* PVP 참가자는 언제나 일반 병사 — 요청이 무엇이든 soldier 로 맞춘다 */
+function applyClass(ent) {
+  const spec = PVP[FIXED_CLASS] || PVP.soldier;
   ent.cls = spec.key;
   ent.maxHp = spec.hp;
   ent.hp = spec.hp;
@@ -168,9 +198,10 @@ function aliveOf(st, team) {
 
 function spawnPoint(st, team, index, count) {
   const d = clamp(CFG.spawnBase + Math.max(0, count - 1) * CFG.spawnStep, CFG.spawnBase, CFG.spawnMax);
-  const span = Math.max(1, count - 1) * 2.4;
+  const span = Math.max(1, count - 1) * 1.7;
   const x = count > 1 ? (index - (count - 1) / 2) * (span / Math.max(1, count - 1)) : 0;
-  return { x, z: team === 'ally' ? -d : d };
+  const p = clampOctagon(x, team === 'ally' ? -d : d);   // 🥊 옥타곤 안쪽으로
+  return { x: p.x, z: p.z };
 }
 
 /* ------------------------------------------------------------------ 로비 */
@@ -179,7 +210,7 @@ function lobbyPayload(room, player) {
   const players = room.players.filter((p) => !p.isAI).map((p) => {
     const e = entOf(st, p);
     return {
-      slot: p.slot, name: p.name, team: e.team, cls: e.cls,
+      slot: p.slot, name: p.name, team: e.team, cls: FIXED_CLASS,
       host: p.slot === room.hostSlot, connected: !!p.connected
     };
   });
@@ -195,6 +226,9 @@ function lobbyPayload(room, player) {
     minPlayers: CFG.minPlayers,
     maxPlayers: st.capacity,
     players,
+    fixedClass: FIXED_CLASS,
+    guard: { hold: CFG.guardHold * 1000, cooldown: CFG.guardCooldown * 1000, reflect: CFG.guardReflect },
+    arena: { type: 'octagon', apothem: CFG.octApothem },
     classes: CLASS_KEYS.map((k) => ({ key: k, name: PVP[k].name, icon: PVP[k].icon, hp: PVP[k].hp, damage: PVP[k].damage, guard: PVP[k].guard !== false })),
     spells: Object.fromEntries(Object.keys(SPELLS).map((k) => [k, { name: SPELLS[k].name, icon: SPELLS[k].icon, cooldown: SPELLS[k].cooldown, damage: SPELLS[k].damage }])),
     skill: { name: SKILL.name, cooldown: SKILL.cooldown, damage: SKILL.damage }
@@ -220,6 +254,7 @@ function setTeam(room, player, raw) {
   return { ok: true };
 }
 
+/* ⚔️ PVP 병종은 일반 병사 고정 — 다른 병종을 보내도 soldier 로 되돌린다 */
 function setClass(room, player, raw) {
   const st = room.pvp;
   if (!st) return { error: ['NO_STATE', '방 정보를 찾을 수 없어요.'] };
@@ -227,9 +262,9 @@ function setClass(room, player, raw) {
   const cls = String(raw || '');
   if (!PVP[cls]) return { error: ['BAD_CLASS', '없는 병종이에요.'] };
   const e = entOf(st, player);
-  applyClass(e, cls);
+  applyClass(e, FIXED_CLASS);
   broadcastLobby(room);
-  return { ok: true };
+  return { ok: true, cls: FIXED_CLASS, fixed: cls !== FIXED_CLASS };
 }
 
 function setConfig(room, player, msg) {
@@ -308,6 +343,7 @@ function startBattle(room, opts) {
   if (!humans.length) return { error: ['NO_PLAYER', '참가자가 없어요.'] };
 
   assignTeams(room);
+  for (const p of humans) applyClass(entOf(st, p));   // ⚔️ 전원 일반 병사로 고정
   const allyHumans = humans.filter((p) => entOf(st, p).team === 'ally').length;
   const enemyHumans = humans.filter((p) => entOf(st, p).team === 'enemy').length;
   if (!(allyHumans + st.botCfg.ally) || !(enemyHumans + st.botCfg.enemy)) {
@@ -337,7 +373,8 @@ function startBattle(room, opts) {
     ent.pitch = 0;
     ent.hp = ent.maxHp;
     ent.dead = false; ent.deathAt = 0; ent.respawnAt = 0;
-    ent.guard = false; ent.attackAt = 0;
+    ent.guard = false; ent.guardAt = 0; ent.guardUntil = 0; ent.guardCdUntil = 0;
+    ent.attackAt = 0;
     ent.nextAttackAt = 0; ent.nextSkillAt = 0;
     ent.nextSpellAt = { fire: 0, lightning: 0, ice: 0 };
     ent.freezeUntil = 0;
@@ -370,6 +407,8 @@ function startBattle(room, opts) {
     roundMs: CFG.roundMs,
     arenaR: CFG.arenaR,
     respawnMs: CFG.respawnMs,
+    guard: { hold: CFG.guardHold * 1000, cooldown: CFG.guardCooldown * 1000, reflect: CFG.guardReflect },
+    arena: { type: 'octagon', apothem: CFG.octApothem },
     roster
   };
   for (const p of humans) {
@@ -409,24 +448,29 @@ function hurt(room, st, target, amount, src, kind, from) {
   const spec = PVP[target.cls] || PVP.soldier;
   const sx = from && from.x !== undefined ? from.x : (src ? src.x : null);
   const sz = from && from.z !== undefined ? from.z : (src ? src.z : null);
-  if (target.guard && spec.guard !== false && sx !== null && sz !== null) {
+  /* 반사 피해는 다시 막을 수 없다 (무한 되튀김 방지) */
+  if (kind !== 'reflect' && target.guard && spec.guard !== false && sx !== null && sz !== null) {
     const a = Math.abs(angDiff(Math.atan2(sx - target.x, sz - target.z), target.yaw));
     if (a < CFG.guardFront) {
+      /* 🛡️ 정면 검 막기 성공 — 수비자는 0, 공격자는 원래 피해의 100% 를 그대로 돌려받는다 */
+      const reflect = src && src !== target && !src.dead ? Math.round(amount * CFG.guardReflect) : 0;
       broadcastEvent(room, {
         type: 'pblock',
         by: src ? targetRef(src) : null,
         to: targetRef(target),
         heavy: kind === 'hammer' || kind === 'petal' || kind === 'fire' || kind === 'ice' || kind === 'lightning',
+        reflect,
         x: r2(target.x + Math.sin(target.yaw) * 0.45),
         z: r2(target.z + Math.cos(target.yaw) * 0.45),
         y: 1.2
       });
+      if (reflect > 0) hurt(room, st, src, reflect, target, 'reflect');
       return 0;
     }
   }
   const dmg = amount * (1 - (spec.armor || 0));
   target.hp -= dmg;
-  healFromLifesteal(src, dmg, Date.now());
+  if (kind !== 'reflect') healFromLifesteal(src, dmg, Date.now());
   const lethal = target.hp <= 0;
   const hx = src ? (src.x + target.x) / 2 : target.x;
   const hz = src ? (src.z + target.z) / 2 : target.z;
@@ -512,6 +556,7 @@ function respawnEnt(room, st, e) {
   e.respawnAt = 0;
   e.attackAt = 0;
   e.guard = false;
+  e.guardAt = 0; e.guardUntil = 0; e.guardCdUntil = 0;
   e.nextAttackAt = 0;
   e.freezeUntil = 0;
   broadcastEvent(room, {
@@ -519,6 +564,35 @@ function respawnEnt(room, st, e) {
     to: targetRef(e),
     x: r2(e.x), z: r2(e.z), yaw: r3(e.yaw), hp: e.maxHp, mx: e.maxHp
   });
+}
+
+/* ------------------------------------------------------------------ 검 막기 */
+/* 🛡️ PVP 전용 막기 — 최대 유지(guardHold) 뒤 자동 해제 + 쿨타임(guardCooldown).
+   쿨타임 중 다시 누르면 서버가 거절한다 (무한 막기·연타 막기 방지). */
+function setGuard(room, player, on) {
+  const st = room.pvp;
+  if (!st || st.phase !== 'battle') return { ok: false };
+  const e = st.ents.get(player.slot);
+  if (!e || e.dead) return { ok: false };
+  const now = Date.now();
+  if (on) {
+    if (e.guard) return { ok: true, guard: true };
+    const cd = Math.max(0, (e.guardCdUntil || 0) - now);
+    if (cd > 0) return { ok: false, guard: false, cd: Math.ceil(cd) };
+    const spec = PVP[e.cls] || PVP.soldier;
+    if (spec.guard === false) return { ok: false, guard: false };
+    e.guard = true;
+    e.guardAt = now;
+    e.guardUntil = now + CFG.guardHold * 1000;
+    return { ok: true, guard: true };
+  }
+  if (e.guard) {
+    e.guard = false;
+    e.guardUntil = 0;
+    e.guardCdUntil = now + CFG.guardCooldown * 1000;
+    broadcastEvent(room, { type: 'pguardend', to: targetRef(e), cd: Math.round(CFG.guardCooldown * 1000), held: false });
+  }
+  return { ok: true, guard: false };
 }
 
 function input(room, player, msg) {
@@ -545,6 +619,9 @@ function input(room, player, msg) {
     z = e.z + (z - e.z) * k;
   }
   e.x = x; e.z = z;
+  /* 🥊 옥타곤 링 밖으로는 나갈 수 없다 */
+  const c = clampOctagon(e.x, e.z);
+  e.x = c.x; e.z = c.z;
   e.lastInputAt = now;
 }
 
@@ -716,8 +793,8 @@ function stepBots(room, st, now, dt) {
       const sp = spec.speed * CFG.botSpeedMul * dt;
       b.x += (dx / d) * sp;
       b.z += (dz / d) * sp;
-      const r = Math.hypot(b.x, b.z);
-      if (r > CFG.arenaR) { b.x *= CFG.arenaR / r; b.z *= CFG.arenaR / r; }
+      const c = clampOctagon(b.x, b.z);   // 🥊 옥타곤 안에서만
+      b.x = c.x; b.z = c.z;
     } else if (now >= b.nextAttackAt) {
       b.nextAttackAt = now + spec.cycle * 1000;
       b.attackAt = now;
@@ -740,6 +817,8 @@ function stepBots(room, st, now, dt) {
         const k = (min - d) / 2;
         a.x -= (dx / d) * k; a.z -= (dz / d) * k;
         b.x += (dx / d) * k; b.z += (dz / d) * k;
+        const ca = clampOctagon(a.x, a.z), cb = clampOctagon(b.x, b.z);
+        a.x = ca.x; a.z = ca.z; b.x = cb.x; b.z = cb.z;
       }
     }
   }
@@ -758,6 +837,13 @@ function stepRoom(room) {
     if (e.dead) {
       if (e.respawnAt && now >= e.respawnAt) respawnEnt(room, st, e);
       continue;
+    }
+    /* 🛡️ 막기 최대 유지 시간이 끝나면 자동으로 내리고 쿨타임에 들어간다 */
+    if (e.guard && e.guardUntil && now >= e.guardUntil) {
+      e.guard = false;
+      e.guardUntil = 0;
+      e.guardCdUntil = now + CFG.guardCooldown * 1000;
+      broadcastEvent(room, { type: 'pguardend', to: targetRef(e), cd: Math.round(CFG.guardCooldown * 1000), held: true });
     }
     if (e.hp < e.maxHp) e.hp = Math.min(e.maxHp, e.hp + e.maxHp * CFG.regenFrac * dt);
     if (e.freezeUntil && e.freezeUntil < now) e.freezeUntil = 0;
@@ -809,6 +895,8 @@ function entState(e, now) {
     g: !!e.guard,
     a: e.attackAt || 0,
     k: e.kills || 0, dt: e.deaths || 0,
+    gc: e.guardCdUntil && e.guardCdUntil > now ? Math.round(e.guardCdUntil - now) : 0,
+    gl: e.guard && e.guardUntil ? Math.max(0, Math.round(e.guardUntil - now)) : 0,
     fz: e.freezeUntil && e.freezeUntil > now ? Math.round(e.freezeUntil - now) : 0,
     dd: e.dead ? e.deathAt : 0
   };
@@ -859,9 +947,12 @@ function handleMessage(room, player, type, msg) {
     case 'prematch': return startBattle(room, { rematch: true, bySlot: player.slot });
     case 'pinput': input(room, player, msg); return { ok: true };
     case 'pguard': {
-      const e = st.ents.get(player.slot);
-      if (e && st.phase === 'battle') e.guard = !!msg.on;
-      return { ok: true };
+      const out = setGuard(room, player, !!msg.on);
+      if (!out.ok && out.cd) {
+        const e = st.ents.get(player.slot);
+        if (e) sendState(room, player);
+      }
+      return out.ok ? { ok: true } : { ok: false, cd: out.cd || 0 };
     }
     case 'pattack': attack(room, player, msg); return { ok: true };
     case 'pspell': castSpell(room, player, msg); return { ok: true };
@@ -906,6 +997,9 @@ module.exports = {
   attack,
   castSpell,
   useSkill,
+  setGuard,
+  clampOctagon,
+  FIXED_CLASS,
   assignTeams,
   allFighters,
   aliveOf

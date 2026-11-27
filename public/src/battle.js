@@ -22,6 +22,8 @@ import {
 } from './config.js';
 import { clamp, angDiff, angLerp, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 import { makeUnitRig } from './rig.js';
+import { stepWalk } from './pose.js';
+import { resolveObstacles } from './ground.js';
 
 const DEATH_DOWN = 0.20 + KNEEL_TIME + FALL_TIME; // 눕기까지 걸리는 시간
 const DEATH_REMOVE = DEATH_DOWN + CORPSE_TIME;
@@ -115,6 +117,8 @@ export class Battle {
     this.resultDelay = 1.5;          // 승패 배너를 띄우기까지 기다리는 시간(초)
     this.rng = mulberry32(this.cfg.seed || 12345);
     this.playerKills = this.opts.playerKills || 0;
+    /* ⚔️ PVP 는 영구 성장 제외 — 솔로에서 쌓은 성장 배율도 적용하지 않는다 (순수 동등 조건) */
+    this.noGrowth = !!(this.opts && this.opts.noGrowth);
     this.playerClass = this.cfg.playerClass || 'soldier';
     this.player = null;
     this.playerDeadT = 0;
@@ -122,6 +126,8 @@ export class Battle {
     this.spawnPoint = { x: 0, z: -12 };
     this.total = 0;
     this.arenaR = 46;
+    this.colliders = [];          // 🪨 지형물(바위·기둥·횃불) 콜라이더 — main.js 가 넘긴다
+    this.groundFn = null;         // ⛰️ 지면 높이(지형 추종)
     this.stats = { allyKills: 0, enemyKills: 0, playerDeaths: 0, startAt: 0 };
     this.tmp = [];
     this.impacts = [];
@@ -294,7 +300,7 @@ export class Battle {
     const px = this.spawnPoint.x;
     const pz = this.spawnPoint.z;
     const pu = this.newUnit(this.playerClass, 'ally', px, pz, true, this.unitSeed(0));
-    const mult = 1 + this.playerKills * GROWTH_PER_KILL;
+    const mult = this.noGrowth ? 1 : 1 + this.playerKills * GROWTH_PER_KILL;
     pu.hp = CLASSES[this.playerClass].hp * mult;
     pu.maxHp = pu.hp;
     pu.damage = CLASSES[this.playerClass].damage * mult;
@@ -503,7 +509,7 @@ export class Battle {
       this.byId.set(p.id, p);
       this.buildOrder();
     }
-    const mult = 1 + this.playerKills * GROWTH_PER_KILL;
+    const mult = this.noGrowth ? 1 : 1 + this.playerKills * GROWTH_PER_KILL;
     p.dead = false; p.deadT = 0; p.corpseT = 0; p.removed = false;
     p.hp = CLASSES[p.cls].hp * mult;
     p.maxHp = p.hp;
@@ -703,16 +709,19 @@ export class Battle {
     if (source) {
       source.kills = (source.kills || 0) + 1;
       if (source.isPlayer) {
-        this.playerKills += 1;
         this.stats.allyKills += 1;
-        const mult = 1 + this.playerKills * GROWTH_PER_KILL;
-        const p = this.player;
-        const ratio = p.hp / Math.max(0.001, p.maxHp);
-        p.maxHp = CLASSES[p.cls].hp * mult;
-        p.hp = Math.max(p.hp, p.maxHp * ratio) + 0.0001;
-        p.damage = CLASSES[p.cls].damage * mult;
-        p.growl = mult;
-        this.emit({ type: 'levelUp', unit: p, kills: this.playerKills, mult });
+        /* PVP 에서는 처치해도 영구 성장이 쌓이지 않는다 */
+        if (!this.noGrowth) {
+          this.playerKills += 1;
+          const mult = 1 + this.playerKills * GROWTH_PER_KILL;
+          const p = this.player;
+          const ratio = p.hp / Math.max(0.001, p.maxHp);
+          p.maxHp = CLASSES[p.cls].hp * mult;
+          p.hp = Math.max(p.hp, p.maxHp * ratio) + 0.0001;
+          p.damage = CLASSES[p.cls].damage * mult;
+          p.growl = mult;
+          this.emit({ type: 'levelUp', unit: p, kills: this.playerKills, mult });
+        }
       } else if (source.team === 'enemy') this.stats.enemyKills += 1;
     }
     if (target.isPlayer) {
@@ -1039,7 +1048,8 @@ export class Battle {
         p.x += wx * sp * dt;
         p.z += wz * sp * dt;
         p.moveAmt = Math.min(1, Math.hypot(wx, wz));
-        p.walkPhase += dt * (6.4 * (p.cls === 'knight' ? 0.8 : 1));
+        /* 보폭에 맞춘 위상 — 실제로 움직인 거리로 올려 발이 미끄러지지 않게 */
+        stepWalk(p, Math.hypot(wx, wz) * sp * dt);
       } else {
         p.moveAmt += (0 - p.moveAmt) * Math.min(1, dt * 9);
       }
@@ -1146,7 +1156,6 @@ export class Battle {
           u.z += (dz2 / dd) * u.speed * 0.92 * dt;
           u.yaw = angLerp(u.yaw, Math.atan2(dx2, dz2), Math.min(1, dt * 5));
           u.moveAmt += (1 - u.moveAmt) * Math.min(1, dt * 6);
-          u.walkPhase += dt * u.speed * 2.1;
         } else {
           u.moveAmt += (0 - u.moveAmt) * Math.min(1, dt * 6);
         }
@@ -1197,7 +1206,6 @@ export class Battle {
         u.x += ax * u.speed * speedMul * dt;
         u.z += az * u.speed * speedMul * dt;
         u.moveAmt += ((Math.hypot(ax, az) > 0.2 ? 1 : 0) - u.moveAmt) * Math.min(1, dt * 6);
-        u.walkPhase += dt * 5.2 * (u.moveAmt);
         u.yaw = angLerp(u.yaw, desiredYaw, Math.min(1, dt * 5));
         continue;
       }
@@ -1279,7 +1287,6 @@ export class Battle {
           if (sl > 0.001) { sx /= sl; sz /= sl; u.x += sx * sp * dt; u.z += sz * sp * dt; }
         }
         u.moveAmt += (1 - u.moveAmt) * Math.min(1, dt * 7);
-        u.walkPhase += dt * (u.speed * 2.1);
       } else {
         u.moveAmt += (0 - u.moveAmt) * Math.min(1, dt * 9);
         // 다음 일격을 기다리는 동안 굳어 있지 않고 옆으로 살짝 흘러 각을 만든다
@@ -1288,7 +1295,7 @@ export class Battle {
           const sx = Math.cos(desiredYaw) * side, sz = -Math.sin(desiredYaw) * side;
           const nx2 = u.x + sx * u.speed * 0.20 * dt, nz2 = u.z + sz * u.speed * 0.20 * dt;
           const blk = this.blockedBy(u, nx2, nz2);
-          if (!blk) { u.x = nx2; u.z = nz2; u.walkPhase += dt * 2.2; }
+          if (!blk) { u.x = nx2; u.z = nz2; }
         }
         if (!u.guard && u.cooldown <= 0 && u.attackT < 0) this.startAttack(u);
       }
@@ -1297,6 +1304,9 @@ export class Battle {
       u.yaw = angLerp(u.yaw, desiredYaw, Math.min(1, dt * (attacking ? 3.2 : 7)));
       u.lookYaw = 0;
     }
+
+    /* 🪨 지형물 충돌 · ⛰️ 전장 경계 · 🚶 걸음 위상 — 모든 유닛 공통 */
+    this.resolveTerrain();
 
     // 분리(겹침 방지) — 매 프레임
     this.separate(dt);
@@ -1394,6 +1404,26 @@ export class Battle {
     // 끝난 뒤에도 시체·잔여 모션이 계속 흐르도록 시간을 기록해 둔다
     if (this.over) this.afterEndT = (this.afterEndT || 0) + dt;
     return this;
+  }
+
+  /* 바위·기둥·횃불 같은 지형물을 뚫고 지나가지 못하게 밀어내고, 전장 밖으로 나가지
+     않게 잡아 준다. 마지막으로 실제 이동 거리로 걸음 위상을 올려 발이 미끄러지지 않게. */
+  resolveTerrain() {
+    const cols = this.colliders;
+    const R = this.arenaR || 46;
+    for (let i = 0; i < this.units.length; i++) {
+      const u = this.units[i];
+      if (u.net || u.dead || u.removed) continue;
+      if (cols && cols.length) resolveObstacles(u, cols);
+      const r = Math.hypot(u.x, u.z);
+      if (r > R) { u.x *= R / r; u.z *= R / r; }
+      if (!u.isPlayer) {
+        const px = u.px === undefined ? u.x : u.px;
+        const pz = u.pz === undefined ? u.z : u.pz;
+        const moved = Math.hypot(u.x - px, u.z - pz);
+        if (moved > 1e-4) stepWalk(u, moved);
+      }
+    }
   }
 
   separate(dt) {

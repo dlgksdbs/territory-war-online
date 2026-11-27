@@ -238,6 +238,8 @@ export class FX {
     this.scene = scene;
     this.camera = camera;
     this.rng = mulberry32(777);
+    /* ⛰️ 지면 높이 함수 — main.js 가 넘긴다 (언덕·옥타곤 매트 위로 피·불티가 따라간다) */
+    this.ground = () => 0;
     this.sparks = new Particles(scene, 1200, glowTexture('rgba(255,255,255,1)', 'rgba(255,190,80,0.35)'), true, 700);
     this.dust = new Particles(scene, 900, smokeTexture(), false, 900);
     this.mist = new Particles(scene, 500, glowTexture('rgba(255,255,255,1)', 'rgba(200,235,255,0.3)'), true, 620);
@@ -564,7 +566,9 @@ export class FX {
   onHit(e, battle) {
     const s = e.source, t = e.target;
     const rng = this.rng;
-    const px = e.hx, pz = e.hz, py = e.hy;
+    const px = e.hx, pz = e.hz;
+    const py = e.hy + (this.ground(px, pz) || 0);
+    /* 대상 유닛의 실제 지면 높이를 따른다 (서버 이벤트는 지면 기준 높이를 보낸다) */
     const dist = this.camera.position.distanceTo(_v1.set(px, py, pz));
     const near = dist < 34;
     const heavy = e.kind === 'hammer';
@@ -645,7 +649,7 @@ export class FX {
     if (u.isPlayer) this.addShake(0.5);
     // 🩸 피가 크게 터지고, 쓰러진 자리에 흥건하게 고인다
     if (dist < 90) {
-      this.bloodBurst(px, 1.05, pz, 0, 0, 72, 2.1);
+      this.bloodBurst(px, 1.05 + (this.ground(px, pz) || 0), pz, 0, 0, 72, 2.1);
       const r = 1.15 + (u.radius || 0.4) * 0.9;
       this.bloodPool(px, pz, r);
       // 주변에 튄 자국 두어 개
@@ -661,11 +665,12 @@ export class FX {
     const u = e.unit;
     if (!u) return;
     const x = e.x, z = e.z;
-    const dist = this.camera.position.distanceTo(_v1.set(x, 0, z));
+    const gy = this.ground(x, z) || 0;
+    const dist = this.camera.position.distanceTo(_v1.set(x, gy, z));
     this.addShake(dist < 22 ? 0.55 : 0.2);
     if (dist > 60) return;
     // 땅 갈라짐 + 먼지
-    this.ring(x, 0.05, z, 3.2, 0xd8b070, 0.45);
+    this.ring(x, gy + 0.05, z, 3.2, 0xd8b070, 0.45);
     for (let i = 0; i < 22; i++) {
       const a = this.rng() * TAU;
       const sp = 1.6 + this.rng() * 4.4;
@@ -714,13 +719,14 @@ export class FX {
 
   onExplode(e, battle) {
     const x = e.x, z = e.z, r = e.radius || 3.5;
-    const dist = this.camera.position.distanceTo(_v1.set(x, 0, z));
+    const gy = this.ground(x, z) || 0;
+    const dist = this.camera.position.distanceTo(_v1.set(x, gy, z));
     const near = dist < 34;
     this.addShake(dist < 30 ? 0.72 : 0.22);
 
     /* 1) 충격 명편 — 바닥을 훑는 두 겹의 파동 + 밀려나는 먼지 */
-    this.ring(x, 0.07, z, r * 1.75, 0xffd8a0, 0.5);
-    this.ring(x, 0.11, z, r * 1.05, 0xfff4d0, 0.32);
+    this.ring(x, gy + 0.07, z, r * 1.75, 0xffd8a0, 0.5);
+    this.ring(x, gy + 0.11, z, r * 1.05, 0xfff4d0, 0.32);
     for (let i = 0; i < 30; i++) {
       const a = this.rng() * TAU;
       this.dust.spawn({
@@ -1015,7 +1021,7 @@ export class FX {
 
   bloodPool(x, z, r) {
     const p = this.bloodPools[this.bloodPoolIdx++ % this.bloodPools.length];
-    p.m.position.set(x, 0.050 + (this.rng() - 0.5) * 0.004, z);
+    p.m.position.set(x, (this.ground(x, z) || 0) + 0.050 + (this.rng() - 0.5) * 0.004, z);
     p.m.rotation.z = this.rng() * TAU;
     p.m.scale.setScalar(r * 0.6);
     p.m.visible = true;

@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { CLASSES, SPELLS, SKILL, TEAM } from './config.js';
 import { clamp, angLerp, angDiff } from './util.js';
+import { clampOctagon } from './ground.js';
 
 const $ = (s) => document.querySelector(s);
 const PROTO = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -47,7 +48,17 @@ export class PvpClient {
     this.lastStateAt = 0;
     this.inputAt = 0;
     this.lastGuard = false;
-    this.stats = { hits: 0, blocks: 0, kills: 0, deaths: 0 };
+    /* 🛡️ PVP 전용 검 막기 — 최대 유지 + 쿨타임 (서버 pstart 값으로 맞춘다) */
+    this.guardHoldMax = 0.8;
+    this.guardCdMax = 2.0;
+    this.guardReflect = 1.0;
+    this.guardActive = false;
+    this.guardLeft = 0;
+    this.guardCd = 0;
+    this.guardSent = false;
+    this.octagon = { apothem: 15 };
+    this.stats = { hits: 0, blocks: 0, kills: 0, deaths: 0, reflected: 0 };
+    this.blockLog = [];           // 🛡️ 최근 패링 기록 (테스트·디버그)
     this._staleWarned = false;
     this._nameTags = null;
     this._restoreName();
@@ -209,6 +220,9 @@ export class PvpClient {
       case 'pblock':
         this.onBlock(m);
         break;
+      case 'pguardend':
+        this.onGuardEnd(m);
+        break;
       case 'pdeath':
         this.onDeath(m);
         break;
@@ -306,9 +320,17 @@ export class PvpClient {
       const on = mine ? (t === 'auto' ? (!mine.team) : mine.team === t) : false;
       b.classList.toggle('is-on', !!on);
     });
+    /* ⚔️ PVP 병종은 일반 병사 고정 — 다른 병종 버튼은 잠근다 */
+    const fixed = l.fixedClass || 'soldier';
     document.querySelectorAll('#plClassBtns button').forEach((b) => {
-      b.classList.toggle('is-on', !!mine && b.dataset.cls === mine.cls);
+      const locked = b.dataset.cls !== fixed;
+      b.disabled = locked;
+      b.classList.toggle('is-locked', locked);
+      b.classList.toggle('is-on', !locked && (!mine || b.dataset.cls === mine.cls));
+      b.setAttribute('aria-disabled', locked ? 'true' : 'false');
     });
+    const clsNote = $('#plClassNote');
+    if (clsNote) clsNote.textContent = '일반 병사 고정 (검 막기 대전)';
     document.querySelectorAll('#plModeBtns button').forEach((b) => {
       const m = b.dataset.mode;
       const on = m === 'elim' ? l.mode === 'elim' : (l.mode === 'kills' && l.killTarget === (m === 'kills20' ? 20 : 10));
@@ -328,8 +350,8 @@ export class PvpClient {
     const note = $('#plNote');
     if (note) {
       note.textContent = me === host
-        ? '시작하면 대기실이 닫히고 바로 전장으로 들어간다 · AI 병력은 전투에서 함께 싸운다'
-        : '방장이 시작하면 자동으로 전장에 들어간다';
+        ? '일반 병사 고정 · 검 막기는 최대 0.8초, 풀면 2초 쿨타임 · 막아내면 상대에게 피해 100% 반사'
+        : '방장이 시작하면 자동으로 옥타곤 링에 들어간다';
     }
     this.myTeam = mine && mine.team ? mine.team : 'ally';
     this.myCls = mine ? mine.cls : 'soldier';
@@ -351,6 +373,7 @@ export class PvpClient {
     if (this.ws && this.ws.readyState === 1 && (this.inLobby || this.inBattle)) {
       this.send({ type: 'leave' });
     }
+    this.resetGuard();
     this.inLobby = false;
     this.inBattle = false;
     this.hideLobby();
@@ -389,6 +412,17 @@ export class PvpClient {
     this.skew = null;
     this.lastState = null;
     this._staleWarned = false;
+    /* 서버가 정한 막기·링 규칙을 그대로 쓴다 */
+    const gd = msg.guard || {};
+    this.guardHoldMax = gd.hold ? gd.hold / 1000 : 0.8;
+    this.guardCdMax = gd.cooldown ? gd.cooldown / 1000 : 2.0;
+    this.guardReflect = gd.reflect === undefined ? 1 : gd.reflect;
+    if (msg.arena && msg.arena.apothem) this.octagon = { apothem: msg.arena.apothem };
+    this.guardActive = false;
+    this.guardLeft = 0;
+    this.guardCd = 0;
+    this.guardSent = false;
+    this.app.input.guard = false;
     this.clearUnits();
     this.roster = msg.roster || [];
     this.app.enterPvpBattle(msg);
@@ -478,7 +512,10 @@ export class PvpClient {
         p.yaw = e.w;
         this.app.camYaw = p.yaw + Math.PI;
       }
-      p.guard = !!e.g;
+      /* 서버 상태와 막기 상태기계를 맞춘다 (쿨타임은 서버가 더 길면 따른다) */
+      if (!this.guardActive) p.guard = !!e.g;
+      if (e.gc) this.guardCd = Math.max(this.guardCd, e.gc / 1000);
+      if (this.guardActive && e.gl) this.guardLeft = Math.min(this.guardLeft, e.gl / 1000 + 0.05);
       p.freezeT = e.fz ? e.fz / 1000 : 0;
       if (p.freezeT > 0.02) { this.app.input.mx = 0; this.app.input.mz = 0; }
     } else if (!p.dead) {
@@ -499,7 +536,7 @@ export class PvpClient {
     p.hideModel = false;
     this.app.attackHeld = false;
     this.app.input.attack = false;
-    this.app.input.guard = false;
+    this.resetGuard();
     const veil = $('#deadVeil');
     if (veil) veil.classList.add('is-on');
   }
@@ -574,6 +611,13 @@ export class PvpClient {
       type: 'hit', source: src || null, target: tgt, dmg: m.dmg, kind: m.kind || 'blade',
       part: 'body', lethal: !!m.lethal, hx: m.hx, hz: m.hz, hy: m.hy || 1.1, angle: m.angle || 0
     });
+    /* ⚔️ 반사 피해 — 내가 공격했다가 막혀 되돌아온 타격 */
+    if (m.kind === 'reflect') {
+      this.reflectT = 0.5;
+      this._toast('⚔️ 막혔다! 검에 튄 피해 ' + Math.round(m.dmg) + ' 가 나에게');
+      this.app.fx && this.app.fx.addShake(0.30);
+      this.app.fx && this.app.fx.flash(m.hx, (m.hy || 1.1), m.hz, 1.5, 0xffd9a0, 0.14);
+    }
   }
 
   onBlock(m) {
@@ -582,7 +626,18 @@ export class PvpClient {
     const u = this.unitOf(m.to);
     if (!u) return;
     if (m.to === this.you) this.stats.blocks += 1;
-    b.emit({ type: 'block', unit: u, source: this.unitOf(m.by), heavy: !!m.heavy, x: m.x, z: m.z, y: m.y || 1.2, dmg: 0 });
+    const reflect = m.reflect || 0;
+    if (m.to === this.you) {
+      this.stats.reflected += reflect;
+      this.blockLog.push({ at: Date.now(), by: m.by, reflect, hp: Math.round(this.app.battle.player.hp) });
+      if (this.blockLog.length > 6) this.blockLog.shift();
+    }
+    b.emit({ type: 'block', unit: u, source: this.unitOf(m.by), heavy: !!m.heavy, x: m.x, z: m.z, y: m.y || 1.2, dmg: 0, reflect });
+    /* 🛡️ 패링 100% 반사 — 막은 사람 화면에 금빛 쾅 + 토스트
+       (불티·섬광·충격파 자체는 main.js 의 block 이벤트 연출이 그린다 — 중복 재생 금지) */
+    if (reflect > 0 && m.to === this.you) {
+      this._toast('⚔️ 패링! ' + Math.round(reflect) + ' 피해를 그대로 돌려줬다');
+    }
   }
 
   onDeath(m) {
@@ -724,7 +779,20 @@ export class PvpClient {
     this.app.paused = true;
     this.app.attackHeld = false;
     this.app.input.attack = false;
+    this.resetGuard();
+  }
+
+  /* 막기 상태를 조용히 되돌린다 (사망·라운드 종료·퇴장) */
+  resetGuard() {
+    this.guardActive = false;
+    this.guardLeft = 0;
+    this.guardSent = false;
+    this.guardCd = 0;
     this.app.input.guard = false;
+    const b = this.app.battle;
+    if (b && b.player) b.player.guard = false;
+    const gb = document.getElementById('guardBtn');
+    if (gb) gb.classList.remove('is-held');
   }
 
   hideResult() {
@@ -797,6 +865,77 @@ export class PvpClient {
     }
   }
 
+  /* ------------------------------------------------------------------ 검 막기
+     PVP 전용 — 한 번에 최대 guardHoldMax 초만 막을 수 있고, 풀거나 자동 종료되면
+     guardCdMax 초 쿨타임이 돌아간다. 서버도 같은 규칙으로 거절한다. */
+  pressGuard() {
+    if (this.phase !== 'battle' || !this.inBattle) return false;
+    const b = this.app.battle;
+    const p = b && b.player;
+    if (!p || p.dead) return false;
+    if (this.guardActive) return true;
+    if (this.guardCd > 0.02) { this.denyGuard(); return false; }
+    this.guardActive = true;
+    this.guardLeft = this.guardHoldMax;
+    this.guardSent = true;
+    this.app.input.guard = true;
+    p.guard = true;
+    this.send({ type: 'pguard', on: true });
+    const gb = document.getElementById('guardBtn');
+    if (gb) gb.classList.add('is-held');
+    return true;
+  }
+
+  releaseGuard() {
+    if (!this.guardActive) return;
+    this.guardActive = false;
+    this.guardLeft = 0;
+    this.guardCd = this.guardCdMax;
+    this.guardSent = false;
+    this.app.input.guard = false;
+    const b = this.app.battle;
+    if (b && b.player) b.player.guard = false;
+    if (this.inBattle) this.send({ type: 'pguard', on: false });
+    const gb = document.getElementById('guardBtn');
+    if (gb) gb.classList.remove('is-held');
+  }
+
+  /* 쿨타임 중 누름 — 버튼을 빨갛게 깜박이고 남은 시간을 알린다 */
+  denyGuard() {
+    const gb = document.getElementById('guardBtn');
+    if (gb) {
+      gb.classList.remove('is-deny');
+      void gb.offsetWidth;
+      gb.classList.add('is-deny');
+      clearTimeout(this._denyT);
+      this._denyT = setTimeout(() => gb.classList.remove('is-deny'), 420);
+    }
+    const left = Math.max(0.1, this.guardCd);
+    this._toast('🛡️ 검 막기 쿨타임 ' + left.toFixed(1) + '초');
+  }
+
+  /* BA.pvp.guard(true/false) — 테스트·디버그용 */
+  guard(on) {
+    if (on) return this.pressGuard();
+    this.releaseGuard();
+    return true;
+  }
+
+  onGuardEnd(m) {
+    /* 다른 사람의 막기 종료는 내 버튼에 영향을 주지 않는다 */
+    if (m && m.to !== undefined && m.to !== this.you) return;
+    this.guardActive = false;
+    this.guardLeft = 0;
+    this.guardSent = false;
+    this.guardCd = Math.max(this.guardCd, m && m.cd ? m.cd / 1000 : this.guardCdMax);
+    this.app.input.guard = false;
+    const b = this.app.battle;
+    if (b && b.player) b.player.guard = false;
+    const gb = document.getElementById('guardBtn');
+    if (gb) gb.classList.remove('is-held');
+    if (m && m.held) this._toast('🛡️ 막기 풀림 — ' + this.guardCdMax.toFixed(1) + '초 뒤 다시 쓸 수 있다');
+  }
+
   /* ------------------------------------------------------------------ 프레임 */
   tick(dt) {
     if (!this.inBattle) return;
@@ -806,14 +945,18 @@ export class PvpClient {
     const p = b.player;
     const now = Date.now();
 
+    /* 검 막기 타이머 — 최대 유지가 끝나면 자동으로 풀고 쿨타임 */
+    if (this.guardActive) {
+      this.guardLeft -= dt;
+      if (this.guardLeft <= 0) this.releaseGuard();
+    } else if (this.guardCd > 0) {
+      this.guardCd = Math.max(0, this.guardCd - dt);
+    }
+
     /* 입력 전송 (16Hz) */
     if (p && now - this.inputAt >= 62) {
       this.inputAt = now;
       this.send({ type: 'pinput', x: p.x, z: p.z, yaw: p.yaw, pitch: app.camPitch });
-      if (p.guard !== this.lastGuard) {
-        this.lastGuard = p.guard;
-        this.send({ type: 'pguard', on: p.guard });
-      }
     }
 
     /* 원격 유닛 보간 */
@@ -830,6 +973,7 @@ export class PvpClient {
 
     this.updatePlates();
     this.updateScore(false);
+    if (this.app.octagon) this.app.octagon.update(dt, this.app.time || 0);
 
     /* 서버가 조용하면 알린다 */
     if (this.lastStateAt && now - this.lastStateAt > 3500 && !this._staleWarned) {
@@ -916,6 +1060,7 @@ export class PvpClient {
       mode: this.mode,
       left: this.left,
       stats: { ...this.stats },
+      blockLog: this.blockLog.slice(),
       plates: this.plates.size,
       platesOn: Array.from(this.plates.values()).filter((e) => e.classList.contains('is-on')).length,
       others: Array.from(this.units.entries()).map(([id, u]) => ({
@@ -950,14 +1095,6 @@ export class PvpClient {
     return b.startAttack(b.player);
   }
 
-  guard(on) {
-    const b = this.app.battle;
-    if (!b || !b.player) return;
-    /* 입력 상태까지 함께 바꿔야 다음 프레임 시뮬레이션이 막기를 풀지 않는다 */
-    this.app.input.guard = !!on;
-    b.player.guard = !!on;
-    this.send({ type: 'pguard', on: !!on });
-  }
 }
 
 function escapeHtml(s) {

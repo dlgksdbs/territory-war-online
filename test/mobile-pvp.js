@@ -4,10 +4,11 @@
    플레이어 PVP · 390×844 실브라우저 2인 동시 접속 검증
    -----------------------------------------------------------------------------
    1) 홈: 「⚔️ 플레이어 PVP」 패널(닉네임·방 만들기·방 코드 입장)이 보이고 눌린다
-   2) 대기실: 방 만들기 → 코드 입장 → 두 사람 · 팀 선택 · 병종 선택 · 방장 시작
-   3) 전장: 시작하면 1인칭 3D 전장, 상대가 병종 모델 + 이름표(팀 색·체력바)로 보인다
+   2) 대기실: 방 만들기 → 코드 입장 → 두 사람 · 팀 선택 · 병종은 일반 병사 고정
+   3) 전장: 🥊 UFC 옥타곤 링 위 1인칭 3D 전장, 상대가 모델 + 이름표로 보인다
    4) 실전: 걸어가서 근접 공격 → 양쪽 체력이 실제로 줄고 피격 연출이 뜬다
-   5) 검 막기: 정면으로 막으면 피해 0 (막힘 이벤트)
+   5) 검 막기: 정면으로 막으면 피해 0 + 공격자에게 피해 100% 반사 · 최대 0.8초 유지 · 2초 쿨타임(HUD 표시)
+   6) 🥊 옥타곤 링 밖으로 나갈 수 없다 (서버·클라이언트 경계)
    6) 상대 화면에서도 3D 전장·모델·이름표가 실제로 그려진다
    7) 전투 HUD(내 버튼 크기·위치) 유지 · 홈 복귀 · 콘솔 오류 0
    실행: node test/mobile-pvp.js
@@ -38,6 +39,13 @@ function ok(name, cond, extra) {
 
 (async () => {
   try { fs.mkdirSync(SHOTS, { recursive: true }); } catch (e) { /* noop */ }
+  /* 이 검증은 소프트웨어 GL 로 두 탭을 동시에 돌려 탭 타이머가 1~2초씩 밀린다.
+     기본 막기 유지(0.8초)는 test/pvp.js 가 서버 단위로 정확히 검증하고,
+     여기서는 막기 창을 조금 넓혀(2.5초) '막힘 → 100% 반사 → HUD 쿨타임' 흐름을 실브라우저로 확인한다. */
+  const PVP = require(path.join(ROOT, 'pvp.js'));
+  const holdSaved = PVP.CFG.guardHold;
+  PVP.CFG.guardHold = 2.5;
+  process.on('exit', () => { PVP.CFG.guardHold = holdSaved; });
   const { createServer } = require(path.join(ROOT, 'server.js'));
   const { server } = createServer();
   await new Promise((res, rej) => { server.once('error', rej); server.listen(PORT, '0.0.0.0', res); });
@@ -48,11 +56,12 @@ function ok(name, cond, extra) {
     headless: 'new',
     protocolTimeout: 900000,
     executablePath: '/workspace/.cache/puppeteer/chrome/linux-148.0.7778.97/chrome-linux64/chrome',
+    /* 두 탭을 동시에 풀 렌더링하면 이 환경(메모리 2GB·소프트웨어 GL)에서 렌더러가 죽는다.
+       뒤 탭은 브라우저 기본 스로틀을 그대로 두어(≈1fps) 메모리·GPU 부담을 줄인다 —
+       서버 권위 판정과 HUD 는 bringToFront 로 앞에 가져와 확인한다. */
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--enable-unsafe-swiftshader',
       '--use-gl=angle', '--use-angle=swiftshader-webgl', '--disable-gpu-sandbox',
-      '--autoplay-policy=no-user-gesture-required', '--disable-dev-shm-usage',
-      '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding']
+      '--autoplay-policy=no-user-gesture-required', '--disable-dev-shm-usage']
   });
   const errorsA = [];
   const errorsB = [];
@@ -136,11 +145,14 @@ function ok(name, cond, extra) {
     enemy: document.querySelector('#plEnemyList').textContent,
     allyOn: document.querySelector('#plTeamBtns [data-team="ally"]').classList.contains('is-on'),
     clsOn: document.querySelector('#plClassBtns [data-cls="soldier"]').classList.contains('is-on'),
+    clsNote: (document.getElementById('plClassNote') || {}).textContent || '',
+    locked: Array.from(document.querySelectorAll('#plClassBtns button')).map((b) => ({ cls: b.dataset.cls, dis: !!b.disabled })),
     startEnabled: !document.getElementById('plStart').disabled
   }));
-  ok('대기실에서 팀(아군/적군)과 병종(6종)을 고른다',
-    /한윤/.test(lobbyUI.ally) && /친구/.test(lobbyUI.enemy) && lobbyUI.allyOn && lobbyUI.clsOn,
-    { ally: lobbyUI.ally.trim(), enemy: lobbyUI.enemy.trim() });
+  ok('대기실에서 팀(아군/적군)을 고르고, 병종은 일반 병사로 고정·잠긴다',
+    /한윤/.test(lobbyUI.ally) && /친구/.test(lobbyUI.enemy) && lobbyUI.allyOn && lobbyUI.clsOn &&
+    lobbyUI.locked.filter((b) => b.dis).length === 5 && /일반 병사/.test(lobbyUI.clsNote),
+    { cls: lobbyUI.locked.map((b) => b.cls + (b.dis ? '🔒' : '')), note: lobbyUI.clsNote });
   ok('방장은 시작할 수 있고, 방장이 아닌 쪽은 잠긴다',
     lobbyUI.startEnabled && (await B.evaluate(() => document.getElementById('plStart').disabled)) === true);
 
@@ -170,9 +182,14 @@ function ok(name, cond, extra) {
       topText: top.textContent.replace(/\s+/g, ' ').trim(),
       frames: window.BA.state().frames,
       others: st.others.length,
-      me: st.me
+      me: st.me,
+      oct: window.BA.oct(),
+      growShown: getComputedStyle(document.querySelector('.player-status .ps-grow')).display !== 'none'
     };
   });
+  ok('🥊 PVP 전장은 UFC 옥타곤 링 — 8각 매트·기둥·케이지가 세워진다',
+    !!battleA.oct && battleA.oct.meshes >= 8 && battleA.oct.apothem === 15,
+    battleA.oct);
   ok('시작하면 1인칭 3D 전장으로 들어간다 (PVP 점수판 표시)',
     /is-active/.test(battleA.cls) && /is-pvp/.test(battleA.cls) && battleA.topShown && battleA.frames > 3,
     { cls: battleA.cls, top: battleA.topText, frames: battleA.frames });
@@ -254,39 +271,195 @@ function ok(name, cond, extra) {
   });
   ok('지금 공격하면 맞는 상대에게 조준점이 붉게 바뀐다', ret.hit === true, ret);
 
-  /* ===== 5. 검 막기 ===== */
-  await B.evaluate(() => window.BA.pvp.guard(true));
-  await sleep(500);
-  const hpGuard = await B.evaluate(() => window.BA.pvp.state().me.hp);
-  let blocked = false;
-  let hpLow = hpGuard;
-  for (let i = 0; i < 10 && !blocked; i++) {
-    await A.evaluate(() => window.BA.pvp.swing());
-    await sleep(1600);
-    const s2 = await B.evaluate(() => ({ hp: window.BA.pvp.state().me.hp, blocks: window.BA.pvp.state().stats.blocks }));
-    hpLow = Math.min(hpLow, s2.hp);
-    blocked = s2.blocks >= 1;
+  /* ===== 5. 검 막기 — 정면 방어 + 100% 반사 =====
+     (소프트웨어 GL 에서는 rAF 가 느려 로컬 공격 애니메이션이 실시간보다 늦게 진행된다.
+      판정 자체는 서버가 하므로, 확실한 검증은 서버 권위 메시지로 보낸다 — 화면 연출은 실제 스윙으로 따로 확인) */
+  await front(A, 500);
+  await A.waitForFunction(() => {
+    const s = window.BA.pvp.state();
+    return s && s.me && !s.me.dead && window.BA.battle.player.cooldown <= 0 && window.BA.battle.player.attackT < 0;
+  }, { timeout: 12000, polling: 120 }).catch(() => null);
+  let before = null, parry = null, hitThrough = false, armed = false, geo = null;
+  const line = [];
+  for (let attempt = 0; attempt < 3 && !parry; attempt++) {
+    /* 서버 권위 좌표로 상대 정면 1.5m 지점까지 걸어간다 (로컬 좌표만 믿으면 서버 위치와 어긋난다) */
+    geo = await A.evaluate(() => {
+      const you = window.BA.pvp.state().you;
+      const st = window.BA.pvp.client.lastState;
+      if (!st || !st.ents) return null;
+      const me = st.ents.find((e) => e.s === you);
+      const foe = st.ents.find((e) => e.s !== you);
+      if (!me || !foe) return null;
+      const tx = foe.x, tz = foe.z - 1.5;
+      const yaw = Math.atan2(foe.x - tx, foe.z - tz);
+      const n = Math.max(1, Math.ceil(Math.hypot(tx - me.x, tz - me.z) / 0.4));
+      for (let i = 1; i <= n; i++) {
+        window.BA.pvp.send({ type: 'pinput', x: me.x + (tx - me.x) * i / n, z: me.z + (tz - me.z) * i / n, yaw, pitch: 0 });
+      }
+      return { me: { x: +me.x.toFixed(2), z: +me.z.toFixed(2) }, foe: { x: +foe.x.toFixed(2), z: +foe.z.toFixed(2) }, yaw: +yaw.toFixed(3), n };
+    });
+    if (!geo) { await sleep(400); continue; }
+    await sleep(420);
+    before = await A.evaluate(() => {
+      const you = window.BA.pvp.state().you;
+      const st = window.BA.pvp.client.lastState;
+      const me = st.ents.find((e) => e.s === you);
+      const foe = st.ents.find((e) => e.s !== you);
+      return { me: { x: me.x, z: me.z, w: me.w, hp: me.hp }, other: { x: foe.x, z: foe.z, w: foe.w, hp: foe.hp },
+        d: +Math.hypot(me.x - foe.x, me.z - foe.z).toFixed(2) };
+    });
+    if (before.d > 2.5 || before.d < 0.8) continue;
+    /* B 가 막기를 켜고, A 가 그 사이 계속 벤다 (서버가 공속 주기로 거른다) */
+    await B.evaluate(() => window.BA.pvp.guard(true));
+    for (let k = 0; k < 5 && !parry; k++) {
+      await A.evaluate((yaw) => window.BA.pvp.send({ type: 'pattack', yaw }), geo.yaw);
+      await sleep(150);
+    }
+    armed = false;
+    line.length = 0;
+    for (let i = 0; i < 40 && !parry; i++) {
+      await sleep(110);
+      const st = await B.evaluate(() => {
+        const s2 = window.BA.pvp.client.lastState || {};
+        const you = window.BA.pvp.state().you;
+        const foe = (s2.ents || []).find((e) => e.s !== you) || {};
+        return {
+          blocks: window.BA.pvp.state().stats.blocks,
+          log: window.BA.pvp.state().blockLog,
+          hp: window.BA.pvp.state().me.hp,
+          g: !!(s2.me && s2.me.g),
+          aFoe: foe.a || 0,
+          t: s2.t || 0
+        };
+      });
+      line.push({ g: st.g, a: st.aFoe, hp: Math.round(st.hp), t: st.t });
+      if (st.g) armed = true;
+      if (st.blocks > 0) { parry = st; break; }
+      if (st.hp <= 0) break;
+    }
+    if (!parry) await sleep(2600);   // 막기 쿨타임이 지난 뒤 다시
   }
-  const hpGuard2 = await B.evaluate(() => window.BA.pvp.state().me.hp);
-  /* 막는 동안에는 피해가 없다 (자연 회복으로 조금 오르는 것만 허용) */
-  ok('정면으로 검을 막으면 피해가 들어가지 않는다', blocked && hpLow >= hpGuard - 0.6,
-    { before: hpGuard, low: hpLow, after: hpGuard2, blocked });
-  await B.evaluate(() => window.BA.pvp.guard(false));
-  await shot(A, '05-battle-block.png');
+  const hpBk0 = before ? before.other.hp : 0;
+  const hpAk0 = before ? before.me.hp : 0;
+  const hpAafter = await A.evaluate(() => window.BA.pvp.state().me.hp);
+  const lastBlock = parry && parry.log && parry.log.length ? parry.log[parry.log.length - 1] : null;
+  const connA = await A.evaluate(() => { const s2 = window.BA.pvp.state(); return { inBattle: s2.inBattle, ws: s2.ws, phase: s2.phase }; });
+  ok('서버 기준으로 상대 정면 1.5m 안에 섰다', !!before && before.d < 2.5 && before.d > 0.8, before && { d: before.d, me: before.me, foe: before.other });
+  ok('검 막기 — 서버가 정면 공격을 막아내고 막힘(패링) 이벤트를 보낸다',
+    !!parry && !!lastBlock && lastBlock.reflect === 115,
+    parry ? { lastBlock, g: parry.g } : { hitThrough, before, geo, connA, line: line.slice(0, 16) });
+  ok('막아낸 피해 100%가 공격자에게 그대로 반사된다 (115)',
+    !!lastBlock && lastBlock.reflect === 115 && (hpAk0 - hpAafter) >= 100,
+    lastBlock ? { reflect: lastBlock.reflect, before: hpAk0, after: hpAafter, reflected: +(hpAk0 - hpAafter).toFixed(1) } : null);
+  /* 실제 스윙 연출(스크린샷용) */
+  await A.evaluate(() => window.BA.pvp.swing());
+  await sleep(260);
+  await shot(A, '05-battle-parry-reflect.png');
 
-  /* 점수판 */
-  const board = await A.evaluate(() => ({
-    goal: document.getElementById('ptGoal').textContent,
-    score: document.getElementById('ptScore').textContent,
-    time: document.getElementById('ptTime').textContent,
-    ally: document.getElementById('ptAlly').textContent,
-    enemy: document.getElementById('ptEnemy').textContent
+  /* ===== 5b. 막기 유지 시간 + 쿨타임(HUD) ===== */
+  await front(B, 2700);          // 막기 유지 시간이 지나면 자동으로 풀리고 쿨타임
+  const guardCd = await B.evaluate(() => {
+    const btn = document.getElementById('guardBtn');
+    const num = btn.querySelector('.cd-num');
+    return {
+      on: !!window.BA.pvp.state().me.guard,
+      active: !!window.BA.pvp.client.guardActive,
+      cd: +(window.BA.pvp.client.guardCd || 0).toFixed(2),
+      isCd: btn.classList.contains('is-cd'),
+      num: num ? num.textContent : '',
+      label: (btn.querySelector('.sk-label') || {}).textContent,
+      mask: (btn.querySelector('.cd-mask') || { style: {} }).style.transform,
+      again: window.BA.pvp.guard(true)
+    };
+  });
+  ok('막기는 정해진 유지 시간이 지나면 자동으로 풀린다', guardCd.on === false && guardCd.active === false, guardCd);
+  ok('쿨타임 중에는 막기 버튼이 잠기고 남은 초가 보인다',
+    guardCd.cd > 0.2 && guardCd.isCd && /\d/.test(guardCd.num) && /scaleY\(/.test(guardCd.mask) && /재장전/.test(guardCd.label || ''),
+    guardCd);
+  const reguard = await B.evaluate(() => ({
+    again: window.BA.pvp.guard(true),
+    active: window.BA.pvp.client.guardActive,
+    cd: +(window.BA.pvp.client.guardCd || 0).toFixed(2),
+    me: !!window.BA.pvp.state().me.guard,
+    srv: !!(window.BA.pvp.client.lastState && window.BA.pvp.client.lastState.me && window.BA.pvp.client.lastState.me.g)
   }));
-  ok('전장 위에 팀 인원·점수·목표·남은 시간이 표시된다',
-    /목표 3킬/.test(board.goal) && /\d+ : \d+/.test(board.score) && /아군/.test(board.ally) && /적군/.test(board.enemy) && /\d+:\d\d/.test(board.time), board);
+  ok('쿨타임 중 다시 눌러도 막기가 켜지지 않는다', reguard.again === false && reguard.active === false && reguard.me === false && reguard.srv === false, reguard);
+  const aGuardHud = await A.evaluate(() => ({
+    isCd: document.getElementById('guardBtn').classList.contains('is-cd'),
+    cd: +(window.BA.pvp.client.guardCd || 0).toFixed(2)
+  }));
+  ok('상대가 막기를 풀어도 내 막기 버튼은 쿨타임이 되지 않는다', aGuardHud.isCd === false && aGuardHud.cd < 0.05, aGuardHud);
+  await shot(B, '05b-guard-cooldown-hud.png');
+
+  /* ===== 5c. 🥊 옥타곤 링 경계 ===== */
+  const octInfo = await A.evaluate(() => window.BA.oct());
+  const ringMath = await A.evaluate(() => ({
+    edge: window.BA.ring(40, 0),
+    inside: window.BA.ring(3, 4)
+  }));
+  ok('8각 경계 — 변 밖 좌표는 경계(±16.2m 꼭짓점)로 되돌아온다',
+    Math.abs(ringMath.edge.x - 16.2359) < 0.01 && ringMath.inside.x === 3 && ringMath.inside.z === 4,
+    { edge: ringMath.edge });
+  /* 서버 권위 이동으로 링 밖을 향해 걸어간다 (0.45m 씩) */
+  await A.evaluate(() => {
+    const st = window.BA.pvp.state();
+    let x = st.me.x, z = st.me.z;
+    for (let i = 0; i < 45; i++) {
+      x += 0.45;
+      window.BA.pvp.send({ type: 'pinput', x, z, yaw: st.me.yaw, pitch: 0 });
+    }
+  });
+  await sleep(700);
+  const ringA = await A.evaluate(() => {
+    const st = window.BA.pvp.state();
+    return { x: +st.me.x.toFixed(2), z: +st.me.z.toFixed(2), r: +Math.hypot(st.me.x, st.me.z).toFixed(2) };
+  });
+  ok('플레이어는 끝까지 걸어도 옥타곤 링 밖으로 나갈 수 없다',
+    ringA.r <= 16.3 && ringA.r > 13, { ...ringA, oct: octInfo && octInfo.apothem });
+  await front(A, 500);
+  await shot(A, '06-octagon-cage.png');
+  /* ===== 5d. 영구 성장은 PVP 에서 제외 ===== */
+  const growState = await A.evaluate(() => ({
+    shown: getComputedStyle(document.querySelector('.player-status .ps-grow')).display !== 'none',
+    chip: getComputedStyle(document.querySelector('.kill-chip')).display !== 'none',
+    kills: window.BA.battle.playerKills,
+    growth: window.BA.state().growth
+  }));
+  ok('PVP 에서는 영구 성장 표시·처치 누적이 없다 (순수 동등 조건)',
+    growState.shown === false && growState.chip === false && growState.kills === 0 && growState.growth === '+0.000%', growState);
+
+  /* 다시 상대 정면으로 돌아와 서로를 바라본다 (이름표·모델 확인용) */
+  await A.evaluate(() => {
+    const you = window.BA.pvp.state().you;
+    const st = window.BA.pvp.client.lastState;
+    const me = st.ents.find((e) => e.s === you);
+    const foe = st.ents.find((e) => e.s !== you);
+    const tx = foe.x, tz = foe.z - 1.6;
+    const yaw = Math.atan2(foe.x - tx, foe.z - tz);
+    const n = Math.max(1, Math.ceil(Math.hypot(tx - me.x, tz - me.z) / 0.4));
+    for (let i = 1; i <= n; i++) {
+      window.BA.pvp.send({ type: 'pinput', x: me.x + (tx - me.x) * i / n, z: me.z + (tz - me.z) * i / n, yaw, pitch: 0 });
+    }
+    window.BA.pvp.lookAt(foe.s);
+  });
+  await sleep(700);
 
   /* ===== 6. 상대 화면도 실제로 그려진다 ===== */
   await front(B, 2500);
+  /* B 가 A 를 바라보게 한 뒤, 이름표 투영이 갱신될 때까지 기다린다 */
+  await B.evaluate(() => {
+    const st = window.BA.pvp.state();
+    if (st && st.others[0]) window.BA.pvp.lookAt(st.others[0].id);
+  });
+  await sleep(400);
+  for (let i = 0; i < 12; i++) {
+    const on = await B.evaluate(() => {
+      const st = window.BA.pvp.state();
+      return st && st.platesOn > 0;
+    });
+    if (on) break;
+    await sleep(400);
+  }
   const lookB = await B.evaluate(() => {
     const st = window.BA.pvp.state();
     const plate = document.querySelector('#pvpNames .pn-plate');

@@ -248,13 +248,20 @@ function applyLocomotion(p, cls, phase, move, t) {
     const swing = Math.max(0, -sn);                 // 앞으로 차는 구간
     const stance = Math.max(0, sn);                 // 땅을 미는 구간
     const lift = Math.max(0, -cs);                  // 발이 완전히 떠 있는 구간
+    /* 착지 직후(뒤꿈치) — 발이 앞으로 나와 막 닿는 순간 */
+    const heel = Math.max(0, -sn) * Math.max(0, cs);
     const thigh = -sn * st.stride * A;
-    const knee = (0.07 + lift * 0.86 + stance * 0.10) * A + 0.035;
+    /* 무릎: 차는 초반 크게 접었다가 앞으로 뻗으며 펴지고, 디딤에서는 살짝만 굽는다.
+       완전히 편 자세(0.03)로 떨어져 '무릎이 자물쇠처럼 굳는' 느낌을 없앤다. */
+    const knee = (0.055 + swing * (0.34 + 0.70 * lift) + stance * 0.14 + heel * 0.10) * A + 0.03;
     R(p, rev ? J.thighL : J.thighR, thigh - swing * 0.06 * A, 0, 0);
     R(p, rev ? J.shinL : J.shinR, knee, 0, 0);
-    /* 발목: 디딤에서는 뒤꿈치→발끝으로 구르고, 차는 동안 발끝이 들린다 */
-    R(p, rev ? J.footL : J.footR,
-      -thigh * 0.48 - knee * 0.58 + lift * (0.40 + 0.10 * sn) - stance * 0.16, 0, 0);
+    /* 발목: 착지에서는 발끝이 살짝 들리고(배측굴곡), 디딤 후반에는 발끝으로 밀어낸다(족저굴곡).
+       차는 동안에는 발목을 풀어 발끝이 자연스럽게 늘어진다. */
+    const ankle = -thigh * 0.42 - knee * 0.55 - heel * 0.34 + swing * 0.16 + stance * 0.20 + lift * 0.12;
+    R(p, rev ? J.footL : J.footR, ankle, 0, 0);
+    /* 다리가 몸 앞쪽으로 지나갈 때 골반이 살짝 좁아졌다 벌어진다 (걸음이 흔들리지 않게) */
+    R(p, rev ? J.hipL : J.hipR, 0, 0, (rev ? 1 : -1) * swing * 0.030 * A);
   };
   step('R', phase, false);
   step('L', phase + Math.PI, true);
@@ -263,6 +270,8 @@ function applyLocomotion(p, cls, phase, move, t) {
   const bob = Math.abs(s) * (cls === 'knight' ? 0.046 : cls === 'wizard' ? 0.018 : 0.032) * A;
   p.rootAdd[1] -= bob + 0.004 * A;
   R(p, J.pelvis, 0.02 * A + 0.03 * Math.abs(c) * A, -s * 0.16 * A, -s * 0.075 * A);
+  /* 체중이 실린 쪽으로 골반이 아주 조금 옆으로 밀린다 (사람처럼) */
+  p.rootAdd[0] += s * 0.012 * A;
 
   /* 허리 — 속도에 비례해 앞으로 기울고 어깨는 골반과 반대로 비틀린다 */
   const lean = st.lean * A;
@@ -856,6 +865,15 @@ export function applyDeath(p, cls, t, kind, dir) {
 /* ---------------------------------------------------------------------------
    메인 포즈 계산
    --------------------------------------------------------------------------- */
+/* 보폭에 맞춘 걸음 위상 — 이동한 거리로 위상을 올려 발이 미끄러지지 않는다.
+   (같은 속도면 같은 주기 · 느리게 걸으면 천천히, 뛰면 빠르게) */
+export function stepWalk(u, dist) {
+  if (!u || !(dist > 1e-5)) return;
+  const sp = u.speed || 4;
+  const stride = (0.95 + 0.115 * sp) * (u.cls === 'knight' ? 1.10 : u.cls === 'wizard' ? 0.88 : 1);
+  u.walkPhase = ((u.walkPhase || 0) + (dist / stride) * Math.PI) % (Math.PI * 2);
+}
+
 export function computePose(u, t, dt) {
   const p = u.pose;
   const cls = u.cls;

@@ -210,15 +210,17 @@ function buildEliteSword() {
   return g;
 }
 
-/* 🩸 단검 광전사 — 양손에 짧은 단검 (오른손 주도 · 왼손은 아래에서 받쳐 찌른다) */
+/* 🩸 단검 광전사 — 양손에 짧은 단검. 두 손은 '각자 화면 좌우 가장자리'에 따로 서서
+   번갈아 찌르고 그어낸다 (한 덩어리로 모이지 않는다). 오른손·왼손 그룹을 따로 둔다. */
 function buildDaggers() {
   const g = new THREE.Group();
   const steel = matSteel(), bronze = matGold(), leather = matLeather(), dark = matDark();
   const cloth = matCloth(0x45251f);
   const gleamMat = new THREE.MeshBasicMaterial({ color: 0xe8f4ff, transparent: true, opacity: 0.55 });
 
-  const blade = () => {
+  const blade = (side) => {
     const b = new THREE.Group();
+    const sg = side === 'R' ? 1 : -1;
     b.add(cyl(0.024, 0.028, 0.15, leather, [0, -0.03, 0]));
     for (let i = 0; i < 3; i++) b.add(cyl(0.031, 0.031, 0.011, bronze, [0, -0.085 + i * 0.04, 0]));
     b.add(box(0.135, 0.032, 0.045, bronze, [0, 0.055, 0]));            // 가드
@@ -230,33 +232,33 @@ function buildDaggers() {
     b.add(sph(0.036, bronze, [0, -0.115, 0], [1, 0.9, 1]));
     b.add(box(0.10, 0.12, 0.11, dark, [0, -0.045, 0.01]));            // 손
     b.add(box(0.118, 0.045, 0.10, steel, [0, -0.10, 0.01]));
+    /* 팔뚝 — 손목에서 화면 아래·바깥으로 뻗는다 */
+    const arm = new THREE.Group();
+    arm.position.set(0.01 * sg, -0.16, 0.02);
+    arm.rotation.set(0.30, -0.18 * sg, -0.45 * sg);
+    arm.add(capsule(0.062, 0.34, cloth, [0, -0.18, 0]));
+    arm.add(cyl(0.075, 0.068, 0.10, matSteel(), [0, -0.02, 0]));
+    arm.add(box(0.115, 0.055, 0.11, leather, [0, -0.30, 0]));           // 팔찌
+    b.add(arm);
+    b.userData.arm = arm;
     return b;
   };
 
-  /* 오른손(주도) */
-  const r = blade();
+  const r = blade('R');
   const gleam = box(0.008, 0.28, 0.019, gleamMat, [0.026, 0.215, 0.004]);
   r.add(gleam);
   g.add(r);
+  g.userData.handR = r;
+  g.userData.blade = r;
   g.userData.gleam = gleam;
-  const armR = new THREE.Group();
-  armR.position.set(0.02, -0.16, 0.02);
-  armR.rotation.set(0.35, -0.25, -0.55);
-  armR.add(capsule(0.062, 0.30, cloth, [0, -0.16, 0]));
-  armR.add(cyl(0.075, 0.068, 0.10, matSteel(), [0, -0.02, 0]));
-  g.add(armR);
-  g.userData.armGroup = armR;
+  g.userData.armGroup = r.userData.arm;
 
-  /* 왼손(보조) — 화면 왼쪽 아래에서 받쳐 든다 */
-  const l = blade();
-  l.position.set(-0.26, -0.09, 0.03);
-  l.rotation.set(0.22, 0.18, 0.12);
+  const l = blade('L');
+  const gleamL = box(0.008, 0.28, 0.019, gleamMat, [-0.026, 0.215, 0.004]);
+  l.add(gleamL);
   g.add(l);
-  const armL = new THREE.Group();
-  armL.position.set(-0.24, -0.25, 0.02);
-  armL.rotation.set(0.45, 0.30, 0.85);
-  armL.add(capsule(0.058, 0.30, cloth, [0, -0.16, 0]));
-  g.add(armL);
+  g.userData.handL = l;
+  g.userData.gleamL = gleamL;
   return g;
 }
 
@@ -388,17 +390,34 @@ const CURVES = {
       { t: 1.06, p: [-0.30, -0.62, -0.60], r: [-0.06, 0.10, 0.10], ease: 'inout' }
     ]
   },
-  /* 🩸 단검 광전사 — 짧고 빠른 찌르기 (0.24초 모션을 0.25초 주기에 재생) */
+  /* 🩸 단검 광전사 — 두 손이 각자 화면 좌우 가장자리에서 번갈아 찌른다 (0.24초 모션 / 0.25초 주기)
+     · 오른손은 오른쪽 아래, 왼손은 왼쪽 아래에서 시작해 손이 가운데로 모이지 않는다
+     · 임팩트마다 단검이 화면 안쪽(-Z)으로 곤두세워지며 짧고 날카롭게 꽂힌다 */
   berserker: {
-    idle: { p: [0.26, -0.48, -0.60], r: [-0.20, -0.55, -0.28] },
+    dual: true,
     dur: 0.24,
-    keys: [
-      { t: 0.00, p: [0.26, -0.48, -0.60], r: [-0.20, -0.55, -0.28] },
-      { t: 0.05, p: [0.34, -0.44, -0.56], r: [-0.02, -0.70, -0.18], ease: 'out' },
-      { t: 0.11, p: [0.12, -0.34, -0.92], r: [-1.15, 0.10, 0.10], ease: 'out' },
-      { t: 0.17, p: [0.28, -0.46, -0.66], r: [-0.42, -0.40, -0.20], ease: 'inout' },
-      { t: 0.24, p: [0.26, -0.48, -0.60], r: [-0.20, -0.55, -0.28], ease: 'inout' }
-    ]
+    R: {
+      idle: { p: [0.34, -0.30, -0.80], r: [-0.20, -0.30, 0.26] },
+      keys: [
+        { t: 0.000, p: [0.34, -0.30, -0.80], r: [-0.20, -0.30, 0.26] },
+        { t: 0.030, p: [0.42, -0.16, -0.70], r: [0.10, -0.52, -0.62], ease: 'out' },
+        { t: 0.080, p: [0.04, -0.30, -0.92], r: [-0.34, -0.18, 1.02], ease: 'quint' },
+        { t: 0.108, p: [-0.08, -0.40, -0.86], r: [-0.26, 0.06, 1.92], ease: 'out' },
+        { t: 0.150, p: [0.32, -0.31, -0.82], r: [-0.08, -0.34, -0.10], ease: 'inout' },
+        { t: 0.240, p: [0.34, -0.30, -0.80], r: [-0.20, -0.30, 0.26], ease: 'inout' }
+      ]
+    },
+    L: {
+      idle: { p: [-0.34, -0.32, -0.80], r: [-0.20, 0.30, -0.26] },
+      keys: [
+        { t: 0.000, p: [-0.34, -0.32, -0.80], r: [-0.20, 0.30, -0.26] },
+        { t: 0.095, p: [-0.42, -0.18, -0.70], r: [0.10, 0.52, 0.62], ease: 'out' },
+        { t: 0.165, p: [-0.04, -0.32, -0.92], r: [-0.34, 0.18, -1.02], ease: 'quint' },
+        { t: 0.192, p: [0.08, -0.42, -0.86], r: [-0.26, -0.06, -1.92], ease: 'out' },
+        { t: 0.225, p: [-0.30, -0.34, -0.82], r: [-0.06, 0.34, 0.10], ease: 'inout' },
+        { t: 0.240, p: [-0.34, -0.32, -0.80], r: [-0.20, 0.30, -0.26], ease: 'inout' }
+      ]
+    }
   }
 };
 
@@ -521,8 +540,17 @@ export class ViewModel {
     this.guardK = 0;
     this.swapT = 0;
     const cur = CURVES[cls] || CURVES.soldier;
-    this.root.position.set(cur.idle.p[0] * FRAMING_X, cur.idle.p[1] * FRAMING_Y, cur.idle.p[2]);
-    this.root.rotation.set(cur.idle.r[0], cur.idle.r[1], cur.idle.r[2]);
+    if (cur.dual) {
+      this.root.position.set(0, 0, 0);
+      this.root.rotation.set(0, 0, 0);
+      this.inner.position.set(0, 0, 0);
+      this.inner.rotation.set(0, 0, 0);
+    } else {
+      this.root.position.set(cur.idle.p[0] * FRAMING_X, cur.idle.p[1] * FRAMING_Y, cur.idle.p[2]);
+      this.root.rotation.set(cur.idle.r[0], cur.idle.r[1], cur.idle.r[2]);
+      this.inner.position.set(0, 0, 0);
+      this.inner.rotation.set(0, 0, 0);
+    }
     if (cls === 'wizard') {
       this.palm.position.set(0.30, -0.44, -0.52);
       this.palm.rotation.set(0.10, -0.25, 0.0);
@@ -560,11 +588,13 @@ export class ViewModel {
     const spr = CLASSES[this.className] || CLASSES.soldier;
     const atk = player && player.attackT >= 0 ? player.attackT * ((cur.dur || spr.animDur) / Math.max(0.001, player.cycle || spr.cycle)) : -1;
     let p = this._p, r = this._r;
-    if (atk >= 0 && atk < cur.dur) {
-      sample(cur.keys, atk, p, r);
-    } else {
-      p[0] = cur.idle.p[0]; p[1] = cur.idle.p[1]; p[2] = cur.idle.p[2];
-      r[0] = cur.idle.r[0]; r[1] = cur.idle.r[1]; r[2] = cur.idle.r[2];
+    if (!cur.dual) {
+      if (atk >= 0 && atk < cur.dur) {
+        sample(cur.keys, atk, p, r);
+      } else {
+        p[0] = cur.idle.p[0]; p[1] = cur.idle.p[1]; p[2] = cur.idle.p[2];
+        r[0] = cur.idle.r[0]; r[1] = cur.idle.r[1]; r[2] = cur.idle.r[2];
+      }
     }
 
     // 대기 흔들림 + 이동 흔들림
@@ -575,6 +605,73 @@ export class ViewModel {
     const walkX = Math.sin(ph) * 0.016 * mv;
     const walkY = Math.abs(Math.cos(ph)) * 0.018 * mv;
     this.bob = lerp(this.bob, walkY, Math.min(1, dt * 8));
+
+    /* 🩸 쌍단검 — 두 손을 각자 화면 가장자리에서 따로 움직인다 */
+    if (cur.dual) {
+      const model = this.models[this.className];
+      const hR = model && model.userData.handR;
+      const hL = model && model.userData.handL;
+      if (hR && hL) {
+        const k = 1 / (this.inner.scale.x || 1);
+        const sh = cur.R.keys, sl = cur.L.keys;
+        const aR = atk >= 0 && atk < cur.dur ? atk : -1;
+        if (aR >= 0) { sample(sh, aR, this._p, this._r); sample(sl, aR, this._p2, this._r2); }
+        else {
+          this._p[0] = cur.R.idle.p[0]; this._p[1] = cur.R.idle.p[1]; this._p[2] = cur.R.idle.p[2];
+          this._r[0] = cur.R.idle.r[0]; this._r[1] = cur.R.idle.r[1]; this._r[2] = cur.R.idle.r[2];
+          this._p2[0] = cur.L.idle.p[0]; this._p2[1] = cur.L.idle.p[1]; this._p2[2] = cur.L.idle.p[2];
+          this._r2[0] = cur.L.idle.r[0]; this._r2[1] = cur.L.idle.r[1]; this._r2[2] = cur.L.idle.r[2];
+        }
+        /* 전역 흔들림은 inner 에만 — 두 손의 상대 위치는 그대로 유지된다 */
+        this.root.position.set(0, 0, 0);
+        this.root.rotation.set(0, 0, 0);
+        this.inner.position.set(sway + walkX, breatheY - this.bob, 0);
+        this.inner.rotation.set(
+          this._lagPitch * 0.7 + mv * 0.10 + Math.sin(this.time * 1.1) * 0.006,
+          this._lagYaw * 0.9,
+          Math.sin(this.time * 0.7) * 0.008 + Math.sin(ph) * 0.03 * mv
+        );
+        // 타격 반동 — 손만 살짝 뒤로 물러난다
+        let recoil = 0;
+        if (player && player.attackT >= 0) {
+          const impT = impactAt(this.className);
+          if (player.attackT >= impT) {
+            const cyc = (CLASSES[this.className] || CLASSES.soldier).cycle;
+            const kk = (player.attackT - impT) / Math.max(0.001, cyc - impT);
+            recoil = Math.exp(-kk * 7.5) * 0.020;
+          }
+        }
+        model.userData.blade = atk >= 0 && atk >= 0.115 ? hL : hR;
+        const rz = recoil * 1.6;
+        hR.position.set(this._p[0] * k, (this._p[1] + breatheY - this.bob) * k, (this._p[2] + rz) * k);
+        hR.rotation.set(this._r[0] - recoil * 3, this._r[1], this._r[2]);
+        hL.position.set(this._p2[0] * k, (this._p2[1] + breatheY - this.bob) * k, (this._p2[2] + rz) * k);
+        hL.rotation.set(this._r2[0] - recoil * 3, this._r2[1], this._r2[2]);
+        this.root.position.x += sway * 0.5;
+        this.root.position.z = rz * 0.4;
+        // 손목 관성 (오른손 기준) + 검날 광택
+        if (aR >= 0) {
+          const g0 = model.userData.gleam;
+          if (g0) {
+            const imp = impactAt(this.className);
+            const gk = Math.max(0, 1 - Math.abs(atk - imp) / 0.13);
+            g0.material.opacity = 0.22 + gk * 0.7;
+          }
+          const g1 = model.userData.gleamL;
+          if (g1) {
+            const imp = 0.145;
+            const gk = Math.max(0, 1 - Math.abs(atk - imp) / 0.13);
+            g1.material.opacity = 0.22 + gk * 0.7;
+          }
+        } else {
+          const g0 = model.userData.gleam, g1 = model.userData.gleamL;
+          if (g0) g0.material.opacity = 0.3;
+          if (g1) g1.material.opacity = 0.3;
+        }
+        this.castGlow.material.opacity *= Math.max(0, 1 - dt * 8);
+        return;
+      }
+    }
 
     this.root.position.set(
       p[0] * FRAMING_X + sway + walkX,
@@ -694,10 +791,11 @@ export class ViewModel {
     if (!this.enabled) return false;
     const model = this.models[this.className];
     if (!model) return false;
-    const h = this.className === 'knight' ? 1.62 : this.className === 'wizard' ? 1.2 : this.className === 'blademaster' ? 1.12 : this.className === 'berserker' ? 0.62 : 1.02;
+    const h = this.className === 'knight' ? 1.62 : this.className === 'wizard' ? 1.2 : this.className === 'blademaster' ? 1.12 : this.className === 'berserker' ? 0.47 : 1.02;
     const b = h * 0.12;
-    _v1.set(0, b, 0); model.localToWorld(_v1);
-    _v2.set(0, h, 0); model.localToWorld(_v2);
+    const src = model.userData.blade || model;
+    _v1.set(0, b, 0); src.localToWorld(_v1);
+    _v2.set(0, h, 0); src.localToWorld(_v2);
     baseOut.copy(_v1).applyMatrix4(this.camera.matrixWorld);
     tipOut.copy(_v2).applyMatrix4(this.camera.matrixWorld);
     return true;

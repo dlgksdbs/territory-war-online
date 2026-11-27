@@ -56,7 +56,7 @@ const CFG = {
   botNames: ['AI 병사', 'AI 창병', 'AI 궁병', 'AI 검병'],
   guardFront: 1.35,
   /* 🛡️ PVP 검 막기 — 최대 유지 + 쿨타임 (솔로 배틀 아레나의 막기에는 적용하지 않는다) */
-  guardHold: 0.80,           // 한 번에 막을 수 있는 최대 시간 (초)
+  guardHold: 1.0,            // 한 번만 눌러도 유지되는 시간 (초) — 탭 한 번에 1초 막기
   guardCooldown: 2.0,        // 막기 해제·자동 종료 뒤 쿨타임 (초)
   guardReflect: 1.0,         // 막아내면 공격자에게 돌려주는 피해 비율 (100%)
   /* 🥊 UFC 옥타곤 링 — 중심에서 각 변까지의 거리 (m), 이동 가능 경계 */
@@ -274,7 +274,8 @@ function setConfig(room, player, msg) {
   if (msg.mode === 'kills' || msg.mode === 'elim') st.mode = msg.mode;
   if (msg.killTarget !== undefined) {
     const k = Math.floor(Number(msg.killTarget));
-    if (Number.isFinite(k)) st.killTarget = clamp(k, 3, 30);
+    /* ⚔️ 1킬부터 — 단판 승부도 고를 수 있다 (예전엔 3킬이 최소) */
+    if (Number.isFinite(k)) st.killTarget = clamp(k, 1, 30);
   }
   if (msg.bots && typeof msg.bots === 'object') {
     for (const t of ['ally', 'enemy']) {
@@ -634,6 +635,13 @@ function attack(room, player, msg) {
   const spec = PVP[e.cls] || PVP.soldier;
   if (now < e.nextAttackAt) return;
   e.nextAttackAt = now + spec.cycle * 1000 * 0.9;
+  /* ⚔️ 막기 유지 중에 베면 막기가 즉시 풀린다 — 해제 시점부터 쿨타임 시작 */
+  if (e.guard) {
+    e.guard = false;
+    e.guardUntil = 0;
+    e.guardCdUntil = now + CFG.guardCooldown * 1000;
+    broadcastEvent(room, { type: 'pguardend', to: targetRef(e), cd: Math.round(CFG.guardCooldown * 1000), held: false });
+  }
   e.attackAt = now;
   e.lsAt = -1;
   let yaw = num(msg.yaw);

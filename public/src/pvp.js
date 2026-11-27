@@ -12,11 +12,16 @@ import * as THREE from 'three';
 import { CLASSES, SPELLS, SKILL, TEAM } from './config.js';
 import { clamp, angLerp, angDiff } from './util.js';
 import { clampOctagon } from './ground.js';
+import { stepWalk } from './pose.js';
+import { J } from './rig.js';
 
 const $ = (s) => document.querySelector(s);
 const PROTO = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const NAME_KEY = 'ba.pvp.name';
 const MAX_PLATES = 28;
+
+/* 대기실 승리 조건 버튼 → 목표 킬 수 (⚔️ 1킬 단판부터 10·20킬까지) */
+const MODE_KILLS = { kills1: 1, kills: 10, kills20: 20 };
 
 const clsIcon = (c) => (CLASSES[c] && CLASSES[c].icon) || '⚔️';
 const clsName = (c) => (CLASSES[c] && CLASSES[c].name) || '병사';
@@ -48,8 +53,8 @@ export class PvpClient {
     this.lastStateAt = 0;
     this.inputAt = 0;
     this.lastGuard = false;
-    /* 🛡️ PVP 전용 검 막기 — 최대 유지 + 쿨타임 (서버 pstart 값으로 맞춘다) */
-    this.guardHoldMax = 0.8;
+    /* 🛡️ PVP 전용 검 막기 — 한 번만 탭해도 이 시간 동안 유지 (서버 pstart 값으로 맞춘다) */
+    this.guardHoldMax = 1.0;
     this.guardCdMax = 2.0;
     this.guardReflect = 1.0;
     this.guardActive = false;
@@ -118,7 +123,7 @@ export class PvpClient {
         const mode = b.dataset.mode;
         if (mode) {
           if (mode === 'elim') return this.send({ type: 'pconf', mode: 'elim' });
-          return this.send({ type: 'pconf', mode: 'kills', killTarget: mode === 'kills20' ? 20 : 10 });
+          return this.send({ type: 'pconf', mode: 'kills', killTarget: MODE_KILLS[mode] || 10 });
         }
         const bots = b.dataset.bots;
         if (bots !== undefined) {
@@ -333,7 +338,9 @@ export class PvpClient {
     if (clsNote) clsNote.textContent = '일반 병사 고정 (검 막기 대전)';
     document.querySelectorAll('#plModeBtns button').forEach((b) => {
       const m = b.dataset.mode;
-      const on = m === 'elim' ? l.mode === 'elim' : (l.mode === 'kills' && l.killTarget === (m === 'kills20' ? 20 : 10));
+      const on = m === 'elim'
+        ? l.mode === 'elim'
+        : (l.mode === 'kills' && l.killTarget === (MODE_KILLS[m] || 10));
       b.classList.toggle('is-on', !!on);
     });
     document.querySelectorAll('#plBotBtns button').forEach((b) => {
@@ -350,7 +357,7 @@ export class PvpClient {
     const note = $('#plNote');
     if (note) {
       note.textContent = me === host
-        ? '일반 병사 고정 · 검 막기는 최대 0.8초, 풀면 2초 쿨타임 · 막아내면 상대에게 피해 100% 반사'
+        ? '일반 병사 고정 · 검 막기는 한 번만 눌러도 1초 유지(공격하면 즉시 해제), 풀면 2초 쿨타임 · 막아내면 상대에게 피해 100% 반사'
         : '방장이 시작하면 자동으로 옥타곤 링에 들어간다';
     }
     this.myTeam = mine && mine.team ? mine.team : 'ally';
@@ -414,7 +421,7 @@ export class PvpClient {
     this._staleWarned = false;
     /* 서버가 정한 막기·링 규칙을 그대로 쓴다 */
     const gd = msg.guard || {};
-    this.guardHoldMax = gd.hold ? gd.hold / 1000 : 0.8;
+    this.guardHoldMax = gd.hold ? gd.hold / 1000 : 1.0;
     this.guardCdMax = gd.cooldown ? gd.cooldown / 1000 : 2.0;
     this.guardReflect = gd.reflect === undefined ? 1 : gd.reflect;
     if (msg.arena && msg.arena.apothem) this.octagon = { apothem: msg.arena.apothem };
@@ -613,6 +620,8 @@ export class PvpClient {
     });
     /* ⚔️ 반사 피해 — 내가 공격했다가 막혀 되돌아온 타격 */
     if (m.kind === 'reflect') {
+      this.stats.reflectHits = (this.stats.reflectHits || 0) + 1;
+      this.stats.reflectDmg = Math.round(m.dmg);
       this.reflectT = 0.5;
       this._toast('⚔️ 막혔다! 검에 튄 피해 ' + Math.round(m.dmg) + ' 가 나에게');
       this.app.fx && this.app.fx.addShake(0.30);
@@ -625,6 +634,8 @@ export class PvpClient {
     if (!b) return;
     const u = this.unitOf(m.to);
     if (!u) return;
+    /* 🛡️ 최근 막힘 기록 (테스트·디버그) — 누가 누구를 막았고 얼마를 반사했는지 */
+    this.lastBlock = { at: Date.now(), by: m.by, to: m.to, reflect: m.reflect || 0, heavy: !!m.heavy };
     if (m.to === this.you) this.stats.blocks += 1;
     const reflect = m.reflect || 0;
     if (m.to === this.you) {
@@ -881,6 +892,8 @@ export class PvpClient {
     this.app.input.guard = true;
     p.guard = true;
     this.send({ type: 'pguard', on: true });
+    /* 1인칭 — 칼을 확 들어올리는 손목 반동 */
+    if (this.app.vm) this.app.vm.impulse(-0.04);
     const gb = document.getElementById('guardBtn');
     if (gb) gb.classList.add('is-held');
     return true;
@@ -898,6 +911,20 @@ export class PvpClient {
     if (this.inBattle) this.send({ type: 'pguard', on: false });
     const gb = document.getElementById('guardBtn');
     if (gb) gb.classList.remove('is-held');
+  }
+
+  /* 🛡️ 짧은 탭 — 손을 떼도 guardHoldMax(1초) 동안은 막기가 그대로 유지된다.
+     (예전엔 pointerup 에서 바로 풀려 '톡 누른 막기'가 거의 안 먹혔다.
+      이제 막기를 끝내는 건 ①유지 시간 종료 ②공격 ③사망·라운드 종료뿐이다) */
+  tapRelease() {
+    return !!this.guardActive;
+  }
+
+  /* ⚔️ 막기 유지 중에 베기 — 막기를 즉시 풀고 그때부터 쿨타임이 시작된다 */
+  cancelGuardForAttack() {
+    if (!this.guardActive) return false;
+    this.releaseGuard();
+    return true;
   }
 
   /* 쿨타임 중 누름 — 버튼을 빨갛게 깜박이고 남은 시간을 알린다 */
@@ -959,16 +986,31 @@ export class PvpClient {
       this.send({ type: 'pinput', x: p.x, z: p.z, yaw: p.yaw, pitch: app.camPitch });
     }
 
-    /* 원격 유닛 보간 */
+    /* 원격 유닛 보간 — 서버 위치로 따라가면서 실제로 이동한 거리만큼 걸음 위상을 올린다.
+       (예전엔 net 유닛이 battle.js 의 resolveTerrain/separate 에서 제외돼 walkPhase·moveAmt 가
+        한 번도 갱신되지 않아, 상대가 다리를 굳힌 채 미끄러져 왔다) */
     const k = Math.min(1, dt * 13);
     for (const [, u] of this.units) {
-      if (u.dead) continue;
-      if (u.tx !== undefined) {
-        u.x += (u.tx - u.x) * k;
-        u.z += (u.tz - u.z) * k;
-        if (u.tyaw !== undefined) u.yaw = angLerp(u.yaw, u.tyaw, Math.min(1, dt * 16));
-        if (Math.hypot(u.tx - u.x, u.tz - u.z) > 6) { u.x = u.tx; u.z = u.tz; }
+      if (u.dead) { u.moveAmt = 0; continue; }
+      if (u.tx === undefined) continue;
+      const px = u.x, pz = u.z;
+      u.x += (u.tx - u.x) * k;
+      u.z += (u.tz - u.z) * k;
+      if (u.tyaw !== undefined) u.yaw = angLerp(u.yaw, u.tyaw, Math.min(1, dt * 16));
+      let moved = Math.hypot(u.x - px, u.z - pz);
+      if (Math.hypot(u.tx - u.x, u.tz - u.z) > 6) {
+        /* 순간이동(부활·재배치)은 걸음으로 치지 않는다 */
+        u.x = u.tx; u.z = u.tz;
+        moved = 0;
       }
+      /* 걸음 위상 — 이동 거리 기반이라 발이 미끄러지지 않는다 */
+      if (moved > 1e-4) stepWalk(u, moved);
+      /* 이동량 → 걷기 블렌드. 출발은 빠르게, 정지는 부드럽게 대기 자세로 돌아간다 */
+      const sp = moved / Math.max(0.001, dt);
+      const tgt = u.freezeT > 0 ? 0 : clamp(sp / Math.max(0.6, (u.speed || 4) * 0.72), 0, 1);
+      u.moveAmt = u.moveAmt === undefined ? tgt
+        : u.moveAmt + (tgt - u.moveAmt) * Math.min(1, dt * (tgt > u.moveAmt ? 16 : 7));
+      if (u.moveAmt < 0.002) u.moveAmt = 0;
     }
 
     this.updatePlates();
@@ -1066,7 +1108,11 @@ export class PvpClient {
       others: Array.from(this.units.entries()).map(([id, u]) => ({
         id, cls: u.cls, team: u.team, name: u.pname, x: +u.x.toFixed(2), z: +u.z.toFixed(2),
         hp: +u.hp.toFixed(0), maxHp: u.maxHp, dead: !!u.dead,
-        drawn: u.dslot >= 0, attackT: +u.attackT.toFixed(2), guard: !!u.guard
+        drawn: u.dslot >= 0, attackT: +u.attackT.toFixed(2), guard: !!u.guard,
+        /* 🚶 걷기 모션 검증용 — 실제 다리 각도(라디안)와 걷기 블렌드 */
+        walkPhase: +(u.walkPhase || 0).toFixed(3), moveAmt: +(u.moveAmt || 0).toFixed(3),
+        thighR: u.pose ? +u.pose.rot[J.thighR * 3].toFixed(3) : 0,
+        kneeR: u.pose ? +u.pose.rot[J.shinR * 3].toFixed(3) : 0
       })),
       me: p ? {
         x: +p.x.toFixed(2), z: +p.z.toFixed(2), yaw: +p.yaw.toFixed(2), hp: +p.hp.toFixed(0),
@@ -1092,6 +1138,7 @@ export class PvpClient {
   swing() {
     const b = this.app.battle;
     if (!b || !b.player || b.player.dead) return false;
+    this.cancelGuardForAttack();     // ⚔️ 막기 중이면 풀고 베기 — 즉시 해제 + 쿨타임
     return b.startAttack(b.player);
   }
 

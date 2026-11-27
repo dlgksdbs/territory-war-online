@@ -92,6 +92,11 @@ async function engineTests() {
     P.handleMessage(room, room.players[1], 'pconf', { bots: { ally: 2, enemy: 2 } }).error[0] === 'HOST_ONLY');
   ok('방장은 설정 가능', P.handleMessage(room, room.players[0], 'pconf', { mode: 'kills', killTarget: 3, bots: { ally: 0, enemy: 0 } }).ok &&
     st.killTarget === 3 && st.botCfg.ally === 0);
+  /* ⚡ 1킬 — 단판 승부도 고를 수 있다 */
+  ok('승리 조건 1킬도 허용된다',
+    P.handleMessage(room, room.players[0], 'pconf', { mode: 'kills', killTarget: 1 }).ok && st.killTarget === 1,
+    { killTarget: st.killTarget });
+  P.handleMessage(room, room.players[0], 'pconf', { mode: 'kills', killTarget: 3 });
 
   /* 1인 + AI 병력 없음 → 상대가 없어 시작 불가 */
   const solo = fakeRoom(1);
@@ -172,6 +177,22 @@ async function engineTests() {
     P.entOf(st, room.players[1]).cls === 'soldier');
   ok('재대결 후 모두 만피로 스폰', P.entOf(st, room.players[0]).hp === P.entOf(st, room.players[0]).maxHp);
 
+  console.log('⚡ 1킬 단판 승리');
+  {
+    const one = fakeRoom(2);
+    P.handleMessage(one, one.players[0], 'pconf', { mode: 'kills', killTarget: 1, bots: { ally: 0, enemy: 0 } });
+    P.handleMessage(one, one.players[0], 'pteam', { team: 'ally' });
+    P.handleMessage(one, one.players[1], 'pteam', { team: 'enemy' });
+    P.startBattle(one, { bySlot: 0 });
+    const o1 = P.entOf(one.pvp, one.players[0]);
+    const o2 = P.entOf(one.pvp, one.players[1]);
+    o1.x = 0; o1.z = 0; o1.yaw = 0; o2.x = 0; o2.z = 1.6; o2.hp = 1; o2.guard = false;
+    P.handleMessage(one, one.players[0], 'pattack', { yaw: 0 });
+    ok('1킬이면 한 명 쓰러지는 순간 라운드 종료(승리)',
+      one.pvp.phase === 'over' && one.pvp.over.winner === 'ally' && one.pvp.over.reason === 'target' &&
+      one.pvp.score.ally === 1, one.pvp.over);
+  }
+
   console.log('전투 · 전멸전 승리');
   const elim = fakeRoom(2);
   P.handleMessage(elim, elim.players[0], 'pconf', { mode: 'elim', bots: { ally: 0, enemy: 0 } });
@@ -222,6 +243,8 @@ async function engineTests() {
   atk.x = 0; atk.z = 0; atk.yaw = 0;
   def.x = 0; def.z = 1.6; def.yaw = Math.PI;
   ok('검 막기를 켜면 막기 상태', P.setGuard(g, g.players[1], true).ok && def.guard === true);
+  ok('검 막기는 한 번 누르면 1.0초 동안 유지된다', P.CFG.guardHold === 1 &&
+    def.guardUntil - def.guardAt === 1000, { hold: P.CFG.guardHold, ms: def.guardUntil - def.guardAt });
   ok('막기 유지 시간이 정해져 있다', def.guardUntil - def.guardAt === P.CFG.guardHold * 1000,
     { ms: def.guardUntil - def.guardAt });
 
@@ -269,6 +292,29 @@ async function engineTests() {
   ok('반사 피해로 공격자가 쓰러진다', a2.dead && a2.hp === 0);
   ok('반사 킬은 수비자 킬로 정상 처리', d2.kills === 1 && gk.pvp.score.enemy === 1,
     { kills: d2.kills, score: gk.pvp.score });
+
+  console.log('⚔️ 막기 유지 중 공격 — 즉시 해제 + 그때부터 쿨타임');
+  {
+    const gm = fakeRoom(2);
+    P.handleMessage(gm, gm.players[0], 'pteam', { team: 'ally' });
+    P.handleMessage(gm, gm.players[1], 'pteam', { team: 'enemy' });
+    P.startBattle(gm, { bySlot: 0 });
+    const aM = P.entOf(gm.pvp, gm.players[0]);
+    const dM = P.entOf(gm.pvp, gm.players[1]);
+    aM.x = 0; aM.z = 0; aM.yaw = 0;
+    dM.x = 0; dM.z = 1.6; dM.yaw = Math.PI;
+    P.setGuard(gm, gm.players[1], true);
+    ok('막기 유지 중 (아직 안 풀렸다)', dM.guard === true && dM.guardUntil > Date.now());
+    await sleep(140);
+    const tSwing = Date.now();
+    P.handleMessage(gm, gm.players[1], 'pattack', { yaw: Math.PI });
+    ok('막기 중에 베면 막기가 즉시 해제된다', dM.guard === false && dM.guardUntil === 0, { guard: dM.guard });
+    ok('해제 시점부터 막기 쿨타임이 시작된다',
+      Math.abs(dM.guardCdUntil - tSwing - P.CFG.guardCooldown * 1000) < 40,
+      { cdLeft: dM.guardCdUntil - tSwing, cdMax: P.CFG.guardCooldown * 1000 });
+    ok('해제돼도 베기는 그대로 나간다 (상대 피해)', aM.hp < aM.maxHp, { hp: aM.hp, mx: aM.maxHp });
+    ok('해제 직후 막기를 다시 켜는 연타는 막힌다', P.setGuard(gm, gm.players[1], true).ok === false && dM.guard === false);
+  }
 
   console.log('🥊 UFC 옥타곤 링 경계');
   ok('8각형 링 밖 좌표는 경계로 되돌아온다', (() => {

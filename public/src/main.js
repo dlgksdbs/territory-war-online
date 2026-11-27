@@ -302,6 +302,8 @@ class App {
     const pressAtk = (e) => {
       if (e.cancelable) e.preventDefault();
       atkPid = e.pointerId === undefined ? null : e.pointerId;
+      /* ⚔️ PVP — 막기 유지 중에 베기 버튼을 누르면 막기가 즉시 풀리고 공격이 나간다 */
+      if (this.battle && this.battle.pvp && this.pvp) this.pvp.cancelGuardForAttack();
       this.attackHeld = true;
       this.input.attack = true;
       this._aimAssist();
@@ -351,7 +353,8 @@ class App {
       const release = (e) => {
         if (pid !== null && e && e.pointerId !== undefined && e.pointerId !== pid) return;
         pid = null;
-        if (this.battle && this.battle.pvp && this.pvp) { this.pvp.releaseGuard(); return; }
+        /* 🛡️ PVP — 손을 떼도 1초(guardHoldMax) 동안 막기가 유지된다 (공격·시간 종료가 끝낸다) */
+        if (this.battle && this.battle.pvp && this.pvp) { this.pvp.tapRelease(); return; }
         this.input.guard = false;
         guardBtn.classList.remove('is-held');
       };
@@ -372,7 +375,7 @@ class App {
       if (this.state !== 'battle') return;
       this.keys = this.keys || {};
       this.keys[e.code] = true;
-      if (e.code === 'Space') { e.preventDefault(); this.attackHeld = true; this.input.attack = true; this._aimAssist(); }
+      if (e.code === 'Space') { e.preventDefault(); this.attackHeld = true; this.input.attack = true; if (this.battle && this.battle.pvp && this.pvp) this.pvp.cancelGuardForAttack(); this._aimAssist(); }
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') {
         if (this.battle && this.battle.pvp && this.pvp) { this.pvp.pressGuard(); return; }
         this.input.guard = true; this.guardMinT = Math.max(this.guardMinT || 0, 0.40);
@@ -387,7 +390,7 @@ class App {
       if (this.keys) this.keys[e.code] = false;
       if (e.code === 'Space') this.attackHeld = false;
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyE') {
-        if (this.battle && this.battle.pvp && this.pvp) { this.pvp.releaseGuard(); return; }
+        if (this.battle && this.battle.pvp && this.pvp) { this.pvp.tapRelease(); return; }
         this.input.guard = false;
         const gb = $('#guardBtn'); if (gb) gb.classList.remove('is-held');
       }
@@ -1260,6 +1263,8 @@ class App {
     this._perfTick(dt * 1000);
 
     // 렌더
+    /* 🧪 테스트 전용 — 뒤 탭의 GPU 부담을 끊는다 (시뮬레이션·네트워크는 그대로 돈다) */
+    if (this.noRender) { this.frames++; return; }
     const r = this.renderer;
     r.info.reset();
     r.clear();
@@ -1298,6 +1303,9 @@ class App {
         this.fx.ring(e.x, by, e.z, 1.6, 0xffcf7a, 0.40);
         this.fx.addShake(0.26);
       }
+      /* 🛡️ 막아낸 쪽은 팔·상체가 뒤로 튀는 반동을 포즈로 보여준다 */
+      if (e.unit) e.unit.guardFlash = Math.max(e.unit.guardFlash || 0, 0.26);
+      if (e.unit && e.unit.isPlayer && this.vm) this.vm.impulse(-0.05);
       if (e.unit && e.unit.isPlayer) {
         if (!this._blockToastAt || performance.now() - this._blockToastAt > 700) {
           this._blockToastAt = performance.now();

@@ -425,17 +425,39 @@ const CURVES = {
 CURVES.elite = (() => {
   const src = CURVES.soldier;
   const k = 0.84 / 0.92;
-  return { idle: src.idle, dur: 0.84, keys: src.keys.map((o) => ({ ...o, t: o.t * k })) };
+  /* 배열까지 복사해야 뒤의 모션 증폭이 병사 곡선을 두 번 키우지 않는다 */
+  return {
+    idle: { p: src.idle.p.slice(), r: src.idle.r.slice() },
+    dur: 0.84,
+    keys: src.keys.map((o) => ({ ...o, p: o.p.slice(), r: o.r.slice(), t: o.t * k }))
+  };
 })();
+
+/* 🎬 모션 세기 — 무기 궤적을 idle 자세 기준으로 부품려 예비동작·임팩트·팔로우스루를 크게 만든다
+   (요청: "모션 빡세게" — 1인칭 베기가 화면을 확실하게 가로지르게) */
+const VM_AMP = { p: 1.30, r: 1.26 };
+function ampSide(idle, keys) {
+  for (const k of keys) {
+    for (let i = 0; i < 3; i++) {
+      k.p[i] = idle.p[i] + (k.p[i] - idle.p[i]) * VM_AMP.p;
+      k.r[i] = idle.r[i] + (k.r[i] - idle.r[i]) * VM_AMP.r;
+    }
+  }
+}
+for (const key of Object.keys(CURVES)) {
+  const cur = CURVES[key];
+  if (cur.dual) { ampSide(cur.R.idle, cur.R.keys); ampSide(cur.L.idle, cur.L.keys); }
+  else ampSide(cur.idle, cur.keys);
+}
 
 /* 막기 자세 — 무기를 화면 대각선으로 세워 상체 앞을 가린다 (병사·검객은 검날이 얼굴을 가로지름) */
 const GUARD = {
-  soldier: { p: [0.34, -0.52, -0.92], r: [-0.55, 0.55, 0.45] },
-  elite: { p: [0.32, -0.50, -0.90], r: [-0.50, 0.52, 0.42] },
-  blademaster: { p: [0.36, -0.52, -0.90], r: [-0.45, 0.60, 0.55] },
-  knight: { p: [0.26, -0.58, -0.96], r: [-0.70, 0.30, -0.30] },
-  berserker: { p: [0.30, -0.52, -0.94], r: [-0.50, 0.45, 0.52] },
-  wizard: { p: [-0.06, -0.46, -0.56], r: [0.10, -0.20, -0.14] }
+  soldier: { p: [0.30, -0.46, -0.98], r: [-0.62, 0.62, 0.58] },
+  elite: { p: [0.28, -0.44, -0.96], r: [-0.58, 0.60, 0.55] },
+  blademaster: { p: [0.32, -0.46, -0.96], r: [-0.52, 0.68, 0.68] },
+  knight: { p: [0.24, -0.54, -1.00], r: [-0.76, 0.36, -0.24] },
+  berserker: { p: [0.26, -0.46, -1.00], r: [-0.56, 0.52, 0.64] },
+  wizard: { p: [-0.06, -0.44, -0.58], r: [0.14, -0.22, -0.16] }
 };
 
 /* 오른손(마법사는 손바닥) 키프레임 */
@@ -602,9 +624,9 @@ export class ViewModel {
     const ph = (player && player.walkPhase) || this.time * 1.5;
     const sway = Math.sin(this.time * 0.9) * 0.007 + Math.sin(this.time * 1.7) * 0.0035;
     const breatheY = Math.sin(this.time * 1.35) * 0.004;
-    const walkX = Math.sin(ph) * 0.016 * mv;
-    const walkY = Math.abs(Math.cos(ph)) * 0.018 * mv;
-    this.bob = lerp(this.bob, walkY, Math.min(1, dt * 8));
+    const walkX = Math.sin(ph) * 0.030 * mv;
+    const walkY = Math.abs(Math.cos(ph)) * 0.034 * mv;
+    this.bob = lerp(this.bob, walkY, Math.min(1, dt * 9));
 
     /* 🩸 쌍단검 — 두 손을 각자 화면 가장자리에서 따로 움직인다 */
     if (cur.dual) {
@@ -679,16 +701,16 @@ export class ViewModel {
       p[2] - 0.30
     );
     this.root.rotation.set(
-      r[0] + Math.sin(this.time * 1.1) * 0.006 + walkY * 0.6,
+      r[0] + Math.sin(this.time * 1.1) * 0.006 + walkY * 1.15,
       r[1] + sway * 1.4,
-      r[2] + Math.sin(this.time * 0.7) * 0.008 + this._lagYaw * 0.9
+      r[2] + Math.sin(this.time * 0.7) * 0.010 + this._lagYaw * 0.9
     );
     this.root.position.x += this._lagYaw * 0.22;
     this.root.rotation.x += this._lagPitch * 0.7;
     // 달릴 때 무기 무게가 뒤로 쏠리는 느낌
-    this.root.rotation.x += mv * 0.10;
-    this.root.rotation.z += Math.sin(ph) * 0.03 * mv;
-    this.root.position.y += Math.sin(ph * 2) * 0.006 * mv;
+    this.root.rotation.x += mv * 0.16;
+    this.root.rotation.z += Math.sin(ph) * 0.055 * mv;
+    this.root.position.y += Math.sin(ph * 2) * 0.012 * mv;
     // 클래스 교체 시 살짝 아래에서 올라온다
     this.root.position.y -= (1 - swap) * 0.34;
     this.root.position.z -= (1 - swap) * 0.2;
@@ -718,7 +740,7 @@ export class ViewModel {
       if (player.attackT >= impT) {
         const cyc = (CLASSES[this.className] || CLASSES.soldier).cycle;
         const k = (player.attackT - impT) / Math.max(0.001, cyc - impT);
-        recoil = Math.exp(-k * 7.5) * (this.className === 'knight' ? 0.085 : this.className === 'blademaster' ? 0.035 : this.className === 'berserker' ? 0.020 : 0.045);
+        recoil = Math.exp(-k * 7.5) * (this.className === 'knight' ? 0.120 : this.className === 'blademaster' ? 0.055 : this.className === 'berserker' ? 0.032 : 0.070);
       }
     }
     if (this._imp) {
@@ -727,21 +749,23 @@ export class ViewModel {
       this._imp *= Math.max(0, 1 - dt * 12);
       if (this._imp < 0.001) this._imp = 0;
     }
-    this.root.position.z += recoil * 0.6;
-    this.root.position.y -= recoil * 0.25;
-    this.root.rotation.x -= recoil * 0.5;
+    this.root.position.z += recoil * 0.9;
+    this.root.position.y -= recoil * 0.30;
+    this.root.rotation.x -= recoil * 0.7;
 
     // 🛡️ 검으로 막기 — 누르는 동안 무기를 대각선으로 세워 얼굴 앞을 가로막는다
     const wantGuard = (player && player.guard && !player.dead) ? 1 : 0;
-    this.guardK = lerp(this.guardK || 0, wantGuard, Math.min(1, dt * 16));
+    this.guardK = lerp(this.guardK || 0, wantGuard, Math.min(1, dt * 20));
     const gk = this.guardK;
     if (gk > 0.001) {
       const gd = GUARD[this.className] || GUARD.soldier;
-      const tremble = Math.sin(this.time * 9.5) * 0.004 + Math.sin(this.time * 15.3) * 0.002;
+      /* 🛡️ 칼을 들어올릴 때 살짝 넘쳣다(오버슈트) 내려앉고, 막는 동안에는 팔에 힘이 들어가 떨린다 */
+      const over = Math.sin(Math.min(1, gk) * Math.PI) * 0.06;
+      const tremble = Math.sin(this.time * 9.5) * 0.006 + Math.sin(this.time * 15.3) * 0.003;
       this.root.position.x = lerp(this.root.position.x, gd.p[0] * FRAMING_X, gk);
-      this.root.position.y = lerp(this.root.position.y, gd.p[1] * FRAMING_Y + tremble, gk);
-      this.root.position.z = lerp(this.root.position.z, gd.p[2], gk);
-      this.root.rotation.x = lerp(this.root.rotation.x, gd.r[0] + tremble * 2, gk);
+      this.root.position.y = lerp(this.root.position.y, (gd.p[1] + over) * FRAMING_Y + tremble, gk);
+      this.root.position.z = lerp(this.root.position.z, gd.p[2] - over * 0.5, gk);
+      this.root.rotation.x = lerp(this.root.rotation.x, gd.r[0] - over * 2 + tremble * 2, gk);
       this.root.rotation.y = lerp(this.root.rotation.y, gd.r[1], gk);
       this.root.rotation.z = lerp(this.root.rotation.z, gd.r[2] + tremble, gk);
     }

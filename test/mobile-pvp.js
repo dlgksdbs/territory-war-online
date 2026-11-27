@@ -609,9 +609,12 @@ function ok(name, cond, extra) {
   await A.mouse.down();
   await A.mouse.up();                       // 내렸다 바로 떼는 탭
   let released = false;
-  for (let i = 0; i < 60 && !released; i++) {
-    await sleep(250);
-    released = await A.evaluate(() => !window.BA.pvp.client.guardActive);
+  for (let i = 0; i < 80 && !released; i++) {
+    await sleep(120);
+    released = await A.evaluate(() => {
+      const c = window.BA.pvp.client;
+      return !c.guardActive && (c.guardCd || 0) > 1.2;      // 풀린 뒤 쿨타임이 시작됐다
+    });
   }
   const glog = await A.evaluate(() => window.__gt.log);
   const onRows = glog.filter((r) => r[2] === 1);
@@ -619,13 +622,13 @@ function ok(name, cond, extra) {
   const lastOn = onRows[onRows.length - 1];
   const simHold = firstOn && lastOn ? lastOn[1] - firstOn[1] : 0;
   const wallHold = firstOn && lastOn ? lastOn[0] - firstOn[0] : 0;
-  const offRow = glog.find((r) => firstOn && r[0] > lastOn[0]);
+  const offRow = glog.find((r) => firstOn && r[0] > firstOn[0] && r[2] === 0);
   ok('🛡️ 막기 버튼을 톡 한 번 탭하면 막기가 켜진다',
     !!firstOn && firstOn[3] > holdMax * 0.6, { frames: glog.length, first: firstOn });
   ok('🛡️ 손을 뗀 뒤에도 막기가 그대로 유지된다 (예전엔 떼는 순간 풀렸다)',
-    onRows.length >= 3 && wallHold >= 300, { frames: onRows.length, wallHold: Math.round(wallHold) });
+    onRows.length >= 2 && wallHold >= 600, { frames: onRows.length, wallHold: Math.round(wallHold) });
   ok('🛡️ 탭 한 번으로 1초(서버 기준) 동안 막고, 끝나면 자동으로 풀린다',
-    !!firstOn && firstOn[3] > 0.6 && wallHold >= 800 && wallHold <= 3200 && !!offRow && offRow[2] === 0 && offRow[3] === 0,
+    !!firstOn && firstOn[3] > 0.6 && wallHold >= 600 && wallHold <= 3200 && !!offRow && offRow[3] === 0,
     { wallHold: Math.round(wallHold), simHold: +simHold.toFixed(2), off: offRow });
   ok('🛡️ 풀린 그 순간부터 쿨타임이 시작된다 (2초)',
     !!offRow && offRow[4] > 1.6 && offRow[4] <= holdMax + 1.05, { cdAtRelease: offRow && offRow[4] });

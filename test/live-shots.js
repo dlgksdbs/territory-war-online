@@ -46,21 +46,19 @@ let n = 0;
     return f;
   };
 
-  /* ===== 1. 리딤코드 ===== */
-  await page.evaluate(() => { document.getElementById('redeemPanel').scrollIntoView({ block: 'center' }); });
+  /* ===== 1. 리딤코드 — 작은 🔑 버튼 → 입력칸 → 2012 해금 ===== */
   await sleep(500);
   await shot('home-locked');
-  console.log('잠금:', JSON.stringify(await page.evaluate(() => ({
-    unlocked: window.BA.solo().unlocked,
-    btn: document.querySelector('#startBtn .sb-text strong').textContent,
-    note: document.getElementById('redeemNote').textContent
-  }))));
+  console.log('잠금:', JSON.stringify(await page.evaluate(() => ({ unlocked: window.BA.solo().unlocked, ui: window.BA.soloUi() }))));
+  await page.click('#redeemOpen');
+  await sleep(400);
+  await shot('home-redeem-open');
   await page.evaluate(() => { document.getElementById('redeemCode').value = '2012'; document.getElementById('redeemApply').click(); });
   await sleep(700);
   await shot('home-unlocked');
   console.log('해금:', JSON.stringify(await page.evaluate(() => ({
     unlocked: window.BA.solo().unlocked, stored: localStorage.getItem('ba.soloUnlocked.v1'),
-    btn: document.querySelector('#startBtn .sb-text strong').textContent
+    btn: document.querySelector('#startBtn .sb-text strong').textContent, ui: window.BA.soloUi()
   }))));
 
   /* ===== 2. PVP 체력 ===== */

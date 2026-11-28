@@ -65,6 +65,8 @@ export class PvpClient {
     this.stats = { hits: 0, blocks: 0, kills: 0, deaths: 0, reflected: 0 };
     this.blockLog = [];           // 🛡️ 최근 패링 기록 (테스트·디버그)
     this._staleWarned = false;
+    this._leaving = false;
+    this._resumeTries = 0;
     this._nameTags = null;
     this._restoreName();
     this._bindUI();
@@ -146,30 +148,72 @@ export class PvpClient {
       let ws;
       try { ws = new WebSocket(PROTO + '//' + location.host + '/ws'); } catch (e) { reject(e); return; }
       this.ws = ws;
-      const fail = (e) => { if (this.ws === ws) this.ws = null; reject(e || new Error('연결 실패')); };
+      let done = false;
+      const fail = (e) => {
+        if (done) return;
+        done = true;
+        clearTimeout(to);
+        reject(e || new Error('연결 실패'));
+      };
       const to = setTimeout(() => fail(new Error('서버 응답 없음')), 8000);
-      ws.addEventListener('open', () => { clearTimeout(to); resolve(ws); });
+      ws.addEventListener('open', () => {
+        if (done) return;
+        done = true;
+        clearTimeout(to);
+        resolve(ws);
+      });
       ws.addEventListener('message', (ev) => {
         let m;
         try { m = JSON.parse(ev.data); } catch (e) { return; }
-        this.onMessage(m);
+        /* 🛡️ 한 메시지 처리에서 던진 예외가 소켓·렌더 루프를 죽이지 않게 */
+        try {
+          this.onMessage(m);
+        } catch (err) {
+          console.error('[pvp]', err);
+        }
       });
-      ws.addEventListener('error', () => fail(new Error('연결 오류')));
+      /* 연결 오류는 '연결 중'일 때만 실패로 본다 — 이미 붙은 뒤의 error 는 close 가 정리한다 */
+      ws.addEventListener('error', () => { fail(new Error('연결 오류')); });
       ws.addEventListener('close', () => {
         clearTimeout(to);
         if (this.ws !== ws) return;
         this.ws = null;
-        if (this.inBattle) {
-          this.inBattle = false;
-          this._toast('서버와 연결이 끊겼어요');
-          if (this.app && this.app.toHome) this.app.toHome();
-        } else if (this.inLobby) {
-          this.inLobby = false;
-          this.hideLobby();
-          this._toast('서버와 연결이 끊겼어요');
-        }
+        if (this._leaving) { this._leaving = false; return; }
+        /* 🛡️ 실전 도중 끊김 — 방이 아직 살아 있으면 코드·토큰으로 조용히 다시 붙는다 */
+        if (this.inBattle || this.inLobby) { this._tryResume(); return; }
       });
     });
+  }
+
+  /* 조용한 재접속 — 서버의 resume(코드+토큰)로 같은 방·같은 자리에 다시 앉는다 */
+  async _tryResume() {
+    if (this._leaving) return;
+    if (!this.code || !this.token) return this._dropToHome('서버와 연결이 끊겼어요');
+    const tries = this._resumeTries || 0;
+    if (tries >= 3) return this._dropToHome('서버와 연결이 끊겼어요 — 방에 다시 들어와 주세요');
+    this._resumeTries = tries + 1;
+    this._toast('연결이 끊겨 다시 연결하는 중… (' + this._resumeTries + '/3)');
+    await new Promise((r) => setTimeout(r, 400 * this._resumeTries));
+    try {
+      await this.connect();
+    } catch (e) {
+      return this._tryResume();
+    }
+    this.send({ type: 'resume', code: this.code, token: this.token });
+  }
+
+  /* 복구 불가 — 조용히 홈으로 (남은 상태는 모두 정리) */
+  _dropToHome(msg) {
+    this._resumeTries = 0;
+    this.inBattle = false;
+    this.inLobby = false;
+    this.resetGuard();
+    this.clearUnits();
+    this.hideResult();
+    this.hideLobby();
+    if (this.ws) { try { this.ws.close(); } catch (e) { /* noop */ } this.ws = null; }
+    if (msg) this._toast(msg);
+    if (this.app && this.app.toHome) this.app.toHome();
   }
 
   send(obj) {
@@ -262,6 +306,15 @@ export class PvpClient {
         if (this.inLobby && !this.inBattle) this.renderLobbyError(m);
         this._toast(m.message || '요청을 처리하지 못했어요');
         break;
+      case 'resumed':
+        /* 다시 붙었다 — 전장·대기실 상태를 서버에 다시 요청한다 */
+        this._resumeTries = 0;
+        this._toast('다시 연결됐어요 — 이어서 싸운다');
+        this.send({ type: 'psync' });
+        break;
+      case 'resume_failed':
+        this._dropToHome(m.message || '방이 이미 닫혔어요');
+        break;
       case 'left':
         break;
       default:
@@ -335,8 +388,7 @@ export class PvpClient {
       b.setAttribute('aria-disabled', locked ? 'true' : 'false');
     });
     const clsNote = $('#plClassNote');
-    if (clsNote) clsNote.textContent = '일반 병사 고정 (검 막기 대전)';
-    document.querySelectorAll('#plModeBtns button').forEach((b) => {
+    if (clsNote) clsNote.textContent = '일반 병사 고정 (검 막기 대전)';document.querySelectorAll('#plModeBtns button').forEach((b) => {
       const m = b.dataset.mode;
       const on = m === 'elim'
         ? l.mode === 'elim'
@@ -356,9 +408,10 @@ export class PvpClient {
     }
     const note = $('#plNote');
     if (note) {
+      /* 💥 PVP 전용 밸런스 — 서버가 보낸 rules 값을 그대로 보여 준다 */
       note.textContent = me === host
-        ? '일반 병사 고정 · 검 막기는 한 번만 눌러도 1초 유지(공격하면 즉시 해제), 풀면 2초 쿨타임 · 막아내면 상대에게 피해 100% 반사'
-        : '방장이 시작하면 자동으로 옥타곤 링에 들어간다';
+        ? '일반 병사 고정 · ' + this.rulesText() + ' · 검 막기는 한 번만 눌러도 1초 유지(공격하면 즉시 해제), 풀면 2초 쿨타임 · 막아내면 상대에게 피해 100% 반사'
+        : this.rulesText() + ' · 방장이 시작하면 자동으로 옥타곤 링에 들어간다';
     }
     this.myTeam = mine && mine.team ? mine.team : 'ally';
     this.myCls = mine ? mine.cls : 'soldier';
@@ -369,6 +422,15 @@ export class PvpClient {
     this.send({ type: 'pstart' });
   }
 
+  /* 💥 PVP 전용 밸런스 문구 — 체력 1000 · 공격 100 · 회복 없음 */
+  rulesText() {
+    const r = (this.lobby && this.lobby.rules) || this.rules || {};
+    const hp = r.hp || 1000;
+    const dmg = r.damage || 100;
+    const noHeal = !(r.regen > 0) && !(r.lifesteal > 0);
+    return '체력 ' + hp + ' · 공격 ' + dmg + (noHeal ? ' · 회복 없음' : '');
+  }
+
   rematch() {
     if (!this.inBattle) return;
     this.send({ type: 'prematch' });
@@ -377,6 +439,8 @@ export class PvpClient {
   }
 
   exitToHome() {
+    this._leaving = true;
+    this._resumeTries = 0;
     if (this.ws && this.ws.readyState === 1 && (this.inLobby || this.inBattle)) {
       this.send({ type: 'leave' });
     }
@@ -389,6 +453,8 @@ export class PvpClient {
     if (this.ws) { try { this.ws.close(); } catch (e) { /* noop */ } this.ws = null; }
     const battleEl = $('#battle');
     if (battleEl) battleEl.classList.remove('is-pvp');
+    this._leaving = false;
+    this._resumeTries = 0;
     this.app.toHome();
   }
 
@@ -420,6 +486,7 @@ export class PvpClient {
     this.lastState = null;
     this._staleWarned = false;
     /* 서버가 정한 막기·링 규칙을 그대로 쓴다 */
+    this.rules = msg.rules || null;
     const gd = msg.guard || {};
     this.guardHoldMax = gd.hold ? gd.hold / 1000 : 1.0;
     this.guardCdMax = gd.cooldown ? gd.cooldown / 1000 : 2.0;

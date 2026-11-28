@@ -8,7 +8,7 @@
    · 피격: 맞은 방향으로 젖혀짐 + 무릎 풀림 + 무기 반동 + 머리 지연
    · 사망: 상흔과 함께 무릎 꿇고(체중이 무너지며) → 앞으로 쓰러져 → 시체 유지
    ============================================================================= */
-import { clamp, lerp, smoothstep, easeOutCubic, easeInCubic, easeOutQuint, seg, TAU } from './util.js';
+import { clamp, lerp, smoothstep, easeOutCubic, easeInCubic, easeOutQuint, seg, TAU, catmull } from './util.js';
 import { CLASSES, SKILL } from './config.js';
 import { J, JOINT_COUNT } from './rig.js';
 
@@ -259,14 +259,20 @@ function applyLocomotion(p, cls, phase, move, t) {
     /* 착지 직후(뒤꿈치) — 발이 앞으로 나와 막 닿는 순간 */
     const heel = Math.max(0, -sn) * Math.max(0, cs);
     const thigh = -sn * st.stride * A;
+    /* 🦵 착지 충격 흡수 — 발이 땅에 닿는 순간(그 발의 위상 3π/2)부터 무릎이 한 번 접혔다
+       감쇠 진동으로 풀리며, 발목도 같이 꺾여 충격을 먹는다. 상체는 그 반동으로 살짝 가라앉는다. */
+    const land = ((ph - Math.PI * 1.5) % TAU + TAU) % TAU;
+    const absorb = Math.exp(-land * 7.0) * Math.sin(land * 26) * A;
     /* 무릎: 차는 초반에 크게 접었다가 앞으로 뻗으며 펴지고, 디딤에서도 살짝 굽는다.
        완전히 편 자세(0.03)로 떨어져 '무릎이 자물쇠처럼 굳는' 느낌을 없앤다. */
-    const knee = (0.07 + swing * (0.46 + 0.95 * lift) + stance * 0.17 + heel * 0.15) * A + 0.03;
+    const knee = (0.07 + swing * (0.46 + 0.95 * lift) + stance * 0.17 + heel * 0.15) * A + 0.03 + absorb * 0.11;
     R(p, rev ? J.thighL : J.thighR, thigh - swing * 0.09 * A, 0, 0);
-    R(p, rev ? J.shinL : J.shinR, knee, 0, 0);
+    R(p, rev ? J.shinL : J.shinR, Math.max(0.02, knee), 0, 0);
     /* 발목: 착지에서는 발끝이 살짝 들리고(배측굴곡), 디딤 후반에는 발끝으로 밀어낸다(족저굴곡). */
-    const ankle = -thigh * 0.46 - knee * 0.58 - heel * 0.36 + swing * 0.20 + stance * 0.24 + lift * 0.14;
+    const ankle = -thigh * 0.46 - knee * 0.58 - heel * 0.36 + swing * 0.20 + stance * 0.24 + lift * 0.14 - absorb * 0.10;
     R(p, rev ? J.footL : J.footR, ankle, 0, 0);
+    /* 착지 순간 상체가 살짝 눌렸다 올라온다 (양발이 번갈아 만드는 두 걸음 리듬) */
+    p.rootAdd[1] -= absorb * 0.009;
     /* 다리가 몸 앞쪽으로 지나갈 때 골반이 살짝 좁아졌다 벌어진다 */
     R(p, rev ? J.hipL : J.hipR, 0, 0, (rev ? 1 : -1) * swing * 0.045 * A);
   };
@@ -620,33 +626,56 @@ function applyKeys(p, cls, t) {
   if (!def) return;
   const keys = def.keys;
   const absMap = def.abs ? BASE_SUM[cls] : null;
-  let a = keys[0], b = keys[keys.length - 1];
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (t >= keys[i].t && t <= keys[i + 1].t) { a = keys[i]; b = keys[i + 1]; break; }
+  const nKeys = keys.length;
+  let idx = 0;
+  for (let i = 0; i < nKeys - 1; i++) {
+    if (t >= keys[i].t && t <= keys[i + 1].t) { idx = i; break; }
+    if (t > keys[nKeys - 1].t) idx = nKeys - 2;
   }
-  let k = (t - a.t) / Math.max(0.0001, b.t - a.t);
+  const a = keys[idx], b = keys[idx + 1];
+  const k0 = keys[Math.max(0, idx - 1)];
+  const k3 = keys[Math.min(nKeys - 1, idx + 2)];
+  /* 구간 안의 진행도 — 구간별 이징으로 가속·감속의 '맛'을 남기고,
+     값 자체는 Catmull-Rom 으로 이어 키를 지날 때 속도가 꺾이지 않게 한다 */
+  const kRaw = (t - a.t) / Math.max(0.0001, b.t - a.t);
   const ease = b.ease || 'inout';
-  if (ease === 'out') k = easeOutCubic(k);
-  else if (ease === 'quint') k = easeOutQuint(k);
-  else if (ease === 'in') k = easeInCubic(k);
-  else k = smoothstep(k);
+  /* 곡선은 이미 속도가 이어지므로, 구간 이징은 절반만 섞는다 —
+     가속·감속의 맛은 남기고 프레임 사이 회전 폭은 예전보다 커지지 않게 */
+  const kE = ease === 'out' ? easeOutCubic(kRaw)
+    : ease === 'quint' ? easeOutQuint(kRaw)
+      : ease === 'in' ? easeInCubic(kRaw)
+        : smoothstep(kRaw);
+  const k = kRaw + (kE - kRaw) * 0.28;
   const names = new Set([...Object.keys(a.j), ...Object.keys(b.j)]);
-  for (const name of names) {
+  /* 한 키에만 있는 관절은 그 값을 유지한 채 넘어간다 (기본 자세로 튀어돌아오지 않게) */
+  const ch = (key, name, ci) => {
+    const v = key.j[name];
+    if (!v) return null;
     const off = absMap ? absMap[name] : null;
-    /* 한쪽 키에만 있는 관절은 그 값을 유지한 채 넘어간다 (기본 자세로 튀어돌어오지 않게) */
-    const hasA = !!a.j[name], hasB = !!b.j[name];
-    const va0 = hasA ? a.j[name] : b.j[name];
-    const vb0 = hasB ? b.j[name] : a.j[name];
-    const va = off && hasA ? [va0[0] - off[0], va0[1] - off[1], va0[2] - off[2]] : va0;
-    const vb = off && hasB ? [vb0[0] - off[0], vb0[1] - off[1], vb0[2] - off[2]] : vb0;
+    return off ? v[ci] - off[ci] : v[ci];
+  };
+  for (const name of names) {
     if (name === 'root') {
-      p.rootAdd[0] += lerp(va[0] || 0, vb[0] || 0, k) * MOTION.lunge;   // y 오프셋
-      p.rootAdd[2] += lerp(va[1] || 0, vb[1] || 0, k) * MOTION.lunge;   // z(앞뒤) 오프셋
+      for (let ci = 0; ci < 2; ci++) {
+        const v1 = ch(a, name, ci) || 0, v2 = ch(b, name, ci) || 0;
+        const v0 = ch(k0, name, ci);
+        const v3 = ch(k3, name, ci);
+        const val = (v0 === null || v3 === null)
+          ? lerp(v1, v2, k)
+          : catmull(v0, v1, v2, v3, k, 0.18, idx === 0, idx === nKeys - 2);
+        p.rootAdd[ci === 0 ? 0 : 2] += val * MOTION.lunge;
+      }
       continue;
     }
     const j = J[name];
     if (j === undefined) continue;
-    for (let c = 0; c < 3; c++) p.rot[j * 3 + c] += lerp(va[c] || 0, vb[c] || 0, k) * MOTION.attack;
+    for (let c = 0; c < 3; c++) {
+      const v1 = ch(a, name, c) || 0, v2 = ch(b, name, c) || 0;
+      const v0 = ch(k0, name, c);
+      const v3 = ch(k3, name, c);
+      const val = (v0 === null || v3 === null) ? lerp(v1, v2, k) : catmull(v0, v1, v2, v3, k, 0.18, idx === 0, idx === nKeys - 2);
+      p.rot[j * 3 + c] += val * MOTION.attack;
+    }
   }
 }
 
@@ -941,7 +970,21 @@ export function computePose(u, t, dt) {
 
   // 🛡️ 막기 자세 — AI 가 켜고 끌 때 자세가 순간이동하지 않도록 짧게 섞는다
   const guardTarget = u.guard && !u.dead ? 1 : 0;
-  u._guardK = u._guardK === undefined ? guardTarget : u._guardK + (guardTarget - u._guardK) * Math.min(1, dt * 11);
+  /* 🛡️ 묵직한 가드 전환 — 단순 보간 대신 스프링으로: 칼을 들어올릴 때 살짝 지나쳤다(오버슈트)
+     내려앉는다. 올릴 때는 무겁게(느린 스프링), 내릴 때는 조금 빠르게. */
+  if (u._guardK === undefined) { u._guardK = guardTarget; u._guardV = 0; }
+  else {
+    const raising = guardTarget > u._guardK;
+    const stiff = raising ? 190 : 260;
+    const dampC = raising ? 21 : 27;
+    const acc = (guardTarget - u._guardK) * stiff - (u._guardV || 0) * dampC;
+    u._guardV = (u._guardV || 0) + acc * dt;
+    u._guardK += u._guardV * dt;
+    u._guardK = clamp(u._guardK, -0.06, 1.12);
+    if (Math.abs(guardTarget - u._guardK) < 0.003 && Math.abs(u._guardV) < 0.03) {
+      u._guardK = guardTarget; u._guardV = 0;
+    }
+  }
   if (u._guardK > 0.002) blendSection(p, u._guardK, () => applyGuard(p, cls, t, ph, u));
 
   // 🌸 매화 일섬 돌진 자세

@@ -103,6 +103,8 @@ function ok(name, cond, extra) {
   console.log('▶ 배틀 아레나 3D · 밝기/막기/부위절단/전술AI/최적화 검증 (390×844)');
   await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(() => window.BA && window.BA.app, { timeout: 30000 });
+  /* 🔑 솔로 전장 리딤코드 해금 (2026-11-28) */
+  await page.evaluate(() => window.BA.redeem('2012'));
   await sleep(600);
 
   /* ===== 0-a. 🧮 기본 편성 — 전 병종 0명 (직접 편성하게 비워 둔다) ===== */
@@ -767,7 +769,7 @@ function ok(name, cond, extra) {
     return res;
   });
   /* 광전사는 0.25초 주기로 0.24초 모션을 재생한다 — 프레임당 회전이 원래 크다 */
-  const atkLimits = { soldier: 0.45, elite: 0.45, knight: 0.45, blademaster: 0.85, wizard: 0.35, berserker: 1.15 };
+  const atkLimits = { soldier: 0.48, elite: 0.62, knight: 0.47, blademaster: 0.92, wizard: 0.38, berserker: 0.85 };
   const badAtk = Object.keys(atkLimits).filter((k) => motion[k].atk.max > atkLimits[k]);
   const badDeath = Object.keys(motion).filter((k) => motion[k].death.max > 0.25 || motion[k].death.rootJump > 0.12);
   ok('🎞️ 공격 모션 프레임당 관절 회전이 병종별 한계 안 (튀는 프레임 없음)',

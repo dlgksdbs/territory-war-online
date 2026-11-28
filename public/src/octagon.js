@@ -8,7 +8,7 @@
      (솔로 배틀 아레나의 성곽 평원은 절대 건드리지 않는다)
    ============================================================================= */
 import * as THREE from 'three';
-import { OCTAGON } from './ground.js';
+import { OCTAGON, octagonMatTop, octagonMatBottom } from './ground.js';
 import { makeCanvas } from './textures.js';
 
 /* 매트 바닥 텍스처 — 8각 아웃라인 + 중앙 원 + 라인 마킹 */
@@ -99,6 +99,11 @@ export function buildOctagon(scene) {
   const SIDE = 2 * R_VERT * Math.sin(Math.PI / 8);
   const TOP = OCTAGON.top;
   const dummy = new THREE.Object3D();
+  /* 🥊 매트 윗면을 '링 안 지형의 가장 높은 곳'보다 위에 둔다 — 지형 기복에 매트가
+     파묻히거나 유닛 발이 매트 아래로 내려가지 않게. 아래에는 바닥까지 닿는 받침을 둔다. */
+  const MAT_TOP = octagonMatTop();
+  const MAT_BOTTOM = octagonMatBottom();
+  group.position.y = MAT_TOP - TOP;               // 로컬 TOP = 월드 MAT_TOP
 
   /* ---------------------------------------------------------- 매트·플랫폼 */
   const matMat = keep(new THREE.MeshStandardMaterial({
@@ -110,11 +115,13 @@ export function buildOctagon(scene) {
   mat.receiveShadow = true;
   group.add(mat);
 
+  /* 받침 — 매트 윗면 아래로 지형 바닥까지 (들쭉날쭉한 지형에 매트가 떠 보이지 않게) */
+  const baseH = Math.max(0.34, (MAT_TOP - MAT_BOTTOM) + 0.02);
   const base = new THREE.Mesh(
-    keep(new THREE.CylinderGeometry(R_VERT + 0.16, R_VERT + 0.34, 0.34, 8)),
+    keep(new THREE.CylinderGeometry(R_VERT + 0.16, R_VERT + 0.34, baseH, 8)),
     keep(new THREE.MeshStandardMaterial({ color: 0x0f1216, roughness: 0.92, metalness: 0.08 }))
   );
-  base.position.y = TOP - 0.19;
+  base.position.y = TOP - baseH / 2;
   base.receiveShadow = true;
   group.add(base);
 
@@ -196,7 +203,7 @@ export function buildOctagon(scene) {
 
   const api = {
     group,
-    info: () => ({ meshes: group.children.length, apothem: OCTAGON.apothem, fence: OCTAGON.fence, top: TOP }),
+    info: () => ({ meshes: group.children.length, apothem: OCTAGON.apothem, fence: OCTAGON.fence, top: TOP, matTop: +MAT_TOP.toFixed(3), matBottom: +MAT_BOTTOM.toFixed(3) }),
     update: (dt, t) => {
       edge.material.opacity = 0.20 + (0.6 + Math.sin(t * 2.2) * 0.4) * 0.10;
     },

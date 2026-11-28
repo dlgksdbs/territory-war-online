@@ -7,13 +7,16 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node test/smoke.js && node test/friends.js && node test/pvp.js",
+    "test": "node test/smoke.js && node test/friends.js && node test/pvp.js && node test/balance.js && node test/redeem.js && node test/motion.js",
     "test:friends": "node test/friends.js",
     "test:arena": "node test/mobile-arena.js",
     "test:arena3d": "node test/mobile-arena3d.js",
     "test:hud": "node test/mobile-hud-custom.js",
     "test:pvp": "node test/pvp.js",
-    "test:mobile-pvp": "node test/mobile-pvp.js"
+    "test:mobile-pvp": "node test/mobile-pvp.js",
+    "test:balance": "node test/balance.js",
+    "test:redeem": "node test/redeem.js",
+    "test:motion": "node test/motion.js"
   },
   "engines": {
     "node": ">=18"

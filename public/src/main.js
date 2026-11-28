@@ -4,7 +4,7 @@
    홈(병력 편성) → 3D 전장(1인칭 참전 / 관전) → 결과 · 다시 싸우기
    ============================================================================= */
 import * as THREE from 'three';
-import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_ELITES, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt, GUARD_CHANCE, REGEN_FRAC, LIFESTEAL } from './config.js';
+import { CLASSES, SPELLS, SPELL_ORDER, SKILL, MAX_SOLDIERS, MAX_ELITES, MAX_SPECIALS, TEAM, GROWTH_PER_KILL, impactAt, GUARD_CHANCE, REGEN_FRAC, LIFESTEAL, PLAYER_REACH_BONUS, PLAYER_REACH_BONUS_WIZARD, PLAYER_ARC_BONUS } from './config.js';
 import { buildWorld } from './world.js';
 import { UnitRenderer } from './rig.js';
 import { Battle } from './battle.js';
@@ -15,6 +15,7 @@ import { Sfx } from './sfx.js';
 import { createFullscreenToggle, isFullscreen, fullscreenSupported } from './fullscreen.js';
 import { initHudLayout } from './hud-custom.js';
 import { loadProgress, saveProgress, rosterOf, rosterTotal, growthMult, growthLabel, playerSpec, powerIndex } from './config.js';
+import { SOLO_CODE, SOLO_UNLOCK_KEY, SOLO_LOCK_NOTE, SOLO_OPEN_NOTE, SOLO_BAD_NOTE, isValidSoloCode, loadSoloUnlocked, saveSoloUnlocked } from './redeem.js';
 import { PvpClient } from './pvp.js';
 import { buildOctagon } from './octagon.js';
 import { groundY, clampOctagon, resolveObstacles, blockedAt, OCTAGON } from './ground.js';
@@ -39,6 +40,9 @@ const _aimDir = new THREE.Vector3();
 const UNIT_KR = { soldier: '병사', elite: '고급 병사', knight: '기사', wizard: '마법사', blademaster: '검객', berserker: '광전사' };
 const BUCKET_KEYS = ['soldier', 'elite', 'knight', 'wizard', 'blademaster', 'berserker'];
 
+/* 🔑 솔로 전장 리딤코드 — 코드를 넣은 사람만 솔로 전장에 들어간다 (PVP 는 그대로 자유).
+   규칙·저장은 redeem.js 에 있고, 여기서는 화면 표시와 진입 차단만 맡는다. */
+
 class App {
   constructor() {
     this.progress = loadProgress();
@@ -49,6 +53,8 @@ class App {
       enemySoldiers: 0, enemyElites: 0, enemyKnights: 0, enemyWizards: 0, enemyBlademasters: 0, enemyBerserkers: 0
     };
     this.state = 'home';
+    /* 🔑 솔로 전장 해금 상태 — 저장된 값을 먼저 읽고, 홈 화면 표시를 그에 맞춘다 */
+    this.soloUnlocked = this._loadSoloUnlock();
     this.paused = false;
     this.frames = 0;
     this.time = 0;
@@ -85,6 +91,75 @@ class App {
     this.pvp = new PvpClient(this);
     this._readUrl();
     this._showHome();
+    this._syncSoloLock();
+  }
+
+  /* ------------------------------------------------------------ 🔑 리딤코드 */
+  _loadSoloUnlock() {
+    return loadSoloUnlocked();
+  }
+
+  _saveSoloUnlock() {
+    return saveSoloUnlocked(null, true);
+  }
+
+  /* 코드 적용 — 맞으면 즉시 해금·저장, 틀리면 안내만 하고 잠금 유지 */
+  redeemSoloCode(raw) {
+    const el = $('#redeemCode');
+    const code = String(raw == null ? (el ? el.value : '') : raw).trim();
+    const note = $('#redeemNote');
+    if (isValidSoloCode(code)) {
+      this.soloUnlocked = true;
+      this._saveSoloUnlock();
+      this._syncSoloLock();
+      this.sfx.ui();
+      this._toast('🔑 리딤코드 확인 — 솔로 전장이 열렸다!');
+      return true;
+    }
+    if (note) {
+      note.classList.add('is-bad');
+      note.innerHTML = code ? SOLO_BAD_NOTE : '리딤코드를 입력해 주세요.';
+    }
+    this.sfx.ui();
+    this._toast('올바른 리딤코드가 아닙니다');
+    return false;
+  }
+
+  /* 홈 화면에 지금 적혀 있는 리딤코드 안내문 (테스트·디버그) */
+  _soloNote() {
+    const note = $('#redeemNote');
+    return note ? note.textContent : '';
+  }
+
+  /* 잠금/해금 상태를 홈 화면(시작 버튼·패널)에 반영 */
+  _syncSoloLock() {
+    const open = !!this.soloUnlocked;
+    const btn = $('#startBtn');
+    if (btn) {
+      btn.classList.toggle('is-locked', !open);
+      btn.setAttribute('aria-disabled', open ? 'false' : 'true');
+      const icon = btn.querySelector('.sb-icon'); if (icon) icon.textContent = open ? '⚔' : '🔒';
+      const strong = btn.querySelector('.sb-text strong'); if (strong) strong.textContent = open ? '전장으로' : '리딤코드 필요';
+      const em = btn.querySelector('.sb-text em'); if (em) em.textContent = open ? 'BATTLE START' : 'REDEEM CODE';
+    }
+    const panel = $('#redeemPanel');
+    if (panel) panel.classList.toggle('is-unlocked', open);
+    const note = $('#redeemNote');
+    if (note) {
+      note.classList.remove('is-bad');
+      note.innerHTML = open ? SOLO_OPEN_NOTE : SOLO_LOCK_NOTE;
+    }
+    const input = $('#redeemCode');
+    const apply = $('#redeemApply');
+    if (input) {
+      input.disabled = open;
+      if (open) input.value = SOLO_CODE;
+      else if (input.value === SOLO_CODE) input.value = '';
+    }
+    if (apply) {
+      apply.disabled = open;
+      apply.textContent = open ? '해금됨' : '적용';
+    }
   }
 
   /* ------------------------------------------------------------------ 초기화 */
@@ -269,6 +344,14 @@ class App {
       this._syncHome();
     });
     $('#startBtn').addEventListener('click', () => this.startBattle());
+    /* 🔑 솔로 전장 리딤코드 — 적용 버튼 · 엔터 */
+    const redeemApply = $('#redeemApply');
+    if (redeemApply) redeemApply.addEventListener('click', () => this.redeemSoloCode());
+    const redeemInput = $('#redeemCode');
+    if (redeemInput) {
+      redeemInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.redeemSoloCode(); });
+      redeemInput.addEventListener('input', () => { $('#redeemNote').classList.remove('is-bad'); });
+    }
     $('#camBtn').addEventListener('click', () => this.cycleCamera());
     $('#menuBtn').addEventListener('click', () => { $('#menuSheet').classList.add('is-on'); this.paused = true; });
     this._bindFullscreen();
@@ -529,6 +612,17 @@ class App {
 
   /* ------------------------------------------------------------------ 전투 */
   startBattle() {
+    /* 🔑 솔로 전장은 리딤코드(2012)를 넣은 사람만 — 안전하게 진입 함수 자체에서 막는다.
+       (BA.start 같은 디버그 경로도 여기를 지나므로 함께 잠긴다. PVP 는 이 함수를 쓰지 않는다) */
+    if (!this.soloUnlocked) {
+      this._toast('🔒 솔로 전장은 리딤코드 2012 가 필요해');
+      const panel = $('#redeemPanel');
+      if (panel && panel.scrollIntoView) panel.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      const el = $('#redeemCode');
+      if (el && !el.disabled) { try { el.focus({ preventScroll: true }); } catch (e) { /* noop */ } }
+      this.sfx.ui();
+      return;
+    }
     /* ⚔️ 아군·적군이 모두 0명이면 빈 전장에 플레이어만 서게 된다 — 승패도 없고 볼 것도 없다.
        첫 화면 기본 편성이 0명이라 아무것도 고르지 않고 누를 수 있으므로, 편성부터 안내하고
        전장에 들어가지 않는다 (아군 0 + 적군 N = 1 vs N, 적군 0 = 연습 모드는 그대로 허용). */
@@ -1096,6 +1190,19 @@ class App {
   /* ------------------------------------------------------------------ 루프 */
   loop() {
     this._raf = requestAnimationFrame(() => this.loop());
+    /* 🛡️ 한 프레임의 예외가 화면·입력·연결을 통째로 잡아먹지 않게 — 기록만 하고 다음 프레임으로 넘어간다.
+       (모바일에서 특정 상황 한 번의 throw 로 게임이 멈춰 '튕긴 것처럼' 보이던 문제 방지) */
+    try { this._frame(); } catch (err) {
+      this._loopErr = (this._loopErr || 0) + 1;
+      const t = performance.now();
+      if (!this._loopErrAt || t - this._loopErrAt > 1500) {
+        this._loopErrAt = t;
+        console.error('[frame]', err);
+      }
+    }
+  }
+
+  _frame() {
     const now = performance.now();
     let dt = this.last ? (now - this.last) / 1000 : 0.016;
     this.last = now;
@@ -1161,6 +1268,15 @@ class App {
           unit.dead = true; unit.deadT = t; unit.hp = 0;
         } else if (kind === 'attack') {
           unit.attackT = t; unit.hitDone = true;
+        } else if (kind === 'walk') {
+          /* 🚶 걷기 프레임 고정 — 연속 프레임 스크린샷용 */
+          unit.dead = false; unit.attackT = -1; unit.guard = false;
+          unit.moveAmt = this.debugLock.move === undefined ? 1 : this.debugLock.move;
+          unit.walkPhase = t;
+        } else if (kind === 'guard') {
+          /* 🛡️ 막기 자세 고정 */
+          unit.dead = false; unit.attackT = -1; unit.moveAmt = 0;
+          unit.guard = true; unit._guardK = 1;
         }
       }
     }
@@ -1620,8 +1736,11 @@ window.BA = {
     };
   },
   config: () => ({ ...app.cfg }),
+  /* 🔑 솔로 전장 리딤코드 (테스트·디버그) */
+  redeem: (code) => app.redeemSoloCode(code),
+  solo: () => ({ unlocked: !!app.soloUnlocked, key: SOLO_UNLOCK_KEY, code: SOLO_CODE, note: app._soloNote() }),
   /* 밸런스 스펙 (테스트·디버그) */
-  specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS, guardChance: GUARD_CHANCE, regen: REGEN_FRAC, lifesteal: LIFESTEAL }),
+  specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS, guardChance: GUARD_CHANCE, regen: REGEN_FRAC, lifesteal: LIFESTEAL, reachBonus: PLAYER_REACH_BONUS, reachBonusWizard: PLAYER_REACH_BONUS_WIZARD, arcBonus: PLAYER_ARC_BONUS }),
   /* 시점 감도 (테스트·디버그) — 지금 화면 기준 실제 적용값 */
   look: () => ({
     sens: LOOK_SENS, pitch: LOOK_PITCH_SENS, spec: SPEC_SENS, specPitch: SPEC_PITCH_SENS,
@@ -1692,7 +1811,7 @@ window.BA = {
   },
   debug: {
     pause(v) { app.paused = v === undefined ? true : !!v; },
-    pose({ cls, kind, t, side }) {
+    pose({ cls, kind, t, side, move }) {
       const b = app.battle;
       if (!b) return false;
       app.paused = true;
@@ -1701,8 +1820,11 @@ window.BA = {
       if (!u) return false;
       // 시야 확보를 위해 근처로 이동
       u.x = 0; u.z = 0; u.yaw = Math.PI; u.dead = false; u.deadT = 0; u.removed = false;
-      if (kind === 'death') { u.dead = true; u.hp = 0; u.deadT = t || 0.3; } else { u.dead = false; u.attackT = t || 0.3; u.hitDone = true; }
-      app.debugLock = { unit: u, kind: kind || 'attack', t: t || 0.3 };
+      if (kind === 'death') { u.dead = true; u.hp = 0; u.deadT = t || 0.3; }
+      else if (kind === 'walk') { u.dead = false; u.attackT = -1; u.moveAmt = 1; u.walkPhase = t || 0; }
+      else if (kind === 'guard') { u.dead = false; u.attackT = -1; u.moveAmt = 0; u.guard = true; u._guardK = 1; }
+      else { u.dead = false; u.attackT = t || 0.3; u.hitDone = true; }
+      app.debugLock = { unit: u, kind: kind || 'attack', t: t || 0.3, move };
       // 카메라
       app.camMode = 'fp';
       app.vm.enabled = false;
@@ -1784,8 +1906,19 @@ window.BA = {
       u.deadT = kind === 'death' ? (t || 0) : 0;
       u.attackT = kind === 'attack' ? (t || 0) : -1;
       u.hitDone = true;
-      u.moveAmt = 0; u.staggerT = 0; u.freezeT = 0;
-      app.debugLock = { unit: u, kind: kind === 'death' ? 'death' : 'attack', t: t || 0 };
+      u.moveAmt = kind === 'walk' ? 1 : 0;
+      u.walkPhase = kind === 'walk' ? (t || 0) : 0;
+      u.guard = kind === 'guard';
+      u._guardK = kind === 'guard' ? 1 : 0;
+      u.staggerT = kind === 'stagger' ? (t || 0) : 0;
+      if (kind === 'stagger') { u.staggerMax = 0.34; u.staggerSide = 1; }
+      u.freezeT = 0;
+      app.debugLock = {
+        unit: u,
+        kind: kind === 'death' ? 'death' : kind === 'walk' ? 'walk' : kind === 'guard' ? 'guard' : 'attack',
+        t: t || 0,
+        move: 1
+      };
       app.cam.position.set(1.6, 1.35, -3.0);
       app.cam.lookAt(0, 1.0, 0);
       return true;

@@ -184,6 +184,19 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
   transition: transform .12s, filter .15s;
 }
 .start-btn:active { transform: translateY(1px) scale(.995); filter: brightness(1.06); }
+/* 🔑 솔로 전장 리딤코드 — 해금 전에는 시작 버튼을 잠근다 */
+.start-btn.is-locked {
+  background: linear-gradient(100deg, #3a4048, #545c66 40%, #5f6873 55%, #454c55 80%, #343a42);
+  color: #cfd6df; box-shadow: 0 10px 22px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.14);
+}
+.start-btn.is-locked .sb-icon { filter: grayscale(.2); }
+.redeem-panel { margin: 0 0 6px; border-color: rgba(232, 194, 122, .22); background: linear-gradient(165deg, rgba(28, 24, 16, .92), rgba(12, 11, 9, .92)); }
+.redeem-panel .panel-title span { color: #ffdca0; }
+.redeem-panel.is-unlocked { border-color: rgba(120, 220, 150, .32); background: linear-gradient(165deg, rgba(16, 30, 20, .92), rgba(9, 13, 10, .92)); }
+.redeem-panel.is-unlocked .panel-title span { color: #a8f0bd; }
+.redeem-panel .pvp-note.is-bad { color: #ff9a86; }
+.redeem-panel .pvp-note.is-bad b { color: #ff9a86; }
+.redeem-panel .pvp-input:disabled, .redeem-panel .pvp-btn:disabled { opacity: .55; }
 .sb-icon { font-size: 20px; }
 .sb-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.1; }
 .sb-text strong { font-size: 15px; letter-spacing: .06em; }

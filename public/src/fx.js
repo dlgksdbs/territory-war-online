@@ -6,7 +6,7 @@
    · 접지 그림자 · 피 묻은 자국 · 땅이 갈라지는 충격파
    ============================================================================= */
 import * as THREE from 'three';
-import { glowTexture, smokeTexture, arcTexture, woundTexture, flameTexture, blobTexture, petalTexture, scorchTexture } from './textures.js';
+import { glowTexture, smokeTexture, arcTexture, woundTexture, tearTexture, flameTexture, blobTexture, petalTexture, scorchTexture } from './textures.js';
 import { clamp, lerp, mulberry32, TAU, easeOutCubic } from './util.js';
 import { CLASSES, SPELLS, SKILL, impactAt } from './config.js';
 import { J } from './rig.js';
@@ -271,6 +271,23 @@ export class FX {
       this.wounds.push({ mesh: m, unit: null, life: 0, max: 4, local: new THREE.Matrix4() });
     }
     this.woundIdx = 0;
+
+    /* 🩸 망토 찢어짐 데칼 풀 — 등 뒤에서 맞은 유닛의 망토 위에 갈라진 자국을 덧그린다 */
+    this.tearMap = tearTexture();
+    this.tears = [];
+    for (let i = 0; i < 20; i++) {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({
+        map: this.tearMap, transparent: true, opacity: 0, roughness: 0.9, metalness: 0.02,
+        depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, side: THREE.DoubleSide,
+        color: 0xffffff
+      }));
+      m.matrixAutoUpdate = false;
+      m.visible = false;
+      m.renderOrder = 3;
+      scene.add(m);
+      this.tears.push({ mesh: m, unit: null, life: 0, max: 4, local: new THREE.Matrix4() });
+    }
+    this.tearIdx = 0;
 
     /* 검기 섬광 (초승달) */
     this.arcs = [];
@@ -576,8 +593,19 @@ export class FX {
     this.addShake(heavy ? 0.30 : 0.10);
     if (t.isPlayer) { this.hitFlash = Math.max(this.hitFlash, 0.6); this.addShake(0.22); }
 
-    // 상흔
-    this.spawnWound(t, heavy ? 'crush' : 'blade', e.angle);
+    // 🩸 상흔 — 맞은 방향을 보고 앞(가슴)/뒤(등)에 붙인다
+    let fromBack = false;
+    if (t && t.x !== undefined) {
+      const ax2 = s && s.x !== undefined ? s.x : (e.hx !== undefined ? e.hx : null);
+      const az2 = s && s.z !== undefined ? s.z : null;
+      if (ax2 !== null && az2 !== null) {
+        const fx = Math.sin(t.yaw || 0), fz = Math.cos(t.yaw || 0);
+        fromBack = ((ax2 - t.x) * fx + (az2 - t.z) * fz) < 0;
+      }
+    }
+    this.spawnWound(t, heavy ? 'crush' : 'blade', e.angle, fromBack);
+    /* 등 뒤에서 맞았고 망토가 있으면 망토가 갈라진 자국을 함께 그린다 */
+    if (fromBack) this.spawnTear(t, e.angle);
     if (petal) {
       this.petalBurst(px, py, pz, e.angle || 0, 30, 1.15);
       this.spawnArc(px, py, pz, e.angle || 0, 2.2, 'blade', 0.17, 0xffb4d8);
@@ -1206,7 +1234,7 @@ export class FX {
     this.sectorFades.push(item);
   }
 
-  spawnWound(unit, kind, angle) {
+  spawnWound(unit, kind, angle, back) {
     // 상세 모델로 그려지는 유닛에만 상흔을 붙인다 (실루엣 유닛은 관절 행렬이 없어 엉뚱한 곳에 그려진다)
     if (!unit || unit.dslot === undefined || unit.dslot < 0) return;
     const w = this.wounds[this.woundIdx++ % this.wounds.length];
@@ -1214,16 +1242,42 @@ export class FX {
     w.life = 0;
     w.max = 5;
     w.mesh.material.map = this.woundTex[kind] || this.woundTex.blade;
-    const s = kind === 'crush' ? 0.42 : 0.34;
-    const px = (this.rng() - 0.5) * 0.16;
-    const py = 0.04 + (this.rng() - 0.5) * 0.22;
-    _wv.set(px, py, 0.17);
-    _we.set((this.rng() - 0.5) * 0.3, 0, (angle || 0) + (this.rng() - 0.5) * 0.5);
+    /* 상흔 크기 — 한눈에 보이게 키웠다 (0.34/0.42 → 0.52/0.62) */
+    const s = kind === 'crush' ? 0.62 : 0.52;
+    const px = (this.rng() - 0.5) * 0.12;
+    const py = 0.05 + (this.rng() - 0.5) * 0.20;
+    /* 앞에서 맞으면 가슴(+z), 뒤에서 맞으면 등(-z) */
+    _wv.set(px, py, back ? -0.185 : 0.17);
+    _we.set((this.rng() - 0.5) * 0.3, back ? Math.PI : 0, (angle || 0) + (this.rng() - 0.5) * 0.5);
     _wq.setFromEuler(_we);
     _ws.set(s, s, s);
     w.local.compose(_wv, _wq, _ws);
     w.mesh.visible = true;
     w.mesh.material.opacity = 1;
+  }
+
+  /* 🩸 망토 찢어짐 — 등 상흔 바로 위에 갈라진 천 자국을 덧그린다.
+     가운데가 뚫려 있어 그 구멍으로 방금 난 등 상흔이 그대로 보인다. */
+  spawnTear(unit, angle) {
+    if (!unit || unit.dslot === undefined || unit.dslot < 0) return;
+    const tr = this.tears[this.tearIdx++ % this.tears.length];
+    tr.unit = unit;
+    tr.life = 0;
+    tr.max = 5;
+    /* 진영색에 가까운 천 색 — 아군(푸른 천) / 적군(붉은 천) */
+    const c = unit.team === 'ally' ? 0x7b8ca3 : 0xa0655a;
+    tr.mesh.material.color.setHex(c);
+    /* 갈라진 천 자국 — 등 상흔을 가리지 않을 만큼만 (너무 크면 등 전체를 덮는다) */
+    const s = 0.36;
+    const px = (this.rng() - 0.5) * 0.10;
+    const py = 0.02 + (this.rng() - 0.5) * 0.10;
+    _wv.set(px, py, -(0.20 + this.rng() * 0.02));   // 망토 바로 바깥(등 뒤에서 보면 앞)
+    _we.set(0, Math.PI, (angle || 0) * 0.35 + (this.rng() - 0.5) * 0.4);
+    _wq.setFromEuler(_we);
+    _ws.set(s, s, s);
+    tr.local.compose(_wv, _wq, _ws);
+    tr.mesh.visible = true;
+    tr.mesh.material.opacity = 0.92;
   }
 
   attachShell(unit, duration) {
@@ -1289,6 +1343,25 @@ export class FX {
     this.mist.update(dt);
     this.petals.update(dt);
     this.blood.update(dt);
+
+    /* 🩸 망토 찢어짐 — 상흔과 같은 방식으로 유닛 관절을 따라간다 */
+    for (const tr of this.tears) {
+      if (!tr.unit) continue;
+      tr.life += dt;
+      const u = tr.unit;
+      if (!u || u.removed || tr.life > tr.max) {
+        tr.mesh.visible = false;
+        if (u && (u.removed || tr.life > tr.max)) tr.unit = null;
+        continue;
+      }
+      const jm2 = u.joints[J.chest];
+      _m1.multiplyMatrices(jm2, tr.local);
+      tr.mesh.matrix.copy(_m1);
+      tr.mesh.matrixWorldNeedsUpdate = true;
+      const fade2 = clamp((tr.max - tr.life) / 0.8, 0, 1);
+      tr.mesh.material.opacity = u.dead ? Math.min(1, fade2 + 0.2) : fade2;
+      tr.mesh.visible = true;
+    }
 
     /* 상흔 — 유닛 관절을 따라간다 */
     for (const w of this.wounds) {
@@ -1705,6 +1778,7 @@ export class FX {
   clear() {
     this.sparks.n = 0; this.dust.n = 0; this.mist.n = 0; this.petals.n = 0;
     for (const w of this.wounds) { w.unit = null; w.mesh.visible = false; }
+    for (const tr of this.tears) { tr.unit = null; tr.mesh.visible = false; }
     for (const a of this.arcs) a.mesh.visible = false;
     for (const g of this.rings) g.mesh.visible = false;
     for (const b of this.blasts) b.mesh.visible = false;

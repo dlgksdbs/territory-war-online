@@ -43,10 +43,43 @@ export function clampOctagon(x, z, apothem) {
 }
 
 /* 지면 높이 — PVP 링 안쪽은 매트 두께만큼 올라간다 */
+/* 🥊 옥타곤 매트 윗면의 월드 Y — 링 안 지형에서 가장 높은 곳보다 살짝 위.
+   · 지형은 전장 안에서도 ±0.7m 출렁인다. 예전엔 '지형 + 매트 두께'에 발을 딛여
+     지형이 낮은 자리에서 발·정강이가 매트 아래로 파묻혔다 (2026-11-28 제보).
+   · 매트는 평평한 한 장이므로, 링 안 어디서든 '매트 윗면'을 바닥으로 쓴다.
+   (지형보다 매트가 높으므로 max 를 써도 결과는 항상 매트 윗면이다) */
+let OCT_MAT_TOP = null;
+let OCT_MAT_BOTTOM = null;
+export function octagonMatTop() {
+  if (OCT_MAT_TOP === null) {
+    let hi = -1e9, lo = 1e9;
+    const R = OCTAGON.vertex;
+    const N = 16;
+    for (let i = 0; i <= N; i++) {
+      for (let j = 0; j <= N; j++) {
+        const x = -R + (2 * R * i) / N;
+        const z = -R + (2 * R * j) / N;
+        if (x * x + z * z > R * R) continue;
+        const h = terrainHeight(x, z);
+        if (h > hi) hi = h;
+        if (h < lo) lo = h;
+      }
+    }
+    OCT_MAT_TOP = hi + OCTAGON.top + 0.02;
+    OCT_MAT_BOTTOM = lo - 0.06;
+  }
+  return OCT_MAT_TOP;
+}
+export function octagonMatBottom() {
+  octagonMatTop();
+  return OCT_MAT_BOTTOM;
+}
+
 export function groundY(x, z, pvp) {
   const base = terrainHeight(x, z);
   if (!pvp) return base;
-  return insideOctagon(x, z, OCTAGON.fence + 0.4) ? base + OCTAGON.top : base;
+  if (!insideOctagon(x, z, OCTAGON.fence + 0.4)) return base;
+  return Math.max(base, octagonMatTop());
 }
 
 /* ------------------------------------------------------------------ 장애물

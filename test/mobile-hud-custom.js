@@ -83,6 +83,8 @@ function ok(name, cond, extra) {
   console.log('▶ 🎮 전투 HUD 버튼 크기·위치 커스텀 검증 (390×844)');
   await page.goto('http://127.0.0.1:' + PORT + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(() => window.BA && window.BA.app && window.BA.hudLayout, { timeout: 30000 });
+  /* 🔑 솔로 전장 리딤코드 해금 (2026-11-28) */
+  await page.evaluate(() => window.BA.redeem('2012'));
   await sleep(700);
 
   /* ===== 1. 홈 — 설정 버튼 ===== */

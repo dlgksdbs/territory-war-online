@@ -12,6 +12,25 @@ export const easeInOutQuad = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t +
 export const easeOutBack = (t) => { const c = 1.5; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
 export const TAU = Math.PI * 2;
 
+/* 🎬 Catmull-Rom(긴장도 조절) 보간 — 키프레임 사이를 '속도가 이어지는' 곡선으로 잇는다.
+   선형/이징 보간은 키를 지날 때마다 속도가 꺾여 모션이 뚝뚝 끊겨 보인다.
+   앞뒤 키를 함께 보는 이 곡선은 관절이 자연스럽게 가속하며 지나가고,
+   임팩트 키에서는 살짝 지나쳤다(오버슈트) 되돌아오는 감쇠까지 만든다.
+   tension 0.5 = 표준 Catmull-Rom. 작을수록 곡선이 조여져 지나침이 줄어든다.
+   p0·p3 = 앞뒤 바깥 키, p1·p2 = 지금 구간의 시작/끝, t = 구간 진행도(0..1) */
+export function catmull(p0, p1, p2, p3, t, tension, restStart, restEnd) {
+  const tn = tension === undefined ? 0.5 : tension;
+  const t2 = t * t, t3 = t2 * t;
+  /* 첫 구간은 정지에서 출발(m1=0), 마지막 구간은 정지로 안착(m2=0) — 시작·끝이 튀지 않는다 */
+  const m1 = restStart ? 0 : tn * (p2 - p0);
+  const m2 = restEnd ? 0 : tn * (p3 - p1);
+  const h00 = 2 * t3 - 3 * t2 + 1;
+  const h10 = t3 - 2 * t2 + t;
+  const h01 = -2 * t3 + 3 * t2;
+  const h11 = t3 - t2;
+  return h00 * p1 + h10 * m1 + h01 * p2 + h11 * m2;
+}
+
 export function angDiff(a, b) {
   let d = (a - b) % TAU;
   if (d > Math.PI) d -= TAU;

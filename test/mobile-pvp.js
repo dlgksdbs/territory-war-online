@@ -132,6 +132,70 @@ function ok(name, cond, extra) {
   /* 🚶 모션 증거는 상대가 보이는 가운데 영역만 잘라서 찍는다 (소프트웨어 GL 메모리 절약) */
   const CENTER = { x: 60, y: 200, width: 270, height: 420 };
 
+  /* ===== 0. 🔑 솔로 전장 리딤코드 — 잠금/해제 (PVP 는 코드 없이 그대로) ===== */
+  {
+    const locked = await A.evaluate(() => ({
+      unlocked: window.BA.solo().unlocked,
+      key: window.BA.solo().key,
+      btn: document.getElementById('startBtn').className,
+      label: document.querySelector('#startBtn .sb-text strong').textContent,
+      stored: window.localStorage.getItem('ba.soloUnlocked.v1')
+    }));
+    ok('🔑 처음에는 솔로 전장이 잠겨 있다 (「전장으로」 잠금 상태)',
+      locked.unlocked === false && /is-locked/.test(locked.btn) && /리딤코드/.test(locked.label) && !locked.stored, locked);
+
+    /* 잠긴 채로 시작 버튼을 눌러도 전장에 들어가지 않는다 */
+    await A.evaluate(() => document.getElementById('startBtn').click());
+    await sleep(700);
+    const blocked = await A.evaluate(() => ({
+      state: window.BA.state().state, hasBattle: !!window.BA.battle, focus: document.activeElement && document.activeElement.id
+    }));
+    ok('🔒 잠긴 상태에서는 「전장으로」를 눌러도 들어가지 않는다', blocked.state === 'home' || !blocked.hasBattle, blocked);
+
+    /* 잘못된 코드 → 안내만 하고 잠금 유지 */
+    const wrong = await A.evaluate(() => {
+      const inp = document.getElementById('redeemCode');
+      inp.value = '1234';
+      document.getElementById('redeemApply').click();
+      return {
+        unlocked: window.BA.solo().unlocked,
+        note: document.getElementById('redeemNote').textContent,
+        bad: document.getElementById('redeemNote').classList.contains('is-bad'),
+        stored: window.localStorage.getItem('ba.soloUnlocked.v1')
+      };
+    });
+    ok('❌ 잘못된 리딤코드는 안내만 하고 잠금을 유지한다',
+      wrong.unlocked === false && /올바른 리딤코드가 아닙니다/.test(wrong.note) && wrong.bad && !wrong.stored, wrong);
+
+    /* 코드 2012 → 즉시 해금 + 저장 */
+    const good = await A.evaluate(() => {
+      const inp = document.getElementById('redeemCode');
+      inp.value = '2012';
+      document.getElementById('redeemApply').click();
+      return {
+        unlocked: window.BA.solo().unlocked,
+        stored: window.localStorage.getItem('ba.soloUnlocked.v1'),
+        btn: document.getElementById('startBtn').className,
+        label: document.querySelector('#startBtn .sb-text strong').textContent,
+        panel: document.getElementById('redeemPanel').className
+      };
+    });
+    ok('🔑 리딤코드 2012 를 넣으면 솔로 전장이 열린다 (+ localStorage 저장)',
+      good.unlocked === true && good.stored === '1' && !/is-locked/.test(good.btn) &&
+      /전장으로/.test(good.label) && /is-unlocked/.test(good.panel), good);
+
+    /* 새로고침해도 해금 상태가 유지된다 */
+    await A.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+    await A.waitForFunction(() => window.BA && window.BA.solo, { timeout: 60000, polling: 150 });
+    const afterReload = await A.evaluate(() => ({
+      unlocked: window.BA.solo().unlocked, stored: window.localStorage.getItem('ba.soloUnlocked.v1'),
+      btn: document.getElementById('startBtn').className
+    }));
+    ok('🔄 새로고침(재접속) 후에도 솔로 전장은 계속 열려 있다',
+      afterReload.unlocked === true && afterReload.stored === '1' && !/is-locked/.test(afterReload.btn), afterReload);
+    await sleep(400);
+  }
+
   /* ===== 1. 홈 PVP 패널 ===== */
   await front(A, 300);
   const panel = await A.evaluate(() => {
@@ -280,6 +344,8 @@ function ok(name, cond, extra) {
     };
   });
   ok('조준점을 상대에게 대면 에임 위 상대 체력바가 뜬다', aim.on && /친구/.test(aim.name) && /\d+ \/ \d+/.test(aim.hp) && /%/.test(aim.barW), aim);
+  /* 💥 PVP 전용 밸런스 — 체력 1000 · 공격 100 · 회복 없음 */
+  ok('PVP 체력이 1000/1000 으로 표시된다', /^1000 \/ 1000$/.test(String(aim.hp).trim()), { hp: aim.hp });
   await shot(A, '04-battle-see-opponent.png');
 
   /* ===== 3b. 🚶 상대 걷기 모션 ===== */
@@ -438,7 +504,7 @@ function ok(name, cond, extra) {
     return { t: ls.t, age: Date.now() - (ls.t || 0), ents: (ls.ents || []).map((e) => ({ s: e.s, hp: e.hp, you: e.s === you })) };
   });
   ok('내 공격이 상대에게 실제 피해를 준다 (서버 체력이 줄어든다)',
-    hpB1 < hpB0 && (hpB0 - hpB1) >= 50,
+    hpB1 < hpB0 && (hpB0 - hpB1) >= 100,
     { before: hpB0, after: hpB1, seen: hpSeenByA, tries: swingTries.slice(0, 4) });
   ok('맞은 쪽은 피격 이벤트를 받는다', (await A.evaluate(() => window.BA.pvp.state().stats.hits)) >= 1);
   /* 조준점 확인 — 상대 정면 1.5m 에 다시 세우고 (위 난타로 밀려났을 수 있다) 한 번 더 벤다 */
@@ -555,10 +621,10 @@ function ok(name, cond, extra) {
   const connA = await A.evaluate(() => { const s2 = window.BA.pvp.state(); return { inBattle: s2.inBattle, ws: s2.ws, phase: s2.phase }; });
   ok('서버 기준으로 상대 정면 1.5m 안에 섰다', !!before && before.d < 2.5 && before.d > 0.8, before && { d: before.d, me: before.me, foe: before.other });
   ok('검 막기 — 서버가 정면 공격을 막아내고 막힘(패링) 이벤트를 보낸다',
-    !!parry && !!blockSeen && blockSeen.reflect === 115 && blockSeen.to === battleB.you,
+    !!parry && !!blockSeen && blockSeen.reflect === 100 && blockSeen.to === battleB.you,
     parry ? { blockSeen, guardDiag } : { guardDiag, hitThrough, before, geo, connA, line: line.slice(0, 8) });
-  ok('막아낸 피해 100%가 공격자에게 그대로 반사된다 (115)',
-    !!blockSeen && blockSeen.reflect === 115 && (hpApre - hpAafter) >= 80,
+  ok('막아낸 피해 100%가 공격자에게 그대로 반사된다 (100)',
+    !!blockSeen && blockSeen.reflect === 100 && (hpApre - hpAafter) >= 100,
     { reflect: blockSeen && blockSeen.reflect, before: +hpApre.toFixed(1), after: +hpAafter.toFixed(1), reflected: +(hpApre - hpAafter).toFixed(1) });
   /* 실제 스윙 연출 (연출 확인) */
   await A.evaluate(() => window.BA.pvp.swing());

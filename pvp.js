@@ -10,20 +10,31 @@
        - 검 막기: 최대 유지 시간 + 쿨타임 (무한 막기 금지) — PVP 전용
        - 막아내면 공격한 상대에게 원래 피해의 100%를 반사 (패링)
        - 무대는 UFC 옥타곤 링 — 8각형 경계 밖으로 나갈 수 없다
-       - 흡혈·자연 회복·부활도 배틀 아레나와 같은 규칙
+       - 💥 PVP 전용 밸런스: 최대 체력 1000 · 기본 공격력 100 · 회복 없음
+         (자연 회복 0, 적중 흡혈 0 — 체력이 늘어나는 곳은 부활뿐이다)
    · 승리: 설정한 킬 수 도달 또는 전멸전 / 제한 시간 종료 시 킬 수 우세
    · 재대결: 방장이 다시 시작하면 같은 팀·병종으로 곧바로 새 라운드
    ============================================================================= */
 
 const CLASS_KEYS = ['soldier', 'elite', 'knight', 'wizard', 'blademaster', 'berserker'];
 
+/* ⚔️ 플레이어 근접 사거리 보정 — 클라이언트 public/src/config.js 의 PLAYER_REACH_BONUS 와
+   반드시 같은 값이어야 한다 (빨간 조준점과 실제 타격 판정이 정확히 일치).
+   2026-11-28 "닿는 범위 좀 더 넓히자" — 0.45 → 0.85 */
+const PVP_REACH_BONUS = 0.85;
+const PVP_ARC_BONUS = 0.3;
+
 /* ⚔️ PVP 는 일반 병사 고정 — 순수 검술·막기 대전 (솔로 배틀 아레나는 6병종 그대로) */
 const FIXED_CLASS = 'soldier';
 
-/* PVP 병종 밸런스 — 1:1에서도 서로 몇 대씩 주고받도록 체력을 올리고
-   한 방 피해를 낮췄다 (모션·막기·흡혈·회복·피격 연출은 배틀 아레나와 동일) */
+/* 💥 PVP 전용 밸런스 (2026-11-28 사용자 지시: "체력 1000 공격 100 회복 없음. Pvp만")
+   · 체력 1000 · 기본 공격력 100 → 열 대를 맞아야 쓰러지고, 막기 100% 반사도 100
+   · 회복 없음: 자연 회복 0 · 적중 흡혈 0 (부활할 때만 최대 체력으로 돌아온다)
+   · 솔로 배틀 아레나(6병종)와 /classic/ 은 이 값을 쓰지 않는다 */
+const PVP_HP = 1000;
+const PVP_DAMAGE = 100;
 const PVP = {
-  soldier: { key: 'soldier', name: '일반 병사', icon: '⚔️', hp: 620, damage: 115, cycle: 0.62, speed: 4.15, reach: 2.05, arc: 1.95, armor: 0, radius: 0.38, guard: true, maxTargets: 1, mass: 1 },
+  soldier: { key: 'soldier', name: '일반 병사', icon: '⚔️', hp: PVP_HP, damage: PVP_DAMAGE, cycle: 0.62, speed: 4.15, reach: 2.05, arc: 1.95, armor: 0, radius: 0.38, guard: true, maxTargets: 1, mass: 1 },
   elite: { key: 'elite', name: '고급 병사', icon: '🛡️', hp: 680, damage: 118, cycle: 0.56, speed: 4.57, reach: 2.12, arc: 1.95, armor: 0.04, radius: 0.39, guard: true, maxTargets: 1, mass: 1.06 },
   knight: { key: 'knight', name: '중갑 기사', icon: '🔨', hp: 1650, damage: 320, cycle: 1.0, speed: 3.3, reach: 2.9, arc: 2.35, armor: 0.15, radius: 0.52, guard: false, maxTargets: 100, mass: 2.4 },
   wizard: { key: 'wizard', name: '대마법사', icon: '🔮', hp: 540, damage: 30, cycle: 0.86, speed: 2.31, reach: 1.9, arc: 1.6, armor: 0, radius: 0.36, guard: false, maxTargets: 1, mass: 0.85 },
@@ -61,11 +72,12 @@ const CFG = {
   guardReflect: 1.0,         // 막아내면 공격자에게 돌려주는 피해 비율 (100%)
   /* 🥊 UFC 옥타곤 링 — 중심에서 각 변까지의 거리 (m), 이동 가능 경계 */
   octApothem: 15.0,
-  regenFrac: 0.015,
-  lifestealFrac: 0.07,
-  lifestealMin: 1,
-  lifestealCapFrac: 0.03,
-  lifestealCapMin: 10
+  /* 💥 PVP 는 회복 없음 — 자연 회복·적중 흡혈 둘 다 0 (부활 말고는 체력이 차지 않는다) */
+  regenFrac: 0,
+  lifestealFrac: 0,
+  lifestealMin: 0,
+  lifestealCapFrac: 0,
+  lifestealCapMin: 0
 };
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -227,6 +239,8 @@ function lobbyPayload(room, player) {
     maxPlayers: st.capacity,
     players,
     fixedClass: FIXED_CLASS,
+    /* 💥 PVP 전용 밸런스 — 대기실 안내문이 이 값을 그대로 보여 준다 */
+    rules: { hp: PVP_HP, damage: PVP_DAMAGE, regen: CFG.regenFrac, lifesteal: CFG.lifestealFrac, reflect: CFG.guardReflect },
     guard: { hold: CFG.guardHold * 1000, cooldown: CFG.guardCooldown * 1000, reflect: CFG.guardReflect },
     arena: { type: 'octagon', apothem: CFG.octApothem },
     classes: CLASS_KEYS.map((k) => ({ key: k, name: PVP[k].name, icon: PVP[k].icon, hp: PVP[k].hp, damage: PVP[k].damage, guard: PVP[k].guard !== false })),
@@ -406,6 +420,7 @@ function startBattle(room, opts) {
     mode: st.mode,
     killTarget: st.killTarget,
     roundMs: CFG.roundMs,
+    rules: { hp: PVP_HP, damage: PVP_DAMAGE, regen: CFG.regenFrac, lifesteal: CFG.lifestealFrac, reflect: CFG.guardReflect },
     arenaR: CFG.arenaR,
     respawnMs: CFG.respawnMs,
     guard: { hold: CFG.guardHold * 1000, cooldown: CFG.guardCooldown * 1000, reflect: CFG.guardReflect },
@@ -424,6 +439,8 @@ function startBattle(room, opts) {
 
 /* ------------------------------------------------------------------ 전투 */
 function healFromLifesteal(src, dealt, now) {
+  /* 💥 PVP 는 흡혈 없음 — 배율이 0이면 회복 자체를 하지 않는다 */
+  if (!(CFG.lifestealFrac > 0)) return 0;
   if (!src || !(dealt > 0) || src.dead) return 0;
   const maxHp = src.maxHp || 0;
   if (!(maxHp > 0) || !(src.hp > 0) || src.hp >= maxHp) return 0;
@@ -446,6 +463,10 @@ function targetRef(e) {
 
 function hurt(room, st, target, amount, src, kind, from) {
   if (!target || target.dead || st.phase !== 'battle') return 0;
+  /* 🛡️ NaN·음수 피해는 버린다 (클라이언트가 보낸 이상한 값으로 체력이 NaN 이 되면 방이 터진다) */
+  amount = Number(amount);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  if (!Number.isFinite(target.hp) || !Number.isFinite(target.maxHp)) { target.hp = target.maxHp = PVP_HP; }
   const spec = PVP[target.cls] || PVP.soldier;
   const sx = from && from.x !== undefined ? from.x : (src ? src.x : null);
   const sz = from && from.z !== undefined ? from.z : (src ? src.z : null);
@@ -571,8 +592,8 @@ function respawnEnt(room, st, e) {
 /* 🛡️ PVP 전용 막기 — 최대 유지(guardHold) 뒤 자동 해제 + 쿨타임(guardCooldown).
    쿨타임 중 다시 누르면 서버가 거절한다 (무한 막기·연타 막기 방지). */
 function setGuard(room, player, on) {
-  const st = room.pvp;
-  if (!st || st.phase !== 'battle') return { ok: false };
+  const st = room && room.pvp;
+  if (!st || !player || st.phase !== 'battle') return { ok: false };
   const e = st.ents.get(player.slot);
   if (!e || e.dead) return { ok: false };
   const now = Date.now();
@@ -647,8 +668,8 @@ function attack(room, player, msg) {
   let yaw = num(msg.yaw);
   if (!Number.isFinite(yaw) || Math.abs(angDiff(yaw, e.yaw)) > 0.7) yaw = e.yaw;
   e.yaw = yaw;
-  const reach = spec.reach + 0.45;
-  const arc = spec.arc + 0.3;
+  const reach = spec.reach + PVP_REACH_BONUS;
+  const arc = spec.arc + PVP_ARC_BONUS;
   const hits = [];
   for (const o of allFighters(st)) {
     if (o === e || o.dead || o.team === e.team) continue;
@@ -853,7 +874,8 @@ function stepRoom(room) {
       e.guardCdUntil = now + CFG.guardCooldown * 1000;
       broadcastEvent(room, { type: 'pguardend', to: targetRef(e), cd: Math.round(CFG.guardCooldown * 1000), held: true });
     }
-    if (e.hp < e.maxHp) e.hp = Math.min(e.maxHp, e.hp + e.maxHp * CFG.regenFrac * dt);
+    /* 💥 PVP 는 자연 회복 없음 (regenFrac = 0) — 부활 전에는 체력이 차오르지 않는다 */
+    if (CFG.regenFrac > 0 && e.hp < e.maxHp) e.hp = Math.min(e.maxHp, e.hp + e.maxHp * CFG.regenFrac * dt);
     if (e.freezeUntil && e.freezeUntil < now) e.freezeUntil = 0;
   }
 
@@ -945,8 +967,20 @@ function sendState(room, player) {
 }
 
 function handleMessage(room, player, type, msg) {
-  const st = room.pvp;
+  const st = room && room.pvp;
   if (!st) return { error: ['NO_STATE', '방 정보를 찾을 수 없어요.'] };
+  if (!player) return { error: ['NO_PLAYER', '참가자를 찾을 수 없어요.'] };
+  /* 🛡️ 어떤 요청이 와도 방·서버가 죽지 않게 — 처리 중 예외는 그 요청만 실패시킨다 */
+  try {
+    return routeMessage(room, player, type, msg || {});
+  } catch (err) {
+    console.error('[pvp]', type, err);
+    return { error: ['SERVER', '요청을 처리하지 못했어요.'] };
+  }
+}
+
+function routeMessage(room, player, type, msg) {
+  const st = room.pvp;
   switch (type) {
     case 'pteam': return setTeam(room, player, msg.team);
     case 'pclass': return setClass(room, player, msg.cls);
@@ -986,6 +1020,9 @@ function handleDisconnect(room, player) {
 module.exports = {
   CFG,
   PVP,
+  PVP_HP,
+  PVP_DAMAGE,
+  PVP_REACH_BONUS,
   SPELLS,
   SKILL,
   CLASS_KEYS,

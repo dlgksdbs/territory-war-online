@@ -74,6 +74,19 @@ export const FIELD_RATIO = { soldier: 0.6, elite: 0.55, knight: 0.75, wizard: 0.
 /* 전장 동시 배치 상한 (광전사는 초당 연타가 많아 화면·연산 부담을 고려해 45명) */
 export const FIELD_MAX = { soldier: 160, elite: 400, knight: 60, wizard: 60, blademaster: 60, berserker: 45 };
 
+/* ⚔️ 플레이어 근접 사거리 보정 — 화면 칼끝이 닿았는데 안 들어가는 일이 없도록 두는 여유.
+   · 2026-11-27 이전: 0.45 (전 병종 공통)
+   · 2026-11-28 사용자 지시 "닿는 범위 좀 더 넓히자 · 빨간 조준점도 같이" → +0.40 더
+   · 전 병종(일반·고급·기사·검객·광전사·마법사) 공통이고, 빨간 조준점(aimTarget)과
+     실제 타격 판정(resolveMelee)이 이 값을 함께 쓰므로 둘은 언제나 정확히 일치한다.
+   · AI 유닛은 이 보정을 받지 않는다 (예전과 같은 사거리 — 플레이어만 손맛 보정). */
+export const PLAYER_REACH_BONUS = 0.85;
+/* 🔮 대마법사는 제외 — 마법 사거리·범위·조준점은 예전 그대로 둔다 (2026-11-28 사용자 정정:
+   "마법서는 공격범위가 넓어지면 안 돼"). 지팡이 근접 판정도 예전 값(0.45)을 그대로 쓴다. */
+export const PLAYER_REACH_BONUS_WIZARD = 0.45;
+/* 플레이어 근접 부채꼴 여유(rad) — 사거리와 같은 이유의 소폭 보정 */
+export const PLAYER_ARC_BONUS = 0.3;
+
 export const CLASSES = {
   soldier: {
     key: 'soldier',
@@ -288,10 +301,16 @@ export const SKILL = {
   cooldown: 5.0,
   damage: 246,        // 290 → 246 (기본 딜 210 → 178 과 같은 비율)
   radius: 2.8,
-  dash: 7.2,
-  dashTime: 0.34,
+  /* 2026-11-28 "매화는 데쉬거리 늘어나고 데쉬 할때 무적"
+     · dash     7.2 → 10.4m (+44%) — 눈에 띠게 더 멀리 찔러 들어간다
+     · dashTime 0.34 → 0.40s — 거리만 늘리면 속도가 튀어 보여서 시간도 함께 늘렸다
+     · 돌진하는 동안은 무적 (battle.damage 가 target.dashT >= 0 이면 피해 0) */
+  dash: 10.4,
+  dashTime: 0.40,
   color: 0xff9ec8
 };
+/* 🌸 매화 일섬이 끝난 뒤 남는 잔여 무적(초) — 그 사이에 베면 즉시 풀린다 (2026-11-28 사용자 지시) */
+export const SKILL_IFRAME = 0.2;
 
 /* 표시용 전투력 지수 (병사 = 1.00 기준) */
 export const POWER_INDEX = { soldier: 1.0, elite: 1.12, knight: 3.15, wizard: 2.2, blademaster: 3.2, berserker: 2.4 };

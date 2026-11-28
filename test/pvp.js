@@ -118,6 +118,19 @@ async function engineTests() {
   ok('양 팀이 서로 마주 보고 스폰', me.z < 0 && foe.z > 0 && Math.abs(me.yaw) < 0.01 && Math.abs(foe.yaw - Math.PI) < 0.01,
     { me: [me.x, me.z], foe: [foe.x, foe.z] });
 
+  console.log('💥 PVP 전용 밸런스 — 체력 1000 · 공격 100 · 회복 없음');
+  ok('PVP 최대 체력은 1000', P.PVP.soldier.hp === 1000 && P.PVP_HP === 1000, { hp: P.PVP.soldier.hp });
+  ok('PVP 기본 공격력은 100', P.PVP.soldier.damage === 100 && P.PVP_DAMAGE === 100, { dmg: P.PVP.soldier.damage });
+  ok('대기실 규칙 값도 1000 · 100 · 회복 0', (() => {
+    const lb = P.lobbyPayload(room, room.players[0]);
+    return lb.rules && lb.rules.hp === 1000 && lb.rules.damage === 100 &&
+      lb.rules.regen === 0 && lb.rules.lifesteal === 0;
+  })(), P.lobbyPayload(room, room.players[0]).rules);
+  ok('자연 회복 배율 0 · 적중 흡혈 배율 0', P.CFG.regenFrac === 0 && P.CFG.lifestealFrac === 0,
+    { regen: P.CFG.regenFrac, lifesteal: P.CFG.lifestealFrac });
+  const ent0 = P.entOf(st, room.players[0]);
+  ok('참가자 엔트리도 1000/1000', ent0.maxHp === 1000 && ent0.hp === 1000, { hp: ent0.hp, mx: ent0.maxHp });
+
   console.log('전투 · 실제 피해와 막기');
   /* 서로 붙여 놓고 공격 */
   me.x = 0; me.z = 0; me.yaw = 0;
@@ -128,15 +141,24 @@ async function engineTests() {
   ok('사거리 안의 상대에게 실제 피해가 들어간다', foe.hp < hp0, { before: hp0, after: foe.hp });
   const dealt = hp0 - foe.hp;
   ok('피해량은 병종 공격력 − 방어력', Math.abs(dealt - P.PVP.soldier.damage * (1 - P.PVP.soldier.armor)) < 0.6, dealt);
+  ok('일반 병사 한 방 = 100 피해', Math.abs(dealt - 100) < 0.01, dealt);
+  /* 💥 회복 없음 — 맞혀도 공격자는 차지 않는다 */
   me.hp = me.maxHp - 200;
+  const hpBeforeHit = me.hp;
   foe.hp = foe.maxHp; foe.guard = false; me.nextAttackAt = 0;
   P.handleMessage(room, room.players[0], 'pattack', { yaw: 0 });
-  ok('적중하면 흡혈로 조금 회복한다', me.hp > me.maxHp - 200, { hp: me.hp });
+  ok('적중해도 흡혈하지 않는다 (회복 0)', me.hp === hpBeforeHit, { hp: me.hp, before: hpBeforeHit });
+  ok('맞은 쪽은 정확히 100 이 줄어든다', Math.abs(foe.maxHp - foe.hp - 100) < 0.01, { hp: foe.hp, mx: foe.maxHp });
 
   /* 같은 순간 연타는 쿨타임에 막힌다 */
   const hp1 = foe.hp;
   P.handleMessage(room, room.players[0], 'pattack', { yaw: 0 });
   ok('공속 주기 안의 연타는 서버가 막는다', Math.abs(foe.hp - hp1) < 0.001, { hp: foe.hp });
+
+  /* 💥 회복 없음 — 시간이 지나도 자연 회복이 없다 */
+  const regenHp = me.hp;
+  await stepFor(room, 1200);
+  ok('1초 넘게 지나도 자연 회복이 없다', me.hp === regenHp, { hp: me.hp, before: regenHp });
 
   /* 정면 막기 — 상대가 나를 보고 막으면 피해 0 */
   foe.hp = foe.maxHp;
@@ -330,6 +352,38 @@ async function engineTests() {
   ok('플레이어는 옥타곤 링 밖으로 나갈 수 없다',
     inside.x <= P.CFG.octApothem / Math.cos(Math.PI / 8) + 0.02 && inside.x > 2, { x: inside.x });
 
+  console.log('🛡️ 이상한 요청·끊긴 소켓에도 서버가 죽지 않는다');
+  {
+    const rb = fakeRoom(2);
+    P.handleMessage(rb, rb.players[0], 'pteam', { team: 'ally' });
+    P.handleMessage(rb, rb.players[1], 'pteam', { team: 'enemy' });
+    P.startBattle(rb, { bySlot: 0 });
+    const e0 = P.entOf(rb.pvp, rb.players[0]);
+    const e1 = P.entOf(rb.pvp, rb.players[1]);
+    const bad = [
+      ['pinput', {}], ['pinput', { x: 'abc', z: null, yaw: NaN }], ['pinput', { x: 1e12, z: -1e12 }],
+      ['pattack', {}], ['pattack', { yaw: 'left' }], ['pguard', {}], ['pguard', { on: 'yes' }],
+      ['pspell', { key: 'fire' }], ['pskill', {}], ['pteam', {}], ['pclass', {}], ['pconf', {}]
+    ];
+    for (const [t, m] of bad) P.handleMessage(rb, rb.players[0], t, m);
+    ok('NaN·누락 필드 요청이 와도 방과 체력이 멀쩡하다',
+      rb.pvp.phase === 'battle' && Number.isFinite(e0.hp) && Number.isFinite(e1.hp) &&
+      Number.isFinite(e0.x) && Number.isFinite(e1.z), { hp: [e0.hp, e1.hp], pos: [e0.x, e0.z] });
+    ok('참가자 없는 요청도 에러만 돌려준다', P.handleMessage(rb, null, 'pinput', {}).error[0] === 'NO_PLAYER');
+    ok('알 수 없는 타입은 BAD_TYPE', P.handleMessage(rb, rb.players[0], 'zzz', {}).error[0] === 'BAD_TYPE');
+    ok('NaN 피해는 무시된다 (체력이 NaN 이 되지 않는다)',
+      P.hurt(rb, rb.pvp, e1, NaN, e0, 'blade') === 0 && Number.isFinite(e1.hp), { hp: e1.hp });
+    /* 끊긴 소켓(readyState 3)·null 소켓에 방송해도 예외가 없다 */
+    rb.players[0].ws = { readyState: 3, send() { throw new Error('closed'); } };
+    let threw = false;
+    try { P.broadcastState(rb); P.handleDisconnect(rb, rb.players[0]); } catch (e) { threw = true; }
+    ok('끊긴 소켓으로 방송·정리해도 예외가 없다', threw === false);
+    rb.players[0].ws = null;
+    threw = false;
+    try { P.broadcastLobby(rb); P.sendState(rb, rb.players[0]); } catch (e) { threw = true; }
+    ok('소켓이 없어도 대기실 방송이 죽지 않는다', threw === false);
+  }
+
   console.log('AI 병력 · 실제 전투');
   const botRoom = fakeRoom(1);
   P.handleMessage(botRoom, botRoom.players[0], 'pteam', { team: 'ally' });
@@ -480,7 +534,8 @@ async function networkTests() {
   ok('맞은 쪽도 자기 체력 변화를 받는다', !!stateB);
 
   /* 킬 → 점수 */
-  for (let i = 0; i < 24; i++) {
+  /* 💥 체력 1000 · 공격 100 → 한 명 쓰러뜨리는 데 10대 (예전 620/115 = 6대) */
+  for (let i = 0; i < 40; i++) {
     const s = a.state();
     const foeNow = s.ents.find((e) => e.s === startB.you);
     if (!foeNow || foeNow.d) break;
@@ -501,7 +556,7 @@ async function networkTests() {
 
   /* 킬 목표(3킬)까지 마저 싸워 라운드를 끝낸다 */
   a.clear();
-  for (let i = 0; i < 22; i++) {
+  for (let i = 0; i < 64; i++) {
     let s = a.state() || b.state();
     a.send({ type: 'psync' });
   await sleep(120);

@@ -62,6 +62,8 @@ function ok(name, cond, extra) {
   page.on('requestfailed', (r) => errors.push('requestfailed: ' + r.url()));
   await page.goto('http://127.0.0.1:' + PORT + '/?q=low', { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForFunction(() => window.BA && window.BA.start, { timeout: 90000, polling: 150 });
+  /* 🔑 솔로 전장은 리딤코드(2012)로 해금한 사람만 — 테스트는 코드를 넣고 시작한다 */
+  await page.evaluate(() => window.BA.redeem('2012'));
   await sleep(400);
 
   console.log('▶ 지면 추종 · 지형물 충돌 (390×844)');

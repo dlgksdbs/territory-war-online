@@ -260,6 +260,79 @@ export function woodMaps() {
   return { map: texFrom(c, { srgb: true }), normal: null };
 }
 
+/* 🩸 망토 찢어짐 — 등 뒤에서 맞았을 때 망토가 갈라진 자국.
+   가운데가 뚫린(alpha 0) 너덜너덜한 천 조각이라, 그 구멍으로 등 상흔이 그대로 보인다.
+   색은 재질 color(진영색)로 곱해지므로 회색 천으로 그린다. */
+export function tearTexture() {
+  const W = 128, H = 128;
+  const c = makeCanvas(W, H);
+  const x = c.getContext('2d');
+  const rng = mulberry32(17);
+  x.clearRect(0, 0, W, H);
+  /* 너덜너덜한 천 조각 — 삐죽삐죽한 다각형 */
+  const pts = [];
+  const N = 22;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const r = 40 + rng() * 20;
+    pts.push([64 + Math.cos(a) * r, 64 + Math.sin(a) * r]);
+  }
+  x.beginPath();
+  x.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < N; i++) x.lineTo(pts[i][0], pts[i][1]);
+  x.closePath();
+  x.fillStyle = 'rgba(120,118,112,0.95)';
+  x.fill();
+  /* 천 결 — 세로 실밥 */
+  for (let i = 0; i < 26; i++) {
+    const px = 20 + rng() * 88;
+    x.strokeStyle = 'rgba(70,68,64,' + (0.10 + rng() * 0.22).toFixed(2) + ')';
+    x.lineWidth = 0.8 + rng() * 1.6;
+    x.beginPath();
+    x.moveTo(px, 24 + rng() * 10);
+    x.lineTo(px + (rng() - 0.5) * 6, 104 - rng() * 12);
+    x.stroke();
+  }
+  /* 가운데 갈라진 구멍 — 이 구멍으로 등 상흔이 보인다 */
+  x.globalCompositeOperation = 'destination-out';
+  const holes = [
+    [64, 64, 15], [56, 52, 9], [72, 78, 11], [50, 74, 8], [76, 50, 8]
+  ];
+  for (const [hx, hy, hr] of holes) {
+    x.beginPath();
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const r = hr * (0.65 + rng() * 0.6);
+      const px = hx + Math.cos(a) * r, py = hy + Math.sin(a) * r;
+      if (i === 0) x.moveTo(px, py); else x.lineTo(px, py);
+    }
+    x.closePath();
+    x.fill();
+  }
+  /* 찢긴 결을 따라 길게 갈라진 자국 */
+  x.lineWidth = 7;
+  x.strokeStyle = 'rgba(0,0,0,1)';
+  x.beginPath();
+  x.moveTo(60, 30);
+  x.lineTo(66, 52);
+  x.lineTo(60, 74);
+  x.lineTo(68, 100);
+  x.stroke();
+  x.globalCompositeOperation = 'source-over';
+  /* 풀린 실 — 찢긴 가장자리에 밝은 실밥 */
+  for (let i = 0; i < 26; i++) {
+    const a = rng() * Math.PI * 2, r = 18 + rng() * 14;
+    const bx = 64 + Math.cos(a) * r, by = 64 + Math.sin(a) * r;
+    x.strokeStyle = 'rgba(210,205,196,' + (0.25 + rng() * 0.4).toFixed(2) + ')';
+    x.lineWidth = 0.9 + rng() * 1.2;
+    x.beginPath();
+    x.moveTo(bx, by);
+    x.lineTo(bx + (rng() - 0.5) * 12, by + (rng() - 0.5) * 12);
+    x.stroke();
+  }
+  return texFrom(c, { srgb: true });
+}
+
 /* 상흔 — 베인 자국(검) / 으스러진 자국(망치) */
 export function woundTexture(kind) {
   const W = 128, H = 128;

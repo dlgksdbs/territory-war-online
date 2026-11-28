@@ -7,7 +7,7 @@
    ============================================================================= */
 import * as THREE from 'three';
 import { glowTexture, woodMaps } from './textures.js';
-import { clamp, lerp, smoothstep, easeOutCubic, mulberry32, TAU } from './util.js';
+import { clamp, lerp, smoothstep, easeOutCubic, mulberry32, TAU, catmull } from './util.js';
 import { CLASSES, impactAt } from './config.js';
 
 function matSteel() {
@@ -469,17 +469,27 @@ const PALM_KEYS = [
   { t: 1.06, p: [0.30, -0.44, -0.52], r: [0.10, -0.25, 0.0] }
 ];
 
+/* 1인칭 무기 키프레임 보간 — 3인칭과 같은 Catmull-Rom 곡선.
+   · 구간별 이징(out/quint/inout)은 '가속·감속의 맛'을 남긴다
+   · 값은 앞뒤 키를 함께 보는 곡선으로 이어, 키를 지날 때 손목이 꺾여 보이지 않는다
+   · 임팩트 키 뒤에서 살짝 지나쳤다 돌아오는 감쇠가 생겨 '끝에서 멈추는 무게감'이 난다 */
 function sample(keys, t, outP, outR) {
-  let a = keys[0], b = keys[keys.length - 1];
-  for (let i = 0; i < keys.length - 1; i++) {
-    if (t >= keys[i].t && t <= keys[i + 1].t) { a = keys[i]; b = keys[i + 1]; break; }
+  const n = keys.length;
+  let idx = 0;
+  for (let i = 0; i < n - 1; i++) {
+    if (t >= keys[i].t && t <= keys[i + 1].t) { idx = i; break; }
+    if (t > keys[n - 1].t) idx = n - 2;
   }
-  let k = (t - a.t) / Math.max(0.0001, b.t - a.t);
+  const k0 = keys[Math.max(0, idx - 1)], a = keys[idx], b = keys[idx + 1], k3 = keys[Math.min(n - 1, idx + 2)];
+  const kRaw = (t - a.t) / Math.max(0.0001, b.t - a.t);
   const e = b.ease || 'inout';
-  k = e === 'out' ? easeOutCubic(k) : smoothstep(k);
+  const kE = e === 'out' ? easeOutCubic(kRaw) : e === 'quint' ? (1 - Math.pow(1 - kRaw, 5)) : smoothstep(kRaw);
+  /* 곡선 자체가 속도를 이어 주므로 이징은 3분의 1만 — 시작의 '당김'과 끝의 '멈춤'은 남기고
+     키 경계의 꺾임은 없앤다 */
+  const k = kRaw + (kE - kRaw) * 0.34;
   for (let i = 0; i < 3; i++) {
-    outP[i] = lerp(a.p[i], b.p[i], k);
-    outR[i] = lerp(a.r[i], b.r[i], k);
+    outP[i] = catmull(k0.p[i], a.p[i], b.p[i], k3.p[i], k, 0.24, idx === 0, idx === n - 2);
+    outR[i] = catmull(k0.r[i], a.r[i], b.r[i], k3.r[i], k, 0.24, idx === 0, idx === n - 2);
   }
 }
 
@@ -624,8 +634,10 @@ export class ViewModel {
     const ph = (player && player.walkPhase) || this.time * 1.5;
     const sway = Math.sin(this.time * 0.9) * 0.007 + Math.sin(this.time * 1.7) * 0.0035;
     const breatheY = Math.sin(this.time * 1.35) * 0.004;
-    const walkX = Math.sin(ph) * 0.030 * mv;
-    const walkY = Math.abs(Math.cos(ph)) * 0.034 * mv;
+    /* 🚶 보행 8자 리듬 — 가로 흔들림과 세로 흔들림을 90° 어긋나게 돌려
+       손끝이 화면에서 '8'자를 그린다. 착지 순간에는 살짝 눌렸다 올라온다. */
+    const walkX = Math.sin(ph) * 0.032 * mv;
+    const walkY = Math.sin(ph * 2 + 0.7) * 0.019 * mv + Math.max(0, Math.cos(ph)) * 0.016 * mv;
     this.bob = lerp(this.bob, walkY, Math.min(1, dt * 9));
 
     /* 🩸 쌍단검 — 두 손을 각자 화면 가장자리에서 따로 움직인다 */
@@ -743,6 +755,18 @@ export class ViewModel {
         recoil = Math.exp(-k * 7.5) * (this.className === 'knight' ? 0.120 : this.className === 'blademaster' ? 0.055 : this.className === 'berserker' ? 0.032 : 0.070);
       }
     }
+    /* ⚔️ 스윙이 끝자락에서 '무게를 싣고 멈추는' 느낌 — 임팩트 뒤 감쇠 진동이 손목에 남는다 */
+    if (player && player.attackT >= 0) {
+      const impT = impactAt(this.className);
+      if (player.attackT > impT) {
+        const st = player.attackT - impT;
+        const w = Math.exp(-st * 6.2) * Math.sin(st * 17);
+        const wgt = this.className === 'knight' ? 1.5 : this.className === 'blademaster' ? 1.1 : 0.8;
+        this.root.rotation.z += w * 0.045 * wgt;
+        this.root.rotation.x -= w * 0.028 * wgt;
+        this.root.position.y += w * 0.012 * wgt;
+      }
+    }
     if (this._imp) {
       this.root.position.z += this._imp;
       this.root.rotation.x -= this._imp * 2;
@@ -755,7 +779,18 @@ export class ViewModel {
 
     // 🛡️ 검으로 막기 — 누르는 동안 무기를 대각선으로 세워 얼굴 앞을 가로막는다
     const wantGuard = (player && player.guard && !player.dead) ? 1 : 0;
-    this.guardK = lerp(this.guardK || 0, wantGuard, Math.min(1, dt * 20));
+    /* 🛡️ 막기 전환도 스프링 — 칼을 들어올리며 살짝 지나쳤다 내려앉는 무게가 생긴다 */
+    {
+      const raising = wantGuard > (this.guardK || 0);
+      const stiff = raising ? 240 : 300;
+      const dampC = raising ? 23 : 29;
+      const acc = (wantGuard - (this.guardK || 0)) * stiff - (this.guardV || 0) * dampC;
+      this.guardV = (this.guardV || 0) + acc * dt;
+      this.guardK = clamp((this.guardK || 0) + this.guardV * dt, 0, 1.1);
+      if (Math.abs(wantGuard - this.guardK) < 0.003 && Math.abs(this.guardV) < 0.03) {
+        this.guardK = wantGuard; this.guardV = 0;
+      }
+    }
     const gk = this.guardK;
     if (gk > 0.001) {
       const gd = GUARD[this.className] || GUARD.soldier;

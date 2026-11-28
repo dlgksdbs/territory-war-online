@@ -9,6 +9,7 @@
    · 💚 자연 회복: 살아 있는 모든 유닛이 자기 최대 체력에 비례해 매 프레임 조금씩 회복
    · 🩸 적중 흡혈: 실제 피해를 입힌 공격자는 그 피해의 7%(최소 1)만큼 아주 조금 회복
          (막기·무효 피해는 0 피해라 회복 없음 · 한 번의 광역 공격은 최대 체력의 3%까지만)
+   · 💥 단, 플레이어 PVP 는 예의 없다 — 자연 회복·적중 흡혈 모두 0 (서버 pvp.js 가 판정)
    · 🩸 부위 절단: 머리(베임 사망 모션)·양팔(공속 -30%)·양다리(이속 -30%)
          AI 유닛끼리도 부위를 노리고, 양팔/양다리를 모두 잃으면 사망.
    · 🧠 전술 AI: 측면 포위(flank)·협공(집중)·라인 유지·마법사 거리 유지 — 후퇴 없음.
@@ -16,9 +17,9 @@
    · 플레이어: 클래스별 AI와 동일 기본 스펙 + 처치당 +0.001% 영구 성장
    ============================================================================= */
 import {
-  CLASSES, SPELLS, SPELL_ORDER, SKILL, CORPSE_TIME, KNEEL_TIME, FALL_TIME, GROWTH_PER_KILL,
+  CLASSES, SPELLS, SPELL_ORDER, SKILL, SKILL_IFRAME, CORPSE_TIME, KNEEL_TIME, FALL_TIME, GROWTH_PER_KILL,
   rosterOf, impactAt, LIMB_LOSS, GUARD_FRONT_HALF, GUARD_CHANCE, SPAWN_INTERVAL, FIELD_RATIO, FIELD_MAX,
-  REGEN_FRAC, LIFESTEAL
+  REGEN_FRAC, LIFESTEAL, PLAYER_REACH_BONUS, PLAYER_REACH_BONUS_WIZARD, PLAYER_ARC_BONUS
 } from './config.js';
 import { clamp, angDiff, angLerp, TAU, mulberry32, smoothstep, joyToWorld } from './util.js';
 import { makeUnitRig } from './rig.js';
@@ -181,6 +182,8 @@ export class Battle {
       guardDur: (GUARD_CHANCE[cls] || GUARD_CHANCE.soldier).dur || 1,
       cd: { fire: 0, lightning: 0, ice: 0, petal: 0 },
       dashT: -1, dashHit: null, dashCount: 0,
+      /* 🌸 대시(매화 일섬)가 끝난 뒤 남는 잔여 무적 시간(초) — 공격하면 즉시 0 으로 풀린다 */
+      invulnT: 0,
       casts: 0, kills: 0, growl: 1,
       /* 🩸 절단 상태 — 팔·다리는 한 번 잘리면 되돌아오지 않는다 */
       severed: { armL: 0, armR: 0, legL: 0, legR: 0, head: 0 },
@@ -614,6 +617,10 @@ export class Battle {
   damage(target, amount, source, kind, part, from) {
     if (target.dead) return 0;
     if (target.net) return 0;                  // PVP 상대의 체력은 서버만 바꾼다
+    /* 🌸 매화 일섬 무적 — ①돌진하는 동안 ②돌진이 끝난 뒤 0.2초
+       플레이어·AI 매화 검객 모두 같은 규칙이다. (잔여 무적은 공격하면 즉시 풀린다 — startAttack)
+       칼을 휘두르는 중이 아니라 '몸이 바람처럼 빠져나가는' 구간이라 판정을 통째로 건너뛴다 */
+    if (target.dashT >= 0 || (target.invulnT || 0) > 0) return 0;
     // 🎬 관전 중인 플레이어는 맞지 않는다 (관전하다 죽어서 리스폰되는 일 방지)
     if (target.isPlayer && (this.playerSafe || this.playerInvuln > 0)) return 0;
 
@@ -670,6 +677,8 @@ export class Battle {
        max(10, 최대 체력의 3%) 로 묶어, 기사·마법사가 무리에게 통째로 회복하는 일을 막는다
      · 상한은 최대 체력 (attacker.hp = min(maxHp, hp + heal)) */
   lifesteal(source, dealt) {
+    /* 💥 PVP 는 흡혈 없음 — 서버도 회복을 주지 않고, 클라 예측도 체력을 채우지 않는다 */
+    if (this.pvp) return 0;
     if (!source || !(dealt > 0)) return 0;
     if (source.dead || source.removed) return 0;
     const maxHp = source.maxHp || 0;
@@ -740,6 +749,8 @@ export class Battle {
   /* 근접 공격 개시 */
   startAttack(u) {
     if (u.dead || u.attackT >= 0 || u.cooldown > 0 || u.freezeT > 0) return false;
+    /* 🌸 남아 있는 잔여 무적은 '베는 순간' 즉시 풀린다 (무적 유지하며 연타하는 것 방지) */
+    u.invulnT = 0;
     u.attackT = 0;
     u.hitDone = false;
     const cyc = u.cycle || CLASSES[u.cls].cycle;
@@ -752,8 +763,11 @@ export class Battle {
   resolveMelee(u) {
     const spec = CLASSES[u.cls];
     // 플레이어의 손맛 — 화면에 보이는 칼끝이 닿았는데 안 들어가는 일이 없도록 사거리·각도 여유를 둔다
-    const reach = spec.reach + (u.isPlayer ? 0.45 : 0);
-    const arc = spec.arc + (u.isPlayer ? 0.3 : 0);
+    // (2026-11-28 근접 5병종 공통 +0.40 — config.PLAYER_REACH_BONUS 하나로 aimTarget 과 함께 움직인다)
+    //  🔮 대마법사는 제외: 마법 사거리·범위는 그대로, 지팡이 근접도 예전 값 유지
+    const pbonus = u.isPlayer ? (u.cls === 'wizard' ? PLAYER_REACH_BONUS_WIZARD : PLAYER_REACH_BONUS) : 0;
+    const reach = spec.reach + pbonus;
+    const arc = spec.arc + (u.isPlayer ? PLAYER_ARC_BONUS : 0);
     const list = this.grid.query(u.x, u.z, reach + 1.2, this.tmp);
     const hits = [];
     for (const o of list) {
@@ -884,8 +898,8 @@ export class Battle {
     if (p.isPlayer && this.playerSafe) return null;
     if (p.cls === 'wizard') return null;      // 마법사는 휘두르는 공격이 없다 (마법 버튼으로만)
     const spec = CLASSES[p.cls] || CLASSES.soldier;
-    const reach = spec.reach + 0.45;
-    const arc = spec.arc + 0.3;
+    const reach = spec.reach + PLAYER_REACH_BONUS;
+    const arc = spec.arc + PLAYER_ARC_BONUS;
     const list = this.grid.query(p.x, p.z, reach + 1.2, this._aimTmp || (this._aimTmp = []));
     for (const o of list) {
       if (o.team === p.team || o.dead || this.isGhost(o)) continue;
@@ -956,6 +970,7 @@ export class Battle {
     if (u.dashT >= SKILL.dashTime) {
       u.dashT = -1;
       u.dashHit = null;
+      u.invulnT = Math.max(u.invulnT || 0, SKILL_IFRAME);   // 🌸 돌진이 끝나도 0.2초는 무적
       u.attackT = 0;          // 마무리 베기 모션
       u.hitDone = true;
       u.cooldown = u.cycle || CLASSES[u.cls].cycle;
@@ -1080,6 +1095,7 @@ export class Battle {
       if (u.guardCd > 0) u.guardCd = Math.max(0, u.guardCd - dt);
       if (u.guardFlash > 0) u.guardFlash = Math.max(0, u.guardFlash - dt);
       if (u.staggerT > 0) u.staggerT -= dt;
+      if (u.invulnT > 0) u.invulnT = Math.max(0, u.invulnT - dt);
       if (u.freezeT > 0) {
         u.freezeT -= dt;
         u.moveAmt += (0 - u.moveAmt) * Math.min(1, dt * 12);

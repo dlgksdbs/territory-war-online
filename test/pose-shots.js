@@ -63,15 +63,12 @@ let n = 0;
 
   /* ===== 1. 리딤코드 화면 ===== */
   console.log('🔑 리딤코드 홈 화면');
-  await page.evaluate(() => {
-    document.getElementById('redeemPanel').scrollIntoView({ block: 'center' });
-  });
   await sleep(500);
   await shot('home-locked-redeem');
   const lockedInfo = await page.evaluate(() => ({
     unlocked: window.BA.solo().unlocked,
-    btn: document.querySelector('#startBtn .sb-text strong').textContent,
-    note: document.getElementById('redeemNote').textContent
+    btn: document.getElementById('startBtn').className,
+    bodyHasCode: /2012/.test(document.body.innerText)
   }));
   console.log('   잠금 상태:', JSON.stringify(lockedInfo));
 
@@ -81,7 +78,7 @@ let n = 0;
   });
   await sleep(400);
   await shot('home-wrong-code');
-  console.log('   잘못된 코드 안내:', await page.evaluate(() => document.getElementById('redeemNote').textContent));
+  console.log('   잘못된 코드 후 잠금:', JSON.stringify(await page.evaluate(() => ({ unlocked: window.BA.solo().unlocked }))));
 
   await page.evaluate(() => {
     document.getElementById('redeemCode').value = '2012';
@@ -91,7 +88,7 @@ let n = 0;
   await shot('home-unlocked');
   console.log('   해금 상태:', JSON.stringify(await page.evaluate(() => ({
     unlocked: window.BA.solo().unlocked, stored: localStorage.getItem('ba.soloUnlocked.v1'),
-    btn: document.querySelector('#startBtn .sb-text strong').textContent
+    miniHidden: document.getElementById('redeemPanel').classList.contains('is-unlocked')
   }))));
 
   /* ===== 2. 모션 연속 프레임 ===== */

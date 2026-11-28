@@ -107,7 +107,6 @@ class App {
   redeemSoloCode(raw) {
     const el = $('#redeemCode');
     const code = String(raw == null ? (el ? el.value : '') : raw).trim();
-    const note = $('#redeemNote');
     if (isValidSoloCode(code)) {
       this.soloUnlocked = true;
       this._saveSoloUnlock();
@@ -116,20 +115,18 @@ class App {
       this._toast('🔑 리딤코드 확인 — 솔로 전장이 열렸다!');
       return true;
     }
-    if (note) {
-      note.classList.add('is-bad');
-      note.innerHTML = code ? SOLO_BAD_NOTE : '리딤코드를 입력해 주세요.';
+    /* 틀리면 입력칸만 잠깐 붉게 — 설명 문구는 쓰지 않는다 */
+    if (el) {
+      el.classList.add('is-bad');
+      clearTimeout(this._redeemBadT);
+      this._redeemBadT = setTimeout(() => el.classList.remove('is-bad'), 900);
     }
     this.sfx.ui();
-    this._toast('올바른 리딤코드가 아닙니다');
     return false;
   }
 
   /* 홈 화면에 지금 적혀 있는 리딤코드 안내문 (테스트·디버그) */
-  _soloNote() {
-    const note = $('#redeemNote');
-    return note ? note.textContent : '';
-  }
+  _soloNote() { return ''; }
 
   /* 잠금/해금 상태를 홈 화면(시작 버튼·패널)에 반영 */
   _syncSoloLock() {
@@ -139,27 +136,12 @@ class App {
       btn.classList.toggle('is-locked', !open);
       btn.setAttribute('aria-disabled', open ? 'false' : 'true');
       const icon = btn.querySelector('.sb-icon'); if (icon) icon.textContent = open ? '⚔' : '🔒';
-      const strong = btn.querySelector('.sb-text strong'); if (strong) strong.textContent = open ? '전장으로' : '리딤코드 필요';
-      const em = btn.querySelector('.sb-text em'); if (em) em.textContent = open ? 'BATTLE START' : 'REDEEM CODE';
     }
+    /* 해금되면 작은 코드칸은 조용히 사라진다 (설명 문구 없음) */
     const panel = $('#redeemPanel');
     if (panel) panel.classList.toggle('is-unlocked', open);
-    const note = $('#redeemNote');
-    if (note) {
-      note.classList.remove('is-bad');
-      note.innerHTML = open ? SOLO_OPEN_NOTE : SOLO_LOCK_NOTE;
-    }
     const input = $('#redeemCode');
-    const apply = $('#redeemApply');
-    if (input) {
-      input.disabled = open;
-      if (open) input.value = SOLO_CODE;
-      else if (input.value === SOLO_CODE) input.value = '';
-    }
-    if (apply) {
-      apply.disabled = open;
-      apply.textContent = open ? '해금됨' : '적용';
-    }
+    if (input && open) input.value = '';
   }
 
   /* ------------------------------------------------------------------ 초기화 */
@@ -226,16 +208,9 @@ class App {
   _syncHome() {
     $('#growthKills').textContent = this.progress.kills.toLocaleString();
     $('#growthPct').textContent = growthLabel(this.progress.kills);
+    /* 홈에서 병종을 고르지 않는다 — 기본은 일반 병사 (2026-11-28 사용자 요청으로 선택 UI 제거) */
+    this.cfg.playerClass = 'soldier';
     $$('.class-card').forEach((c) => c.classList.toggle('is-on', c.dataset.cls === this.cfg.playerClass));
-    const note = {
-      soldier: '검과 방패, 민첩한 연속 베기. 적을 벨 때마다 <b>+0.001%</b>씩 영구히 강해진다.',
-      elite: '금장 판금의 정예 검병. 병사보다 <b>체력·이속·공속 +10%</b>, 방패 없이 <b>장검</b>으로 정면을 막아낸다.',
-      knight: '큰 망치를 든 중갑 장군. 내려치기 한 번에 <b>최대 100명</b>을 으스러뜨린다. 망치를 두 손으로 쥐므로 <b>막기 불가</b>.',
-      wizard: '몸은 약하지만 <b>화염·번개·빙결</b> 세 마법으로 전장을 지운다. 버튼으로 직접 시전.',
-      blademaster: '가장 빠른 연속 베기와 기동력. <b>🌸 매화 일섬</b>으로 전방을 돌진하며 쓸어버린다.',
-      berserker: '쌍단검을 쥔 <b>초고체력·초고속 연타</b> 탱커. 한 방은 약하지만 공격 버튼을 <b>꾹 누르면 자동 연타</b>가 나간다. 쌍단검이라 <b>막기는 불가</b>.'
-    };
-    $('#classNote').innerHTML = note[this.cfg.playerClass] || '';
     $$('.row').forEach((row) => {
       const team = row.dataset.team, unit = row.dataset.unit;
       const key = team + unit[0].toUpperCase() + unit.slice(1) + 's';
@@ -350,7 +325,7 @@ class App {
     const redeemInput = $('#redeemCode');
     if (redeemInput) {
       redeemInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.redeemSoloCode(); });
-      redeemInput.addEventListener('input', () => { $('#redeemNote').classList.remove('is-bad'); });
+      redeemInput.addEventListener('input', () => { redeemInput.classList.remove('is-bad'); });
     }
     $('#camBtn').addEventListener('click', () => this.cycleCamera());
     $('#menuBtn').addEventListener('click', () => { $('#menuSheet').classList.add('is-on'); this.paused = true; });
@@ -615,11 +590,11 @@ class App {
     /* 🔑 솔로 전장은 리딤코드(2012)를 넣은 사람만 — 안전하게 진입 함수 자체에서 막는다.
        (BA.start 같은 디버그 경로도 여기를 지나므로 함께 잠긴다. PVP 는 이 함수를 쓰지 않는다) */
     if (!this.soloUnlocked) {
-      this._toast('🔒 솔로 전장은 리딤코드 2012 가 필요해');
       const panel = $('#redeemPanel');
       if (panel && panel.scrollIntoView) panel.scrollIntoView({ block: 'center', behavior: 'smooth' });
       const el = $('#redeemCode');
       if (el && !el.disabled) { try { el.focus({ preventScroll: true }); } catch (e) { /* noop */ } }
+      this._toast('🔒 잠겨 있어');
       this.sfx.ui();
       return;
     }

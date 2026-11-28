@@ -10,9 +10,10 @@
 export const SOLO_CODE = '2012';
 export const SOLO_UNLOCK_KEY = 'ba.soloUnlocked.v1';
 
-export const SOLO_LOCK_NOTE = '리딤코드 <b>2012</b> 를 입력하면 솔로 전장이 열린다 · 한 번 열면 이 기기에서 계속 사용';
-export const SOLO_OPEN_NOTE = '✅ 솔로 전장 해금됨 — 이 기기에서는 계속 열려 있다 (PVP 는 코드 없이 바로)';
-export const SOLO_BAD_NOTE = '올바른 리딤코드가 아닙니다.';
+/* 🔑 화면에는 어떤 안내문도 쓰지 않는다 (코드 노출 금지) — 아래 문자열은 내부용 기본값뿐이다. */
+export const SOLO_LOCK_NOTE = '';
+export const SOLO_OPEN_NOTE = '';
+export const SOLO_BAD_NOTE = '';
 
 /* 입력 코드가 맞는지 — 앞뒤 공백은 무시한다 */
 export function isValidSoloCode(raw) {

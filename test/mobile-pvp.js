@@ -132,42 +132,38 @@ function ok(name, cond, extra) {
   /* 🚶 모션 증거는 상대가 보이는 가운데 영역만 잘라서 찍는다 (소프트웨어 GL 메모리 절약) */
   const CENTER = { x: 60, y: 200, width: 270, height: 420 };
 
-  /* ===== 0. 🔑 솔로 전장 리딤코드 — 잠금/해제 (PVP 는 코드 없이 그대로) ===== */
+  /* ===== 0. 🔑 솔로 전장 코드 — 잠금/해제 (설명·코드 노출 없이 작은 입력칸만) ===== */
   {
     const locked = await A.evaluate(() => ({
       unlocked: window.BA.solo().unlocked,
-      key: window.BA.solo().key,
       btn: document.getElementById('startBtn').className,
-      label: document.querySelector('#startBtn .sb-text strong').textContent,
-      stored: window.localStorage.getItem('ba.soloUnlocked.v1')
+      stored: window.localStorage.getItem('ba.soloUnlocked.v1'),
+      hasInput: !!document.getElementById('redeemCode'),
+      mini: !!document.getElementById('redeemPanel'),
+      bodyText: document.body.innerText
     }));
-    ok('🔑 처음에는 솔로 전장이 잠겨 있다 (「전장으로」 잠금 상태)',
-      locked.unlocked === false && /is-locked/.test(locked.btn) && /리딤코드/.test(locked.label) && !locked.stored, locked);
+    ok('🔑 처음에는 솔로 전장이 잠겨 있다 (「전장으로」 잠금)',
+      locked.unlocked === false && /is-locked/.test(locked.btn) && !locked.stored, { btn: locked.btn });
+    ok('🔒 화면에 코드·설명이 노출되지 않는다 (작은 입력칸만)',
+      locked.hasInput && locked.mini && !/2012/.test(locked.bodyText) && !/리딤코드|해금|선착순/.test(locked.bodyText),
+      { text: locked.bodyText.replace(/\s+/g, ' ').slice(0, 120) });
 
     /* 잠긴 채로 시작 버튼을 눌러도 전장에 들어가지 않는다 */
     await A.evaluate(() => document.getElementById('startBtn').click());
     await sleep(700);
-    const blocked = await A.evaluate(() => ({
-      state: window.BA.state().state, hasBattle: !!window.BA.battle, focus: document.activeElement && document.activeElement.id
-    }));
+    const blocked = await A.evaluate(() => ({ state: window.BA.state().state, hasBattle: !!window.BA.battle }));
     ok('🔒 잠긴 상태에서는 「전장으로」를 눌러도 들어가지 않는다', blocked.state === 'home' || !blocked.hasBattle, blocked);
 
-    /* 잘못된 코드 → 안내만 하고 잠금 유지 */
+    /* 잘못된 코드 → 잠금 유지 (문구 없이 입력칸만 붉게) */
     const wrong = await A.evaluate(() => {
       const inp = document.getElementById('redeemCode');
       inp.value = '1234';
       document.getElementById('redeemApply').click();
-      return {
-        unlocked: window.BA.solo().unlocked,
-        note: document.getElementById('redeemNote').textContent,
-        bad: document.getElementById('redeemNote').classList.contains('is-bad'),
-        stored: window.localStorage.getItem('ba.soloUnlocked.v1')
-      };
+      return { unlocked: window.BA.solo().unlocked, stored: window.localStorage.getItem('ba.soloUnlocked.v1') };
     });
-    ok('❌ 잘못된 리딤코드는 안내만 하고 잠금을 유지한다',
-      wrong.unlocked === false && /올바른 리딤코드가 아닙니다/.test(wrong.note) && wrong.bad && !wrong.stored, wrong);
+    ok('❌ 잘못된 코드는 잠금을 유지한다', wrong.unlocked === false && !wrong.stored, wrong);
 
-    /* 코드 2012 → 즉시 해금 + 저장 */
+    /* 코드 2012 → 즉시 해금 + 저장, 작은 입력칸은 사라진다 */
     const good = await A.evaluate(() => {
       const inp = document.getElementById('redeemCode');
       inp.value = '2012';
@@ -176,13 +172,11 @@ function ok(name, cond, extra) {
         unlocked: window.BA.solo().unlocked,
         stored: window.localStorage.getItem('ba.soloUnlocked.v1'),
         btn: document.getElementById('startBtn').className,
-        label: document.querySelector('#startBtn .sb-text strong').textContent,
-        panel: document.getElementById('redeemPanel').className
+        miniHidden: document.getElementById('redeemPanel').classList.contains('is-unlocked')
       };
     });
-    ok('🔑 리딤코드 2012 를 넣으면 솔로 전장이 열린다 (+ localStorage 저장)',
-      good.unlocked === true && good.stored === '1' && !/is-locked/.test(good.btn) &&
-      /전장으로/.test(good.label) && /is-unlocked/.test(good.panel), good);
+    ok('🔑 코드를 넣으면 솔로 전장이 열린다 (+ localStorage 저장, 입력칸 숨김)',
+      good.unlocked === true && good.stored === '1' && !/is-locked/.test(good.btn) && good.miniHidden, good);
 
     /* 새로고침해도 해금 상태가 유지된다 */
     await A.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -193,6 +187,13 @@ function ok(name, cond, extra) {
     }));
     ok('🔄 새로고침(재접속) 후에도 솔로 전장은 계속 열려 있다',
       afterReload.unlocked === true && afterReload.stored === '1' && !/is-locked/.test(afterReload.btn), afterReload);
+
+    /* 홈에 캐릭터(병종) 선택 UI 가 없다 */
+    const noClass = await A.evaluate(() => ({
+      cards: document.querySelectorAll('.class-card').length,
+      panel: !!document.querySelector('.class-panel')
+    }));
+    ok('🗑️ 홈 화면에 캐릭터(병종) 선택 UI 가 없다', noClass.cards === 0 && noClass.panel === false, noClass);
     await sleep(400);
   }
 

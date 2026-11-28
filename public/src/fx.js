@@ -1274,10 +1274,10 @@ export class FX {
     tr.mesh.material.color.setHex(c);
     /* 갈린 틈 — 망토 표면에 바로 붙고, 너무 크면 등 전체를 덮으므로 작게 */
     const s = 0.46;
-    const px = (this.rng() - 0.5) * 0.06;
-    const py = -0.02 + (this.rng() - 0.5) * 0.08;
+    const px = (this.rng() - 0.5) * 0.10;
+    const py = -0.20 + (this.rng() - 0.5) * 0.10;
     /* 망토 판(chest 로컬 z=-0.185, x축 0.10rad 기웅)의 이 높이 표면은 z≈-0.145 — 살짝만 띄운다 */
-    _wv.set(px, py, -0.157 - this.rng() * 0.004);
+    _wv.set(px, py, -0.176 - this.rng() * 0.004);
     _we.set(0, Math.PI, (angle || 0) * 0.20 + (this.rng() - 0.5) * 0.16);
     _wq.setFromEuler(_we);
     _ws.set(s, s, s);

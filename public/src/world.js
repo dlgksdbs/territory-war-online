@@ -458,12 +458,14 @@ void main(){
   const terrainMat = new THREE.MeshStandardMaterial({
     map: maps.albedo,
     normalMap: maps.normal,
-    normalScale: new THREE.Vector2(0.62, 0.62),
+    normalScale: new THREE.Vector2(0.55, 0.55),
     roughnessMap: maps.rough,
-    roughness: 0.96,
+    /* 🧽 바닥은 차분한 무광 — roughness 를 최대에 가깝게, 반사(금속·환경)는 0 으로
+       두어 조명이 바닥에 하얗게 번들거리지 않게 한다 (2026-11-28 "바닥이 너무 반짝거려") */
+    roughness: 0.99,
     metalness: 0.0,
     vertexColors: true,
-    envMapIntensity: 0.34,
+    envMapIntensity: 0.06,
     color: 0xffffff
   });
   /* 가까이 봐도 흐릿하지 않도록 타일링되는 미세 알베도(자갈·마른 풀·흙 알갱이)를 곱한다 */
@@ -509,25 +511,25 @@ void main(){
   scene.add(terrain);
   out.terrain = terrain;
 
-  /* 아레나 바닥 원형 석판 테두리 (발디딤) */
+  /* 아레나 바닥 원형 석판 테두리 (발디딤) — 매트처럼 무광 */
   const stone = stoneMaps(512);
   const ringMat = new THREE.MeshStandardMaterial({
-    map: stone.albedo, normalMap: stone.normal, roughness: 0.82, metalness: 0.08,
-    color: 0x8b877e, envMapIntensity: 0.7
+    map: stone.albedo, normalMap: stone.normal, roughness: 0.97, metalness: 0.0,
+    color: 0x8b877e, envMapIntensity: 0.08
   });
   const dais = new THREE.Mesh(new THREE.RingGeometry(11.4, 12.6, 96, 2), ringMat);
   dais.rotation.x = -Math.PI / 2; dais.position.y = 0.03;
   dais.receiveShadow = true;
   scene.add(dais);
 
-  /* 젖은 진흙의 은은한 광택 — 바닥이 플라스틱처럼 보이지 않게 하늘 반사를 머금는다 */
-  const wetMat = new THREE.MeshPhysicalMaterial({
-    color: 0x4a3a2a, roughness: 0.34, metalness: 0.0, transparent: true, opacity: 0.20,
-    envMapIntensity: 0.9, clearcoat: 0.6, clearcoatRoughness: 0.35,
-    normalMap: maps.normal, normalScale: new THREE.Vector2(0.22, 0.22),
+  /* 젖은 흙 자국 — 🧽 반사(clearcoat·환경광)를 모두 빼고색만 살짝 더 어둡게 깔아
+     "젖은 바닥" 이 조명을 받아 하얗게 번쩍이지 않게 한다 (2026-11-28 바닥 반짝임 제보) */
+  const wetMat = new THREE.MeshLambertMaterial({
+    color: 0x3d3020, transparent: true, opacity: 0.16,
     depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1
   });
   const wet = new THREE.Mesh(new THREE.CircleGeometry(17.5, 64), wetMat);
+  wet.name = 'floorDamp';
   wet.rotation.x = -Math.PI / 2;
   wet.position.y = 0.042;
   wet.renderOrder = 1;

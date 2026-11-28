@@ -25,7 +25,9 @@ function matTexture() {
   g.fillRect(0, 0, S, S);
   for (let i = 0; i < 2400; i++) {
     const x = Math.random() * S, y = Math.random() * S;
-    g.fillStyle = 'rgba(255,255,255,' + (0.008 + Math.random() * 0.022).toFixed(3) + ')';
+    /* 🧽 반짝임 제거 — 예전엔 흰 점(알파 0.03)이 매트 위에서 조명을 받아
+       먼지처럼 반짝였다. 이제는 '살짝 밝은 얼룩' 정도로만 남긴다 */
+    g.fillStyle = 'rgba(255,255,255,' + (0.003 + Math.random() * 0.009).toFixed(3) + ')';
     g.fillRect(x, y, 1.4, 1.4);
   }
   const oct = (rad) => {
@@ -105,12 +107,16 @@ export function buildOctagon(scene) {
   const MAT_BOTTOM = octagonMatBottom();
   group.position.y = MAT_TOP - TOP;               // 로컬 TOP = 월드 MAT_TOP
 
-  /* ---------------------------------------------------------- 매트·플랫폼 */
+  /* ---------------------------------------------------------- 매트·플랫폼
+     🧽 매트는 완전 무광 — 반사광(반짝임)을 남기지 않는다 (2026-11-28 제보:
+     "바닥이 너무 반짝거려"). roughness 1.0 · metalness 0 · envMapIntensity 0.04 로
+     하늘·조명 반사를 거의 없애고, 색은 알베도만으로 낸다. */
   const matMat = keep(new THREE.MeshStandardMaterial({
-    map: keep(matTexture()), roughness: 0.95, metalness: 0.03,
-    color: 0xcfd6e2, envMapIntensity: 0.28, emissive: 0x0a0d12
+    map: keep(matTexture()), roughness: 0.99, metalness: 0.0,
+    color: 0xcfd6e2, envMapIntensity: 0.04, emissive: 0x06080b
   }));
   const mat = new THREE.Mesh(keep(new THREE.CylinderGeometry(R_VERT, R_VERT, TOP, 8)), matMat);
+  mat.name = 'octagonMat';
   mat.position.y = TOP / 2;
   mat.receiveShadow = true;
   group.add(mat);
@@ -119,21 +125,22 @@ export function buildOctagon(scene) {
   const baseH = Math.max(0.34, (MAT_TOP - MAT_BOTTOM) + 0.02);
   const base = new THREE.Mesh(
     keep(new THREE.CylinderGeometry(R_VERT + 0.16, R_VERT + 0.34, baseH, 8)),
-    keep(new THREE.MeshStandardMaterial({ color: 0x0f1216, roughness: 0.92, metalness: 0.08 }))
+    keep(new THREE.MeshStandardMaterial({ color: 0x0f1216, roughness: 0.98, metalness: 0.0, envMapIntensity: 0.05 }))
   );
+  base.name = 'octagonBase';
   base.position.y = TOP - baseH / 2;
   base.receiveShadow = true;
   group.add(base);
 
   /* ------------------------------------------------------- 기둥 + 케이지 */
-  const postMat = keep(new THREE.MeshStandardMaterial({ color: 0x6d7480, metalness: 0.85, roughness: 0.36, envMapIntensity: 1.0 }));
-  const redMat = keep(new THREE.MeshStandardMaterial({ color: 0xa8283a, roughness: 0.55, metalness: 0.12, envMapIntensity: 0.5 }));
-  const blueMat = keep(new THREE.MeshStandardMaterial({ color: 0x2c4f9e, roughness: 0.55, metalness: 0.12, envMapIntensity: 0.5 }));
-  const goldMat = keep(new THREE.MeshStandardMaterial({ color: 0xb9882f, roughness: 0.5, metalness: 0.35, envMapIntensity: 0.7 }));
-  const railMat = keep(new THREE.MeshStandardMaterial({ color: 0x555c66, metalness: 0.9, roughness: 0.3, envMapIntensity: 1.1 }));
+  const postMat = keep(new THREE.MeshStandardMaterial({ color: 0x6d7480, metalness: 0.7, roughness: 0.52, envMapIntensity: 0.5 }));
+  const redMat = keep(new THREE.MeshStandardMaterial({ color: 0xa8283a, roughness: 0.72, metalness: 0.05, envMapIntensity: 0.22 }));
+  const blueMat = keep(new THREE.MeshStandardMaterial({ color: 0x2c4f9e, roughness: 0.72, metalness: 0.05, envMapIntensity: 0.22 }));
+  const goldMat = keep(new THREE.MeshStandardMaterial({ color: 0xb9882f, roughness: 0.62, metalness: 0.25, envMapIntensity: 0.35 }));
+  const railMat = keep(new THREE.MeshStandardMaterial({ color: 0x555c66, metalness: 0.75, roughness: 0.48, envMapIntensity: 0.55 }));
   const cageMat = keep(new THREE.MeshStandardMaterial({
     map: keep(cageTexture()), transparent: true, opacity: 0.62, side: THREE.DoubleSide,
-    metalness: 0.6, roughness: 0.42, depthWrite: false, color: 0xdfe7f2
+    metalness: 0.35, roughness: 0.62, depthWrite: false, color: 0xdfe7f2, envMapIntensity: 0.3
   }));
   const lampMat = keep(new THREE.MeshBasicMaterial({ color: 0xfff3d4 }));
 
@@ -189,11 +196,12 @@ export function buildOctagon(scene) {
     m.receiveShadow = false;
   }
 
-  /* 매트 둘레의 은은한 금빛 테두리 (8각) */
+  /* 매트 둘레의 은은한 금빛 테두리 (8각) — 깜박이는 발광은 뺐다 (바닥 반짝임 제보) */
   const edge = new THREE.Mesh(
     keep(new THREE.RingGeometry(R_VERT * 0.90, R_VERT * 0.935, 8, 1)),
-    keep(new THREE.MeshBasicMaterial({ color: 0xffd79a, transparent: true, opacity: 0.28, side: THREE.DoubleSide }))
+    keep(new THREE.MeshBasicMaterial({ color: 0xd8b677, transparent: true, opacity: 0.16, side: THREE.DoubleSide }))
   );
+  edge.name = 'octagonEdge';
   edge.rotation.x = -Math.PI / 2;
   edge.rotation.z = Math.PI / 8;
   edge.position.y = TOP + 0.006;
@@ -203,10 +211,16 @@ export function buildOctagon(scene) {
 
   const api = {
     group,
-    info: () => ({ meshes: group.children.length, apothem: OCTAGON.apothem, fence: OCTAGON.fence, top: TOP, matTop: +MAT_TOP.toFixed(3), matBottom: +MAT_BOTTOM.toFixed(3) }),
-    update: (dt, t) => {
-      edge.material.opacity = 0.20 + (0.6 + Math.sin(t * 2.2) * 0.4) * 0.10;
-    },
+    info: () => ({
+      meshes: group.children.length, apothem: OCTAGON.apothem, fence: OCTAGON.fence, top: TOP,
+      matTop: +MAT_TOP.toFixed(3), matBottom: +MAT_BOTTOM.toFixed(3),
+      /* 🧽 바닥 재질 (검증·디버그) — 무광인지 한눈에 */
+      floor: {
+        mat: { roughness: matMat.roughness, metalness: matMat.metalness, env: matMat.envMapIntensity },
+        base: { roughness: base.material.roughness, metalness: base.material.metalness, env: base.material.envMapIntensity }
+      }
+    }),
+    update: (dt, t) => { /* 깜박임 없음 — 반짝이는 바닥 지적(2026-11-28)으로 정적 유지 */ },
     dispose: () => {
       scene.remove(group);
       for (const d of disposables) { try { if (d && d.dispose) d.dispose(); } catch (e) { /* noop */ } }

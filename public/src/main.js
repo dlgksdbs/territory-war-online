@@ -240,11 +240,18 @@ class App {
     this.resize();
     window.addEventListener('resize', () => this.resize());
     window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 220));
+    /* 🍎 아이폰 — 주소창이 접히고 펴질 때 실제 보이는 영역이 달라진다 (의사 전체화면) */
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => this.resize(), { passive: true });
+    }
   }
 
   resize() {
     if (!this.renderer) return;
-    const w = window.innerWidth, h = window.innerHeight;
+    /* 🍎 아이폰 — 주소창을 뺀 '실제로 보이는' 크기로 맞춘다 (innerHeight 는 주소창까지 센 더 큰 값) */
+    const vv = window.visualViewport;
+    const w = Math.round((vv && vv.width) || window.innerWidth);
+    const h = Math.round((vv && vv.height) || window.innerHeight);
     this.renderer.setSize(w, h, false);
     this.cam.aspect = w / h;
     this.cam.updateProjectionMatrix();
@@ -529,10 +536,11 @@ class App {
     });
   }
 
-  /* 🖥️ 전체화면 — 홈 상단과 전장 HUD 의 ⛶ 버튼이 같은 상태를 공유한다 */
+  /* 🖥️ 전체화면 — 홈 상단 · PVP 대기실 · 전장 HUD 의 ⛶ 버튼이 같은 상태를 공유한다 */
   _bindFullscreen() {
+    const buttons = [$('#fsBtn'), $('#fsHomeBtn'), $('#fsLobbyBtn')];
     this.fs = createFullscreenToggle({
-      buttons: [$('#fsBtn'), $('#fsHomeBtn')],
+      buttons,
       onChange: () => this._onFullscreenChange(),
       onError: (kind) => {
         if (this._fsNoticeT && performance.now() - this._fsNoticeT < 1200) return;
@@ -540,7 +548,7 @@ class App {
         this._toast(kind === 'unsupported' ? '이 브라우저에서는 전체화면을 쓸 수 없어요' : '전체화면 전환을 브라우저가 막았어요');
       }
     });
-    for (const b of [$('#fsBtn'), $('#fsHomeBtn')]) {
+    for (const b of buttons) {
       if (!b) continue;
       b.addEventListener('click', (e) => {
         e.preventDefault();

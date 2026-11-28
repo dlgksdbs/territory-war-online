@@ -66,7 +66,7 @@ export function terrainMaps(S) {
   const g = x.createLinearGradient(0, 0, size, size);
   g.addColorStop(0, '#4d6236'); g.addColorStop(0.5, '#57693c'); g.addColorStop(1, '#455832');
   x.fillStyle = g; x.fillRect(0, 0, size, size);
-  rx.fillStyle = '#b9b9b9'; rx.fillRect(0, 0, 512, 512);
+  rx.fillStyle = '#c8c8c8'; rx.fillRect(0, 0, 512, 512);
 
   // 풀결 (짧은 선)
   const rng = mulberry32(7);
@@ -100,7 +100,8 @@ export function terrainMaps(S) {
   x.fillStyle = dirt; x.beginPath(); x.arc(half, half, half * 0.46, 0, 7); x.fill();
 
   const rd = rx.createRadialGradient(256, 256, 40, 256, 256, 220);
-  rd.addColorStop(0, '#3c3c3c'); rd.addColorStop(1, '#9c9c9c');
+  /* 🧽 짙밟힌 흙도 '거친' 쪽으로 — 예전 값(#3c3c3c)은 roughness 0.24 라 조명을 거울처럼 반사했다 */
+  rd.addColorStop(0, '#b4b4b4'); rd.addColorStop(1, '#d0d0d0');
   rx.fillStyle = rd; rx.beginPath(); rx.arc(256, 256, 226, 0, 7); rx.fill();
 
   // 돌테 — 원형으로 깔린 돌 조각들
@@ -148,9 +149,10 @@ export function terrainMaps(S) {
     x.restore();
     const sx = (px / size) * 512, sy = (py / size) * 512;
     const rg = rx.createRadialGradient(sx, sy, 0, sx, sy, Math.max(6, rw * 0.5));
-    rg.addColorStop(0, 'rgba(18,18,18,0.95)');
-    rg.addColorStop(0.75, 'rgba(40,40,40,0.7)');
-    rg.addColorStop(1, 'rgba(120,120,120,0)');
+    /* 🧽 물웅덩이도 무광 — 예전엔 roughness 0.07 이라 바닥에 하억 반사가 반짝였다 (2026-11-28 제보) */
+    rg.addColorStop(0, 'rgba(150,150,150,0.85)');
+    rg.addColorStop(0.75, 'rgba(176,176,176,0.7)');
+    rg.addColorStop(1, 'rgba(200,200,200,0)');
     rx.fillStyle = rg; rx.beginPath(); rx.ellipse(sx, sy, rw * 0.5, rh * 0.5, 0, 0, 7); rx.fill();
   }
 

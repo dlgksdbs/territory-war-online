@@ -16,7 +16,9 @@
     "test:mobile-pvp": "node test/mobile-pvp.js",
     "test:balance": "node test/balance.js",
     "test:redeem": "node test/redeem.js",
-    "test:motion": "node test/motion.js"
+    "test:motion": "node test/motion.js",
+    "test:fullscreen": "node test/mobile-fullscreen.js",
+    "test:live-fs": "node test/live-iphone-fullscreen.js"
   },
   "engines": {
     "node": ">=18"

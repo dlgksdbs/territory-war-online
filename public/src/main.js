@@ -112,7 +112,7 @@ class App {
       this._saveSoloUnlock();
       this._syncSoloLock();
       this.sfx.ui();
-      this._toast('🔑 리딤코드 확인 — 솔로 전장이 열렸다!');
+      this._toast('🔑 코드 확인 — 열렸다!');
       return true;
     }
     /* 틀리면 입력칸만 잠깐 붉게 — 설명 문구는 쓰지 않는다 */
@@ -128,20 +128,78 @@ class App {
   /* 홈 화면에 지금 적혀 있는 리딤코드 안내문 (테스트·디버그) */
   _soloNote() { return ''; }
 
-  /* 잠금/해금 상태를 홈 화면(시작 버튼·패널)에 반영 */
+  /* 잠금/해금 상태를 홈 화면에 반영
+     — 해금 전: 병력 편성·「전장으로」는 아예 숨고(is-solo-locked → display:none)
+       상단에 작은 🔑 버튼만 남는다.
+     — 해금 후: 편성·전장으로가 바로 나타나고 🔑 버튼은 사라진다. */
   _syncSoloLock() {
     const open = !!this.soloUnlocked;
+    const home = $('#home');
+    if (home) home.classList.toggle('is-solo-locked', !open);
     const btn = $('#startBtn');
     if (btn) {
       btn.classList.toggle('is-locked', !open);
       btn.setAttribute('aria-disabled', open ? 'false' : 'true');
-      const icon = btn.querySelector('.sb-icon'); if (icon) icon.textContent = open ? '⚔' : '🔒';
+      const icon = btn.querySelector('.sb-icon'); if (icon) icon.textContent = '⚔';
     }
-    /* 해금되면 작은 코드칸은 조용히 사라진다 (설명 문구 없음) */
+    /* 해금되면 작은 🔑 버튼·입력칸은 조용히 사라진다 (설명 문구 없음) */
+    const zone = $('#redeemZone');
+    if (zone) zone.classList.toggle('is-unlocked', open);
     const panel = $('#redeemPanel');
     if (panel) panel.classList.toggle('is-unlocked', open);
+    if (open) this._closeRedeem();
     const input = $('#redeemCode');
     if (input && open) input.value = '';
+  }
+
+  /* 🔑 작은 버튼 → 입력칸 팝오버 열기/닫기 (설명 문구 없이 조용히) */
+  _openRedeem() {
+    if (this.soloUnlocked) return;
+    const panel = $('#redeemPanel');
+    if (!panel) return;
+    panel.hidden = false;
+    const key = $('#redeemOpen');
+    if (key) { key.classList.add('is-on'); key.setAttribute('aria-expanded', 'true'); }
+    const el = $('#redeemCode');
+    if (el) setTimeout(() => { try { el.focus({ preventScroll: true }); } catch (e) { /* noop */ } }, 30);
+  }
+
+  _closeRedeem() {
+    const panel = $('#redeemPanel');
+    if (panel) panel.hidden = true;
+    const key = $('#redeemOpen');
+    if (key) { key.classList.remove('is-on'); key.setAttribute('aria-expanded', 'false'); }
+  }
+
+  _toggleRedeem() {
+    const panel = $('#redeemPanel');
+    if (panel && panel.hidden) this._openRedeem();
+    else this._closeRedeem();
+  }
+
+  /* 홈 화면에 실제로 무엇이 보이는지 (테스트·디버그) */
+  _soloUiState() {
+    const box = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return { found: false, shown: false, display: 'missing' };
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return { found: true, display: cs.display, visibility: cs.visibility,
+        shown: cs.display !== 'none' && cs.visibility !== 'hidden' && r.height > 0 };
+    };
+    const pop = document.getElementById('redeemPanel');
+    return {
+      locked: !this.soloUnlocked,
+      homeLocked: !!($('#home') && $('#home').classList.contains('is-solo-locked')),
+      key: box('redeemOpen'),
+      popoverOpen: !!(pop && !pop.hidden),
+      cls: box('classPanel'),
+      army: box('armyPanel'),
+      start: box('startBtn'),
+      footNote: box('footNote'),
+      pvp: box('pvpPanel'),
+      hudCfg: box('hudCfgBtn')
+    };
   }
 
   /* ------------------------------------------------------------------ 초기화 */
@@ -208,9 +266,17 @@ class App {
   _syncHome() {
     $('#growthKills').textContent = this.progress.kills.toLocaleString();
     $('#growthPct').textContent = growthLabel(this.progress.kills);
-    /* 홈에서 병종을 고르지 않는다 — 기본은 일반 병사 (2026-11-28 사용자 요청으로 선택 UI 제거) */
-    this.cfg.playerClass = 'soldier';
     $$('.class-card').forEach((c) => c.classList.toggle('is-on', c.dataset.cls === this.cfg.playerClass));
+    const note = {
+      soldier: '검과 방패, 민첩한 연속 베기. 적을 벨 때마다 <b>+0.001%</b>씩 영구히 강해진다.',
+      elite: '금장 판금의 정예 검병. 병사보다 <b>체력·이속·공속 +10%</b>, 방패 없이 <b>장검</b>으로 정면을 막아낸다.',
+      knight: '큰 망치를 든 중갑 장군. 내려치기 한 번에 <b>최대 100명</b>을 으스러뜨린다. 망치를 두 손으로 쥐므로 <b>막기 불가</b>.',
+      wizard: '몸은 약하지만 <b>화염·번개·빙결</b> 세 마법으로 전장을 지운다. 버튼으로 직접 시전.',
+      blademaster: '가장 빠른 연속 베기와 기동력. <b>🌸 매화 일섬</b>으로 전방을 돌진하며 쓸어버린다.',
+      berserker: '쌍단검을 쥔 <b>초고체력·초고속 연타</b> 탱커. 한 방은 약하지만 공격 버튼을 <b>꾹 누르면 자동 연타</b>가 나간다. 쌍단검이라 <b>막기는 불가</b>.'
+    };
+    const noteEl = $('#classNote');
+    if (noteEl) noteEl.innerHTML = note[this.cfg.playerClass] || '';
     $$('.row').forEach((row) => {
       const team = row.dataset.team, unit = row.dataset.unit;
       const key = team + unit[0].toUpperCase() + unit.slice(1) + 's';
@@ -319,7 +385,9 @@ class App {
       this._syncHome();
     });
     $('#startBtn').addEventListener('click', () => this.startBattle());
-    /* 🔑 솔로 전장 리딤코드 — 적용 버튼 · 엔터 */
+    /* 🔑 작은 버튼 → 입력칸 · 적용 · 엔터 · 바깥 누르면 닫힘 */
+    const redeemOpen = $('#redeemOpen');
+    if (redeemOpen) redeemOpen.addEventListener('click', (e) => { e.stopPropagation(); this._toggleRedeem(); });
     const redeemApply = $('#redeemApply');
     if (redeemApply) redeemApply.addEventListener('click', () => this.redeemSoloCode());
     const redeemInput = $('#redeemCode');
@@ -327,6 +395,12 @@ class App {
       redeemInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this.redeemSoloCode(); });
       redeemInput.addEventListener('input', () => { redeemInput.classList.remove('is-bad'); });
     }
+    document.addEventListener('pointerdown', (e) => {
+      const zone = $('#redeemZone');
+      if (!zone || zone.contains(e.target)) return;
+      this._closeRedeem();
+    }, true);
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this._closeRedeem(); });
     $('#camBtn').addEventListener('click', () => this.cycleCamera());
     $('#menuBtn').addEventListener('click', () => { $('#menuSheet').classList.add('is-on'); this.paused = true; });
     this._bindFullscreen();
@@ -590,10 +664,7 @@ class App {
     /* 🔑 솔로 전장은 리딤코드(2012)를 넣은 사람만 — 안전하게 진입 함수 자체에서 막는다.
        (BA.start 같은 디버그 경로도 여기를 지나므로 함께 잠긴다. PVP 는 이 함수를 쓰지 않는다) */
     if (!this.soloUnlocked) {
-      const panel = $('#redeemPanel');
-      if (panel && panel.scrollIntoView) panel.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      const el = $('#redeemCode');
-      if (el && !el.disabled) { try { el.focus({ preventScroll: true }); } catch (e) { /* noop */ } }
+      this._openRedeem();
       this._toast('🔒 잠겨 있어');
       this.sfx.ui();
       return;
@@ -1713,7 +1784,8 @@ window.BA = {
   config: () => ({ ...app.cfg }),
   /* 🔑 솔로 전장 리딤코드 (테스트·디버그) */
   redeem: (code) => app.redeemSoloCode(code),
-  solo: () => ({ unlocked: !!app.soloUnlocked, key: SOLO_UNLOCK_KEY, code: SOLO_CODE, note: app._soloNote() }),
+  solo: () => ({ unlocked: !!app.soloUnlocked, key: SOLO_UNLOCK_KEY, code: SOLO_CODE, note: app._soloNote(), ui: app._soloUiState() }),
+  soloUi: () => app._soloUiState(),
   /* 밸런스 스펙 (테스트·디버그) */
   specs: () => ({ classes: CLASSES, skill: SKILL, spells: SPELLS, guardChance: GUARD_CHANCE, regen: REGEN_FRAC, lifesteal: LIFESTEAL, reachBonus: PLAYER_REACH_BONUS, reachBonusWizard: PLAYER_REACH_BONUS_WIZARD, arcBonus: PLAYER_ARC_BONUS }),
   /* 시점 감도 (테스트·디버그) — 지금 화면 기준 실제 적용값 */

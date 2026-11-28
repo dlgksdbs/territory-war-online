@@ -1237,47 +1237,53 @@ export class FX {
   spawnWound(unit, kind, angle, back) {
     // 상세 모델로 그려지는 유닛에만 상흔을 붙인다 (실루엣 유닛은 관절 행렬이 없어 엉뚱한 곳에 그려진다)
     if (!unit || unit.dslot === undefined || unit.dslot < 0) return;
+    /* 등 뒤를 맞은 기사는 망토가 찢어진 자국(spawnTear) 하나로만 그린다.
+       망토 천 위에 상흔 데칼을 또 겹치면 패치처럼 떠 보인다. */
+    if (back && unit.cls === 'knight') return;
     const w = this.wounds[this.woundIdx++ % this.wounds.length];
     w.unit = unit;
     w.life = 0;
     w.max = 5;
     w.mesh.material.map = this.woundTex[kind] || this.woundTex.blade;
-    /* 상흔 크기 — 한눈에 보이게 키웠다 (0.34/0.42 → 0.52/0.62) */
-    const s = kind === 'crush' ? 0.62 : 0.52;
-    const px = (this.rng() - 0.5) * 0.12;
-    const py = 0.05 + (this.rng() - 0.5) * 0.20;
+    /* 상흔 크기 — 가는 절개선이 잘 보이도록 (패치처럼 보이던 0.52/0.62 에서 조정) */
+    const s = kind === 'crush' ? 0.58 : 0.48;
+    const px = (this.rng() - 0.5) * 0.10;
+    const py = 0.02 + (this.rng() - 0.5) * 0.16;
     /* 앞에서 맞으면 가슴(+z), 뒤에서 맞으면 등(-z) */
-    _wv.set(px, py, back ? -0.185 : 0.17);
-    _we.set((this.rng() - 0.5) * 0.3, back ? Math.PI : 0, (angle || 0) + (this.rng() - 0.5) * 0.5);
+    _wv.set(px, py, back ? -0.186 : 0.168);
+    _we.set((this.rng() - 0.5) * 0.12, back ? Math.PI : 0, (angle || 0) + (this.rng() - 0.5) * 0.28);
     _wq.setFromEuler(_we);
     _ws.set(s, s, s);
     w.local.compose(_wv, _wq, _ws);
     w.mesh.visible = true;
-    w.mesh.material.opacity = 1;
+    w.mesh.material.opacity = 0.96;
   }
 
-  /* 🩸 망토 찢어짐 — 등 상흔 바로 위에 갈라진 천 자국을 덧그린다.
+  /* 🩸 망토 찢어짐 — 등 상흔 바로 위에 갈린 천 틈을 덧그린다.
      가운데가 뚫려 있어 그 구멍으로 방금 난 등 상흔이 그대로 보인다. */
   spawnTear(unit, angle) {
     if (!unit || unit.dslot === undefined || unit.dslot < 0) return;
+    /* 망토는 중갑 기사만 입는다 — 망토가 없는 병종에 천 자국을 붙이면 갑주 위에 떠 보인다 */
+    if (unit.cls !== 'knight') return;
     const tr = this.tears[this.tearIdx++ % this.tears.length];
     tr.unit = unit;
     tr.life = 0;
     tr.max = 5;
     /* 진영색에 가까운 천 색 — 아군(푸른 천) / 적군(붉은 천) */
-    const c = unit.team === 'ally' ? 0x7b8ca3 : 0xa0655a;
+    const c = unit.team === 'ally' ? 0xafbccb : 0xc1968c;
     tr.mesh.material.color.setHex(c);
-    /* 갈라진 천 자국 — 등 상흔을 가리지 않을 만큼만 (너무 크면 등 전체를 덮는다) */
-    const s = 0.36;
-    const px = (this.rng() - 0.5) * 0.10;
-    const py = 0.02 + (this.rng() - 0.5) * 0.10;
-    _wv.set(px, py, -(0.20 + this.rng() * 0.02));   // 망토 바로 바깥(등 뒤에서 보면 앞)
-    _we.set(0, Math.PI, (angle || 0) * 0.35 + (this.rng() - 0.5) * 0.4);
+    /* 갈린 틈 — 망토 표면에 바로 붙고, 너무 크면 등 전체를 덮으므로 작게 */
+    const s = 0.46;
+    const px = (this.rng() - 0.5) * 0.06;
+    const py = -0.02 + (this.rng() - 0.5) * 0.08;
+    /* 망토 판(chest 로컬 z=-0.185, x축 0.10rad 기웅)의 이 높이 표면은 z≈-0.145 — 살짝만 띄운다 */
+    _wv.set(px, py, -0.157 - this.rng() * 0.004);
+    _we.set(0, Math.PI, (angle || 0) * 0.20 + (this.rng() - 0.5) * 0.16);
     _wq.setFromEuler(_we);
     _ws.set(s, s, s);
     tr.local.compose(_wv, _wq, _ws);
     tr.mesh.visible = true;
-    tr.mesh.material.opacity = 0.92;
+    tr.mesh.material.opacity = 0.94;
   }
 
   attachShell(unit, duration) {

@@ -67,28 +67,34 @@ let n = 0;
   await shot('home-locked-redeem');
   const lockedInfo = await page.evaluate(() => ({
     unlocked: window.BA.solo().unlocked,
+    ui: window.BA.soloUi(),
     btn: document.getElementById('startBtn').className,
     bodyHasCode: /2012/.test(document.body.innerText)
   }));
   console.log('   잠금 상태:', JSON.stringify(lockedInfo));
 
-  await page.evaluate(() => {
-    document.getElementById('redeemCode').value = '1234';
-    document.getElementById('redeemApply').click();
-  });
+  /* 실제 화면대로 — 작은 🔑 버튼을 눌러 입력칸을 열고 코드를 넣는다 */
+  await page.click('#redeemOpen');
+  await sleep(350);
+  await shot('home-redeem-open');
+  console.log('   🔑 버튼 → 입력칸:', JSON.stringify(await page.evaluate(() => ({
+    open: !document.getElementById('redeemPanel').hidden
+  }))));
+
+  await page.click('#redeemCode');
+  await page.type('#redeemCode', '1234');
+  await page.click('#redeemApply');
   await sleep(400);
   await shot('home-wrong-code');
   console.log('   잘못된 코드 후 잠금:', JSON.stringify(await page.evaluate(() => ({ unlocked: window.BA.solo().unlocked }))));
 
-  await page.evaluate(() => {
-    document.getElementById('redeemCode').value = '2012';
-    document.getElementById('redeemApply').click();
-  });
+  await page.evaluate(() => { document.getElementById('redeemCode').value = '2012'; });
+  await page.click('#redeemApply');
   await sleep(600);
   await shot('home-unlocked');
   console.log('   해금 상태:', JSON.stringify(await page.evaluate(() => ({
     unlocked: window.BA.solo().unlocked, stored: localStorage.getItem('ba.soloUnlocked.v1'),
-    miniHidden: document.getElementById('redeemPanel').classList.contains('is-unlocked')
+    ui: window.BA.soloUi()
   }))));
 
   /* ===== 2. 모션 연속 프레임 ===== */
@@ -124,11 +130,11 @@ let n = 0;
 
   /* ===== 2b. 🩸 상흔 앞/뒤 + 망토 찢어짐 ===== */
   console.log('🩸 상흔 앞/뒤 · 망토 찢어짐');
-  const scarShot = async (label, yaw, srcZ) => {
+  const scarShot = async (label, yaw, srcZ, cls) => {
     await page.evaluate((o) => {
       const app = window.BA.app;
       const b = window.BA.battle;
-      const u = b.units.find((x) => x.cls === 'soldier' && !x.isPlayer) || b.units.find((x) => !x.isPlayer);
+      const u = b.units.find((x) => x.cls === o.cls && !x.isPlayer) || b.units.find((x) => !x.isPlayer);
       if (!u) return false;
       app.debugLock = null;
       app.paused = true;
@@ -141,19 +147,35 @@ let n = 0;
       u.x = 0; u.z = 0; u.y = 0; u.yaw = o.yaw;
       app.cam.position.set(0.55, 1.35, -2.7);
       app.cam.lookAt(0, 1.02, 0);
+      window.__scarTarget = u;
+      return { ok: true, dslot: u.dslot };
+    }, { yaw, srcZ, cls: cls || 'soldier' });
+    /* 상세 슬롯(dslot)이 잡힌 다음에 상흔을 남긴다 — 안 잡히면 상흔/망토 자국이 안 붙는다 */
+    await sleep(700);
+    const info = await page.evaluate((o) => {
+      const app = window.BA.app;
+      const b = window.BA.battle;
+      const u = window.__scarTarget;
+      if (!u) return { ok: false };
       /* 실제 피격 경로 그대로 — 앞/뒤 판정은 fx.onHit 이 한다 */
-      window.BA.app.fx.handle([{
+      app.fx.handle([{
         type: 'hit', source: { x: 0, z: o.srcZ, yaw: 0 }, target: u, dmg: 12, kind: 'blade',
         part: 'body', lethal: false, hx: 0, hz: 0, hy: 1.1, angle: 0
       }], b);
-      for (let i = 0; i < 8; i++) window.BA.app.fx.update(1 / 60, b, app.cam);
-      return true;
-    }, { yaw, srcZ });
+      for (let i = 0; i < 8; i++) app.fx.update(1 / 60, b, app.cam);
+      return {
+        ok: true, cls: u.cls, dslot: u.dslot,
+        wounds: app.fx.wounds.filter((w) => w.unit).length,
+        tears: app.fx.tears.filter((t) => t.unit).length
+      };
+    }, { srcZ });
+    console.log('   ' + label + ': ' + JSON.stringify(info));
     await sleep(340);
     await shot(label);
   };
-  await scarShot('scar-front', Math.PI, -1.4);   // 정면을 보고 서 있고 공격자는 앞
-  await scarShot('scar-back', 0, -1.4);          // 등을 보이고 있고 공격자는 뒤
+  await scarShot('scar-front', Math.PI, -1.4, 'soldier');        // 정면을 보고 서 있고 공격자는 앞
+  await scarShot('scar-back', 0, -1.4, 'soldier');               // 등을 보이고 있고 공격자는 뒤
+  await scarShot('scar-back-cape', 0, -1.4, 'knight');           // 망토 입은 기사 — 등 뒤 피격 → 망토 찟어짐
 
   /* ===== 3. 1인칭 뷰모델 스윙 ===== */
   console.log('🗡️ 1인칭 뷰모델 스윙');

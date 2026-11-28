@@ -261,134 +261,198 @@ export function woodMaps() {
 }
 
 /* 🩸 망토 찢어짐 — 등 뒤에서 맞았을 때 망토가 갈라진 자국.
-   가운데가 뚫린(alpha 0) 너덜너덜한 천 조각이라, 그 구멍으로 등 상흔이 그대로 보인다.
-   색은 재질 color(진영색)로 곱해지므로 회색 천으로 그린다. */
+   2026-11-28 "상흔이 너무 이상하게 나와" — 사각형 천 패치가 떠 보이던 것을 걷어내고,
+   배경은 완전히 투명한 채 **가는 절개 틈 + 너덜거린 실밥 + 틈 안쪽 붉은 베인**만 남긴다.
+   색은 재질 color(진영색)로 곱해지므로 천 섬유는 밝은 회색, 틈은 거의 검게 그린다. */
 export function tearTexture() {
-  const W = 128, H = 128;
+  const W = 256, H = 256;
   const c = makeCanvas(W, H);
   const x = c.getContext('2d');
   const rng = mulberry32(17);
   x.clearRect(0, 0, W, H);
-  /* 너덜너덜한 천 조각 — 삐죽삐죽한 다각형 */
-  const pts = [];
-  const N = 22;
-  for (let i = 0; i < N; i++) {
-    const a = (i / N) * Math.PI * 2;
-    const r = 40 + rng() * 20;
-    pts.push([64 + Math.cos(a) * r, 64 + Math.sin(a) * r]);
+  x.lineCap = 'round';
+
+  /* 찢긴 중심선 — 위에서 아래로 살짝 흔들리며 갈라진다 */
+  const N = 12;
+  const cx = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    cx.push([128 + Math.sin(t * 4.6 + 0.4) * 6 + (rng() - 0.5) * 5, 44 + t * 168]);
   }
-  x.beginPath();
-  x.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < N; i++) x.lineTo(pts[i][0], pts[i][1]);
-  x.closePath();
-  x.fillStyle = 'rgba(120,118,112,0.95)';
-  x.fill();
-  /* 천 결 — 세로 실밥 */
-  for (let i = 0; i < 26; i++) {
-    const px = 20 + rng() * 88;
-    x.strokeStyle = 'rgba(70,68,64,' + (0.10 + rng() * 0.22).toFixed(2) + ')';
-    x.lineWidth = 0.8 + rng() * 1.6;
-    x.beginPath();
-    x.moveTo(px, 24 + rng() * 10);
-    x.lineTo(px + (rng() - 0.5) * 6, 104 - rng() * 12);
-    x.stroke();
+  /* 폭을 따라 좁아지는 틈 폴리곤 — 양 끝은 뾰족하게 (천이 찢어진 모양) */
+  const widthAt = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const taper = Math.pow(Math.sin(Math.PI * t), 0.55);
+    widthAt.push(taper * (3.1 + rng() * 5.2));
   }
-  /* 가운데 갈라진 구멍 — 이 구멍으로 등 상흔이 보인다 */
-  x.globalCompositeOperation = 'destination-out';
-  const holes = [
-    [64, 64, 15], [56, 52, 9], [72, 78, 11], [50, 74, 8], [76, 50, 8]
-  ];
-  for (const [hx, hy, hr] of holes) {
+  const slit = (grow) => {
     x.beginPath();
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
-      const r = hr * (0.65 + rng() * 0.6);
-      const px = hx + Math.cos(a) * r, py = hy + Math.sin(a) * r;
-      if (i === 0) x.moveTo(px, py); else x.lineTo(px, py);
-    }
+    x.moveTo(cx[0][0] - widthAt[0] * grow, cx[0][1]);
+    for (let i = 1; i <= N; i++) x.lineTo(cx[i][0] - widthAt[i] * grow, cx[i][1]);
+    for (let i = N; i >= 0; i--) x.lineTo(cx[i][0] + widthAt[i] * grow, cx[i][1]);
     x.closePath();
-    x.fill();
-  }
-  /* 찢긴 결을 따라 길게 갈라진 자국 */
-  x.lineWidth = 7;
-  x.strokeStyle = 'rgba(0,0,0,1)';
+  };
+
+  /* 1) 천이 벌어진 그늘 — 틈 주위로 아주 옅게 번지게 (사각 패치 없음) */
+  x.save();
+  x.shadowColor = 'rgba(0,0,0,0.85)';
+  x.shadowBlur = 14;
+  slit(1.9);
+  x.fillStyle = 'rgba(10,10,14,0.30)';
+  x.fill();
+  x.restore();
+
+  /* 2) 틈 — 안쪽으로 갈수록 어두운 절개 */
+  slit(1.55);
+  x.fillStyle = 'rgba(14,12,14,0.72)';
+  x.fill();
+  slit(1.0);
+  x.fillStyle = 'rgba(3,3,5,0.97)';
+  x.fill();
+
+  /* 3) 틈 안쪽의 붉은 베인 — 등 상흔이 이 틈으로 비치는 느낌 */
+  x.save();
   x.beginPath();
-  x.moveTo(60, 30);
-  x.lineTo(66, 52);
-  x.lineTo(60, 74);
-  x.lineTo(68, 100);
+  x.moveTo(cx[0][0], cx[0][1]);
+  for (let i = 1; i <= N; i++) x.lineTo(cx[i][0], cx[i][1]);
+  x.strokeStyle = 'rgba(110,10,10,0.42)';
+  x.lineWidth = 3.6;
   x.stroke();
-  x.globalCompositeOperation = 'source-over';
-  /* 풀린 실 — 찢긴 가장자리에 밝은 실밥 */
-  for (let i = 0; i < 26; i++) {
-    const a = rng() * Math.PI * 2, r = 18 + rng() * 14;
-    const bx = 64 + Math.cos(a) * r, by = 64 + Math.sin(a) * r;
-    x.strokeStyle = 'rgba(210,205,196,' + (0.25 + rng() * 0.4).toFixed(2) + ')';
-    x.lineWidth = 0.9 + rng() * 1.2;
+  x.strokeStyle = 'rgba(146,18,16,0.62)';
+  x.lineWidth = 1.5;
+  x.stroke();
+  x.strokeStyle = 'rgba(48,3,3,0.85)';
+  x.lineWidth = 0.7;
+  x.stroke();
+  x.restore();
+
+  /* 4) 너덜거린 천 섬유 — 틈 가장자리에서 바깥으로 삐져나온 실밥 */
+  for (let i = 0; i < 34; i++) {
+    const t = rng();
+    const idx = Math.min(N - 1, Math.floor(t * N));
+    const side = rng() < 0.5 ? -1 : 1;
+    const bx = cx[idx][0] + side * widthAt[idx] * 1.2;
+    const by = 44 + (idx + rng()) / N * 168;
+    const len = 3 + rng() * 9;
+    const ang = side * (0.5 + rng() * 0.9) + (rng() - 0.5) * 0.7;
+    x.strokeStyle = 'rgba(226,224,218,' + (0.16 + rng() * 0.26).toFixed(2) + ')';
+    x.lineWidth = 0.4 + rng() * 0.7;
     x.beginPath();
     x.moveTo(bx, by);
-    x.lineTo(bx + (rng() - 0.5) * 12, by + (rng() - 0.5) * 12);
+    x.quadraticCurveTo(bx + Math.cos(ang) * len * 0.6, by + Math.sin(ang) * len * 0.6,
+      bx + Math.cos(ang) * len + (rng() - 0.5) * 3, by + Math.sin(ang) * len);
+    x.stroke();
+  }
+  /* 5) 틈을 가로지른 풀린 실 몇 가닥 */
+  for (let i = 0; i < 7; i++) {
+    const idx = 2 + Math.floor(rng() * (N - 3));
+    const bx = cx[idx][0], by = cx[idx][1] + (rng() - 0.5) * 10;
+    x.strokeStyle = 'rgba(232,230,224,' + (0.24 + rng() * 0.28).toFixed(2) + ')';
+    x.lineWidth = 0.5 + rng() * 0.7;
+    x.beginPath();
+    x.moveTo(bx - widthAt[idx] * 1.4, by - 2 + rng() * 4);
+    x.quadraticCurveTo(bx, by + (rng() - 0.5) * 7, bx + widthAt[idx] * 1.4, by - 2 + rng() * 4);
+    x.stroke();
+  }
+  /* 6) 아래로 흘러내린 피 — 몇 방울만 */
+  for (let i = 0; i < 5; i++) {
+    const idx = 4 + Math.floor(rng() * (N - 5));
+    const bx = cx[idx][0] + (rng() - 0.5) * 4;
+    const by = cx[idx][1];
+    x.strokeStyle = 'rgba(104,10,10,' + (0.35 + rng() * 0.3).toFixed(2) + ')';
+    x.lineWidth = 0.6 + rng() * 1.1;
+    x.beginPath();
+    x.moveTo(bx, by + 2);
+    x.lineTo(bx + (rng() - 0.5) * 3, by + 8 + rng() * 20);
     x.stroke();
   }
   return texFrom(c, { srgb: true });
 }
 
-/* 상흔 — 베인 자국(검) / 으스러진 자국(망치) */
+/* 상흔 — 베인 자국(검) / 으스러진 자국(망치)
+   2026-11-28 "상흔이 너무 이상하게 나와" — 넓게 번지던 피 패치를 걷어내고
+   칼이 지나간 **가는 절개선**과 그 옆에 옅게 번진 멍·짧은 핏방울만 남긴다.
+   캔버스 가장자리는 완전히 투명해서 갑옷 위에 사각형 패치가 보이지 않는다. */
 export function woundTexture(kind) {
-  const W = 128, H = 128;
+  const W = 256, H = 256;
   const c = makeCanvas(W, H);
   const x = c.getContext('2d');
   x.clearRect(0, 0, W, H);
+  x.lineCap = 'round';
   if (kind === 'crush') {
-    const g = x.createRadialGradient(64, 64, 2, 64, 64, 58);
-    g.addColorStop(0, 'rgba(52,8,8,0.95)');
-    g.addColorStop(0.35, 'rgba(96,18,16,0.8)');
-    g.addColorStop(0.72, 'rgba(120,40,30,0.35)');
-    g.addColorStop(1, 'rgba(120,40,30,0)');
-    x.fillStyle = g; x.beginPath(); x.arc(64, 64, 58, 0, 7); x.fill();
+    /* 둔기 — 부드럽게 번진 멍 + 짧은 갈라진 자국 (테두리는 투명) */
+    const g = x.createRadialGradient(128, 128, 4, 128, 128, 104);
+    g.addColorStop(0, 'rgba(54,8,8,0.86)');
+    g.addColorStop(0.34, 'rgba(92,16,14,0.52)');
+    g.addColorStop(0.68, 'rgba(108,32,26,0.18)');
+    g.addColorStop(1, 'rgba(108,32,26,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(128, 128, 104, 0, 7); x.fill();
     const rng = mulberry32(5);
-    for (let i = 0; i < 16; i++) {
-      const a = rng() * Math.PI * 2;
-      x.strokeStyle = `rgba(30,4,4,${0.5 + rng() * 0.4})`;
-      x.lineWidth = 1 + rng() * 2.4;
-      x.beginPath(); x.moveTo(64, 64);
-      x.lineTo(64 + Math.cos(a) * (20 + rng() * 34), 64 + Math.sin(a) * (20 + rng() * 34));
+    for (let i = 0; i < 9; i++) {
+      const a = rng() * Math.PI * 2, len = 22 + rng() * 44;
+      x.strokeStyle = `rgba(26,3,3,${0.30 + rng() * 0.30})`;
+      x.lineWidth = 0.7 + rng() * 1.5;
+      x.beginPath(); x.moveTo(128 + Math.cos(a) * 8, 128 + Math.sin(a) * 8);
+      x.quadraticCurveTo(128 + Math.cos(a + 0.2) * len * 0.55, 128 + Math.sin(a + 0.2) * len * 0.55,
+        128 + Math.cos(a) * len, 128 + Math.sin(a) * len);
       x.stroke();
-    }
-    // 멍든 테두리
-    for (let i = 0; i < 6; i++) {
-      x.strokeStyle = `rgba(70,26,44,${0.24})`;
-      x.lineWidth = 3 + Math.random() * 5;
-      x.beginPath(); x.arc(64, 64, 22 + i * 5, 0, 7); x.stroke();
     }
   } else {
-    // 베인 상처: 비스듬한 칼자국 + 번진 피
-    x.save(); x.translate(64, 64); x.rotate(-0.42);
-    const g = x.createLinearGradient(0, -11, 0, 11);
-    g.addColorStop(0, 'rgba(120,20,18,0)');
-    g.addColorStop(0.32, 'rgba(120,20,18,0.85)');
-    g.addColorStop(0.5, 'rgba(58,6,6,0.98)');
-    g.addColorStop(0.68, 'rgba(120,20,18,0.85)');
-    g.addColorStop(1, 'rgba(120,20,18,0)');
+    /* 검 — 비스듬한 절개선 하나. 가운데가 짙고 양 끝은 뾰족하게 사라진다 */
+    const rng = mulberry32(11);
+    x.save();
+    x.translate(128, 128);
+    x.rotate(-0.42);
+
+    /* 1) 절개선 주변의 옅은 멍 — 아주 낮은 알파로만 */
+    const g = x.createLinearGradient(0, -20, 0, 20);
+    g.addColorStop(0, 'rgba(112,16,14,0)');
+    g.addColorStop(0.36, 'rgba(112,16,14,0.12)');
+    g.addColorStop(0.5, 'rgba(86,10,10,0.20)');
+    g.addColorStop(0.64, 'rgba(112,16,14,0.12)');
+    g.addColorStop(1, 'rgba(112,16,14,0)');
     x.fillStyle = g;
     x.beginPath();
-    x.moveTo(-52, -3); x.quadraticCurveTo(0, -13, 52, -2);
-    x.quadraticCurveTo(0, 9, -52, -3);
+    x.moveTo(-98, -3); x.quadraticCurveTo(0, -15, 98, -2);
+    x.quadraticCurveTo(0, 13, -98, -3);
     x.fill();
-    // 하얀 칼날 자국
-    x.strokeStyle = 'rgba(255,225,215,0.5)'; x.lineWidth = 1.3;
-    x.beginPath(); x.moveTo(-46, -4); x.quadraticCurveTo(0, -8, 46, -3); x.stroke();
-    x.restore();
-    const rng = mulberry32(11);
-    for (let i = 0; i < 12; i++) {
-      const a = -0.42 + (rng() - 0.5) * 0.9;
-      const len = 16 + rng() * 34;
-      x.strokeStyle = `rgba(${(90 + rng() * 40) | 0},12,12,${0.25 + rng() * 0.4})`;
-      x.lineWidth = 1 + rng() * 3.4;
-      x.beginPath(); x.moveTo(64, 64);
-      x.quadraticCurveTo(64 + Math.cos(a) * len * 0.5 + 6, 64 + Math.sin(a) * len * 0.5 + 6,
-        64 + Math.cos(a) * len, 64 + Math.sin(a) * len);
+
+    /* 2) 절개선 — 폭이 가운데서만 두껍고 끝으로 갈수록 가늘어지는 검붉은 선 */
+    const cut = (w, color, dy) => {
+      x.strokeStyle = color; x.lineWidth = w;
+      x.beginPath();
+      x.moveTo(-96, -3 + (dy || 0));
+      x.bezierCurveTo(-46, -11 + (dy || 0), 40, 6 + (dy || 0), 96, -2 + (dy || 0));
       x.stroke();
+    };
+    cut(4.6, 'rgba(92,10,10,0.42)');
+    cut(2.2, 'rgba(44,3,3,0.95)');
+    /* 3) 칼날이 스친 자리 — 가느다란 하이라이트 */
+    x.strokeStyle = 'rgba(255,232,222,0.26)'; x.lineWidth = 0.8;
+    x.beginPath(); x.moveTo(-88, -5.6);
+    x.bezierCurveTo(-42, -13.2, 38, 3.4, 90, -4.4); x.stroke();
+
+    /* 4) 흘러내린 핏방울 — 절개선 아래로 짧게 */
+    for (let i = 0; i < 7; i++) {
+      const bx = (-0.75 + rng() * 1.5) * 90;
+      const by = -2 + Math.sin(bx / 30) * 4;
+      const len = 5 + rng() * 18;
+      x.strokeStyle = `rgba(${96 + ((rng() * 40) | 0)},10,10,${(0.40 + rng() * 0.32).toFixed(2)})`;
+      x.lineWidth = 0.7 + rng() * 1.2;
+      x.beginPath(); x.moveTo(bx, by); x.lineTo(bx + (rng() - 0.5) * 4, by + len); x.stroke();
+    }
+    x.restore();
+
+    /* 5) 선 가까이에만 작은 피 반점 (멀리 퍼지지 않게) */
+    for (let i = 0; i < 8; i++) {
+      const a = -0.42 + (rng() - 0.5) * 0.45;
+      const d = 8 + rng() * 22;
+      x.fillStyle = `rgba(110,14,12,${(0.08 + rng() * 0.14).toFixed(2)})`;
+      x.beginPath();
+      x.ellipse(128 + Math.cos(a) * d * 1.5, 128 + Math.sin(a) * d,
+        1.4 + rng() * 2.6, 0.9 + rng() * 1.5, a, 0, 7);
+      x.fill();
     }
   }
   return texFrom(c, { srgb: true });

@@ -26,11 +26,14 @@
   <section id="home" class="screen">
     <div class="home-bg"></div>
     <div class="home-inner">
-      <!-- 🔑 솔로 전장 해금 코드 — 설명 없이 작은 입력칸만 -->
-      <div class="redeem-mini" id="redeemPanel">
-        <input id="redeemCode" class="redeem-inp" type="text" maxlength="8" inputmode="numeric"
-          autocomplete="off" spellcheck="false" aria-label="코드" />
-        <button id="redeemApply" class="redeem-go" type="button" aria-label="확인">✓</button>
+      <!-- 🔑 설명 없이 작은 열쇠 버튼 하나. 누르면 입력칸이 조용히 열린다 -->
+      <div class="redeem-zone" id="redeemZone">
+        <button id="redeemOpen" class="redeem-key" type="button" aria-label="코드" aria-expanded="false">🔑</button>
+        <div class="redeem-pop" id="redeemPanel" hidden>
+          <input id="redeemCode" class="redeem-inp" type="text" maxlength="8" inputmode="numeric"
+            autocomplete="off" spellcheck="false" aria-label="코드" />
+          <button id="redeemApply" class="redeem-go" type="button" aria-label="확인">✓</button>
+        </div>
       </div>
       <header class="home-head">
         <div class="brand">
@@ -55,6 +58,74 @@
       </header>
 
       <div class="home-scroll">
+        <!-- 내 캐릭터(병종) — 키 입력 전에는 홈에서 완전히 숨는다 -->
+        <div class="panel class-panel" id="classPanel">
+          <div class="panel-title"><span>클래스</span><em>플레이어로 참전</em></div>
+          <div class="class-cards" id="classCards">
+            <button class="class-card is-on" data-cls="soldier">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">⚔️</div>
+              <div class="cc-body">
+                <div class="cc-name">일반 병사</div>
+                <div class="cc-tag">BALANCED</div>
+                <div class="cc-stats"><b data-stat="hp">150</b> HP · <b data-stat="dmg">150</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">1.0×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="elite">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🗡️</div>
+              <div class="cc-body">
+                <div class="cc-name">고급 병사</div>
+                <div class="cc-tag">VETERAN · SWORD GUARD</div>
+                <div class="cc-stats"><b data-stat="hp">165</b> HP · <b data-stat="dmg">150</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">1.12×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="knight">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🔨</div>
+              <div class="cc-body">
+                <div class="cc-name">중갑 기사</div>
+                <div class="cc-tag">HEAVY · AOE 100</div>
+                <div class="cc-stats"><b data-stat="hp">2900</b> HP · <b data-stat="dmg">285</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">3.15×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="blademaster">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🌸</div>
+              <div class="cc-body">
+                <div class="cc-name">매화 검객</div>
+                <div class="cc-tag">SWIFT · DASH</div>
+                <div class="cc-stats"><b data-stat="hp">1200</b> HP · <b data-stat="dmg">178</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">3.2×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="berserker">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🩸</div>
+              <div class="cc-body">
+                <div class="cc-name">단검 광전사</div>
+                <div class="cc-tag">RAPID · TANK</div>
+                <div class="cc-stats"><b data-stat="hp">3600</b> HP · <b data-stat="dmg">18</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">2.4×</strong></div>
+              </div>
+            </button>
+            <button class="class-card" data-cls="wizard">
+              <div class="cc-glow"></div>
+              <div class="cc-icon">🔮</div>
+              <div class="cc-body">
+                <div class="cc-name">대마법사</div>
+                <div class="cc-tag">GLASS CANNON</div>
+                <div class="cc-stats"><b data-stat="hp">240</b> HP · <b data-stat="dmg">212</b> DMG</div>
+                <div class="cc-power">전투력 <strong data-stat="power">2.2×</strong></div>
+              </div>
+            </button>
+          </div>
+          <p class="class-note" id="classNote">검과 방패, 민첩한 연속 베기. 모든 전장의 기준.</p>
+        </div>
+
         <!-- ⚔️ 플레이어 PVP — 친구와 실시간 1인칭 대전 -->
         <div class="panel pvp-panel" id="pvpPanel">
           <div class="panel-title"><span>⚔️ 플레이어 PVP</span><em>실시간 1인칭 대전</em></div>
@@ -68,7 +139,7 @@
           </div>
           <p class="pvp-note">친구와 방 코드로 만나 <b>1:1 ~ 4:4</b> · 팀·병종 선택 · AI 병력 섞기 · 내 버튼 배치 그대로</p>
         </div>
-        <div class="panel army-panel">
+        <div class="panel army-panel" id="armyPanel">
           <div class="panel-title"><span>병력 편성</span><em>고급 병사 1,000 · 특수 유닛 각 100</em></div>
           <div class="army-grid">
             <div class="army-col ally">
@@ -172,7 +243,7 @@
           <span class="sb-icon">⚔</span>
           <span class="sb-text"><strong>전장으로</strong><em>BATTLE START</em></span>
         </button>
-        <div class="foot-note">
+        <div class="foot-note" id="footNote">
           <span>이동 조이스틱 · 시점 드래그 · 공격 버튼</span>
           <span id="rosterTotal">총 0명 출전</span>
         </div>

@@ -199,21 +199,18 @@ input[type=range] { -webkit-appearance: none; appearance: none; background: tran
 }
 .redeem-key:active, .redeem-key.is-on { opacity: .95; background: rgba(40, 70, 110, .55); }
 .redeem-pop {
-  position: absolute; top: calc(100% + 4px); right: 2px; z-index: 40;
-  display: flex; align-items: center; gap: 4px; padding: 5px 6px; border-radius: 9px;
-  background: rgba(10, 14, 20, .97); border: 1px solid rgba(160, 190, 230, .24);
-  box-shadow: 0 10px 22px rgba(0, 0, 0, .55);
+  display: flex; align-items: center; gap: 4px; margin-right: 6px;
 }
 .redeem-pop[hidden] { display: none; }
 .redeem-inp {
-  width: 56px; height: 22px; padding: 0 5px; border-radius: 5px;
+  width: 70px; height: 20px; padding: 0 6px; border-radius: 5px;
   font-size: 10px; font-weight: 700; letter-spacing: .06em; color: #dfe7f2;
   background: rgba(12, 16, 22, .75); border: 1px solid rgba(160, 190, 230, .26); outline: none;
 }
 .redeem-inp:focus { border-color: rgba(160, 200, 250, .65); }
 .redeem-inp.is-bad { border-color: rgba(255, 120, 100, .85); }
 .redeem-go {
-  width: 22px; height: 22px; padding: 0; border-radius: 5px;
+  width: 22px; height: 20px; padding: 0; border-radius: 5px;
   font-size: 10px; font-weight: 800; color: #cdd9e8;
   background: rgba(60, 110, 180, .3); border: 1px solid rgba(150, 190, 240, .28);
 }
